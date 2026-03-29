@@ -1,29 +1,195 @@
 /**
- * StandardVideo composition — genel amaçlı video modülü.
+ * StandardVideo composition — genel amacli video modulu.
  *
- * Sahne yapısı:
- *   Her sahne bir arka plan görsel (video/image) + TTS ses + altyazı katmanı içerir.
- *   Sahneler sıralı olarak birleştirilir; toplam süre sahnelerin toplamıdır.
- *
- * Faz 8'de eklenecek:
- *   - Ken Burns efekti (zoom/pan animasyonu)
- *   - Karaoke altyazı animasyonu (kelime bazlı renk geçişi)
- *   - Sahne geçiş efektleri (crossfade)
- *   - Vignette ve sinematik bantlar
+ * Sahne yapisi:
+ *   Her sahne bir arka plan gorsel (video/image) + TTS ses + altyazi katmani icerir.
+ *   Sahneler sirali olarak birlestirilir; toplam sure sahnelerin toplamidir.
+ *   Ken Burns efekti, crossfade gecisleri ve vignette overlay desteklenir.
  */
 
-import { AbsoluteFill, Sequence, useVideoConfig } from "remotion";
-import type { StandardVideoProps, SceneData } from "../types";
+import React from "react";
+import {
+  AbsoluteFill,
+  Sequence,
+  Audio,
+  Video,
+  Img,
+  useVideoConfig,
+  useCurrentFrame,
+  interpolate,
+  spring,
+} from "remotion";
+import { Subtitles } from "../components/Subtitles";
+import type { StandardVideoProps, SceneData, SubtitleChunk } from "../types";
+
+const CROSSFADE_FRAMES = 10;
+const DEFAULT_SCENE_DURATION_SECONDS = 5;
+
+const getSafeDuration = (durationInSeconds: number | undefined): number => {
+  if (!durationInSeconds || isNaN(durationInSeconds) || durationInSeconds <= 0) {
+    return DEFAULT_SCENE_DURATION_SECONDS;
+  }
+  return durationInSeconds;
+};
+
+const hasValidSrc = (src: string | undefined): src is string => {
+  return typeof src === "string" && src.trim().length > 0;
+};
+
+const FallbackBackground: React.FC = () => (
+  <div
+    style={{
+      position: "absolute",
+      inset: 0,
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+    }}
+  />
+);
+
+const SceneVisual: React.FC<{
+  scene: SceneData;
+  sceneIndex: number;
+  sceneDurationFrames: number;
+  kenBurnsEnabled: boolean;
+  kenBurnsZoom: number;
+  fps: number;
+}> = ({ scene, sceneIndex, sceneDurationFrames, kenBurnsEnabled, kenBurnsZoom, fps }) => {
+  const frame = useCurrentFrame();
+
+  const isZoomOut = sceneIndex % 2 === 1;
+  const scaleStart = isZoomOut ? 1.0 + kenBurnsZoom : 1.0;
+  const scaleEnd = isZoomOut ? 1.0 : 1.0 + kenBurnsZoom;
+
+  const scale = kenBurnsEnabled
+    ? interpolate(frame, [0, sceneDurationFrames], [scaleStart, scaleEnd], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      })
+    : 1;
+
+  const visualStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover" as const,
+  };
+
+  const containerStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    overflow: "hidden",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+  };
+
+  const transformStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    transform: `scale(${scale})`,
+    transformOrigin: "center center",
+  };
+
+  if (!hasValidSrc(scene.visualSrc)) {
+    return <FallbackBackground />;
+  }
+
+  return (
+    <div style={containerStyle}>
+      <div style={transformStyle}>
+        {scene.visualType === "video" ? (
+          <Video src={scene.visualSrc} style={visualStyle} />
+        ) : (
+          <Img src={scene.visualSrc} style={visualStyle} />
+        )}
+      </div>
+    </div>
+  );
+};
+
+const SceneContent: React.FC<{
+  scene: SceneData;
+  sceneIndex: number;
+  totalScenes: number;
+  sceneDurationFrames: number;
+  subtitleChunk: SubtitleChunk | undefined;
+  sceneStartFrame: number;
+  kenBurnsEnabled: boolean;
+  kenBurnsZoom: number;
+  fps: number;
+  subtitleStyle: StandardVideoProps["subtitleStyle"];
+}> = ({
+  scene,
+  sceneIndex,
+  totalScenes,
+  sceneDurationFrames,
+  subtitleChunk,
+  sceneStartFrame,
+  kenBurnsEnabled,
+  kenBurnsZoom,
+  fps,
+  subtitleStyle,
+}) => {
+  const frame = useCurrentFrame();
+
+  const crossfadeOpacity =
+    sceneIndex > 0
+      ? interpolate(frame, [0, CROSSFADE_FRAMES], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        })
+      : 1;
+
+  return (
+    <AbsoluteFill style={{ opacity: crossfadeOpacity }}>
+      <SceneVisual
+        scene={scene}
+        sceneIndex={sceneIndex}
+        sceneDurationFrames={sceneDurationFrames}
+        kenBurnsEnabled={kenBurnsEnabled}
+        kenBurnsZoom={kenBurnsZoom}
+        fps={fps}
+      />
+
+      {hasValidSrc(scene.audioSrc) && <Audio src={scene.audioSrc} volume={1} />}
+
+      {subtitleChunk && (
+        <Subtitles
+          subtitleChunk={subtitleChunk}
+          style={subtitleStyle}
+          sceneStartFrame={sceneStartFrame}
+          sceneDurationFrames={sceneDurationFrames}
+        />
+      )}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          right: 24,
+          fontSize: 13,
+          color: "rgba(255, 255, 255, 0.5)",
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontVariantNumeric: "tabular-nums",
+          textShadow: "0 1px 3px rgba(0, 0, 0, 0.8)",
+        }}
+      >
+        {sceneIndex + 1} / {totalScenes}
+      </div>
+    </AbsoluteFill>
+  );
+};
 
 export const StandardVideo: React.FC<StandardVideoProps> = ({
   title,
   scenes,
+  subtitles,
   subtitleStyle,
   settings,
+  kenBurnsEnabled,
+  kenBurnsZoom,
 }) => {
   const { fps } = useVideoConfig();
 
-  // Sahne yoksa bilgi ekranı göster (Remotion Studio'da preview için)
   if (scenes.length === 0) {
     return (
       <AbsoluteFill
@@ -57,7 +223,7 @@ export const StandardVideo: React.FC<StandardVideoProps> = ({
               maxWidth: 400,
             }}
           >
-            Sahne verisi bekleniyor. Backend pipeline tamamlandığında bu
+            Sahne verisi bekleniyor. Backend pipeline tamamlandiginda bu
             composition otomatik olarak doldurulur.
           </div>
           <div
@@ -68,98 +234,59 @@ export const StandardVideo: React.FC<StandardVideoProps> = ({
             }}
           >
             {settings.width}x{settings.height} · {settings.fps}fps ·{" "}
-            Altyazı: {subtitleStyle}
+            Altyazi: {subtitleStyle}
           </div>
         </div>
       </AbsoluteFill>
     );
   }
 
-  // Sahneleri sıralı Sequence olarak yerleştir
+  const sceneFrames: { scene: SceneData; from: number; durationFrames: number }[] = [];
   let frameOffset = 0;
+
+  for (const scene of scenes) {
+    const safeDuration = getSafeDuration(scene.durationInSeconds);
+    const durationFrames = Math.ceil(safeDuration * fps);
+    sceneFrames.push({ scene, from: frameOffset, durationFrames });
+    frameOffset += durationFrames;
+  }
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {scenes.map((scene: SceneData) => {
-        const sceneDurationFrames = Math.ceil(scene.durationInSeconds * fps);
-        const from = frameOffset;
-        frameOffset += sceneDurationFrames;
+      {sceneFrames.map(({ scene, from, durationFrames }) => {
+        const subtitleChunk: SubtitleChunk | undefined =
+          subtitles && subtitles[scene.index] ? subtitles[scene.index] : undefined;
 
         return (
           <Sequence
             key={scene.index}
             from={from}
-            durationInFrames={sceneDurationFrames}
+            durationInFrames={durationFrames}
             name={`Sahne ${scene.index + 1}`}
           >
-            <AbsoluteFill
-              style={{
-                backgroundColor: "#0f172a",
-                justifyContent: "center",
-                alignItems: "center",
-                fontFamily: "Inter, system-ui, sans-serif",
-              }}
-            >
-              {/* Arka plan görsel — Faz 8'de <Video>/<Img> ile değiştirilecek */}
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  backgroundColor: "#0f172a",
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ fontSize: 13, color: "#475569" }}>
-                  {scene.visualType === "video" ? "🎬" : "🖼️"}{" "}
-                  {scene.visualSrc || `sahne_${scene.index + 1}`}
-                </div>
-              </div>
-
-              {/* Altyazı katmanı — Faz 8'de WordTiming tabanlı animasyon */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 80,
-                  left: "10%",
-                  right: "10%",
-                  textAlign: "center",
-                }}
-              >
-                <div
-                  style={{
-                    display: "inline-block",
-                    padding: "8px 20px",
-                    borderRadius: 6,
-                    backgroundColor: "rgba(0,0,0,0.7)",
-                    color: "#fff",
-                    fontSize: 22,
-                    fontWeight: 600,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  {scene.narration.slice(0, 120)}
-                  {scene.narration.length > 120 ? "…" : ""}
-                </div>
-              </div>
-
-              {/* Sahne numarası overlay */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: 20,
-                  right: 24,
-                  fontSize: 12,
-                  color: "#64748b",
-                }}
-              >
-                {scene.index + 1} / {scenes.length}
-              </div>
-            </AbsoluteFill>
+            <SceneContent
+              scene={scene}
+              sceneIndex={scene.index}
+              totalScenes={scenes.length}
+              sceneDurationFrames={durationFrames}
+              subtitleChunk={subtitleChunk}
+              sceneStartFrame={from}
+              kenBurnsEnabled={kenBurnsEnabled}
+              kenBurnsZoom={kenBurnsZoom}
+              fps={fps}
+              subtitleStyle={subtitleStyle}
+            />
           </Sequence>
         );
       })}
+
+      <AbsoluteFill
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.45) 100%)",
+          pointerEvents: "none",
+        }}
+      />
     </AbsoluteFill>
   );
 };

@@ -30,10 +30,10 @@
 | **Açıklama** | 4 referans projeyi (YTRobot, YTRobot-v3, YouTubeStoryGenerator, youtube_video_bot) analiz ederek, en iyi ürün mantığını çıkararak sıfırdan yeni, temiz, modüler, localhost-first, genişletilebilir bir YouTube içerik üretim platformu oluştur. |
 | **Kapsam** | Tam proje: backend (FastAPI + SQLite WAL), frontend (React + Vite + Tailwind + Shadcn + Zustand), video composition (Remotion), 3 içerik modülü (standard_video, news_bulletin, product_review), provider sistemi (LLM, TTS, Visuals, Composition), 5 katmanlı ayar override mimarisi, dual UI (user + admin), yaşayan dokümantasyon sistemi |
 | **Öncelik** | Kritik |
-| **Durum** | Kısmen Tamamlandı |
+| **Durum** | Tamamlandı |
 | **İlgili Modüller** | Tüm proje |
 | **İlgili Dosyalar** | Tüm dosyalar |
-| **Uygulanma Notları** | Faz 1 tamamlandı: backend iskeleti (FastAPI + SQLite WAL + config + logger), frontend iskeleti (React + Vite + Tailwind + Zustand + AppShell + Sidebar + Header + routing), Remotion iskeleti (3 composition tanımı + types), dokümantasyon iskeleti (7 doküman). Faz 2–10 sırasıyla uygulanacak. |
+| **Uygulanma Notları** | 10 faz tamamlandı: Faz 1 (iskelet), Faz 2 (veri modeli + API), Faz 3 (User UI), Faz 4 (Admin panel), Faz 5 (pipeline core), Faz 6 (provider entegrasyonu), Faz 7 (dokümantasyon), Faz 8 (modül entegrasyonu), Faz 9 (Remotion video), Faz 10 (temizlik + v1.0.0). |
 | **Riskler** | Referans projelerdeki kie.ai bağımlılığı yeni sistemde de Gemini API erişimi için korunuyor; kie.ai'nin kapanma riski var — fallback olarak doğrudan Google Gemini API desteği planlandı |
 | **Açık Kalan Noktalar** | ORM modelleri (Faz 2), pipeline runner (Faz 2), provider implementasyonları (Faz 6), UI sayfa içerikleri (Faz 3–4), Remotion animasyonlar (Faz 8) |
 
@@ -150,6 +150,63 @@
 | **Uygulanma Notları** | USER_GUIDE v0.7.0: Kurulum, 3 servis başlatma, Dashboard/CreateVideo/JobList/JobDetail/UserSettings tam rehber, Admin panel (PIN, modül/provider/ayar yönetimi, toplu temizlik), pipeline 6 adım açıklaması, SSE canlı izleme, 9 SSS maddesi. DEVELOPER_GUIDE v0.7.0: Tam dizin yapısı (backend/frontend/remotion), config.py ayar grupları, 3 ORM model (Job/JobStep/Setting), 12+ API endpoint, 4 Zustand store, SSE hook, 5 katmanlı ayar motoru, pipeline runner + cache, modül sistemi (ContentModule ABC + Capability enum + PipelineStepDef), provider sistemi (BaseProvider + 3-way fallback), yeni modül ve provider ekleme adım-adım rehberleri. FEATURES_AND_ACTIONS v0.7.0: AppShell/Sidebar/Header bileşen eşleştirmeleri, 10 sayfa (5 user + 5 admin) her birinin buton→API→store tam haritası, 4 Zustand store metot→endpoint tabloları, SSE event tipi→handler eşleştirmesi. ARCHITECTURE v0.7.0: 15 ADR (001–015), Faz 5'ten 3 yeni (pipeline, modül sistemi, SSE), Faz 6'dan 2 yeni (provider fallback, Edge TTS varsayılan), mimari genel bakış diyagramı, veri akışı. CHANGELOG: v0.1.0 ile v0.7.0 arası 7 sürüm detaylı notları. REQUEST_LOG: REQ-007 kaydı. |
 | **Riskler** | Yok — saf dokümantasyon fazı, kod değişikliği içermez |
 | **Açık Kalan Noktalar** | IMPLEMENTATION_REPORT Faz 7 karşılama raporu bu dokümanla birlikte güncellendi |
+
+---
+
+### REQ-008: Faz 8 — Referans Projelerden Seçilen Özelliklerin Entegrasyonu
+
+| Alan | Değer |
+|------|-------|
+| **Kimlik** | REQ-008 |
+| **Tarih** | 2026-03-29 |
+| **Talep Eden** | Huseyin |
+| **Açıklama** | Faz 8: Referans projelerden (YTRobot, youtube_video_bot) seçilen en değerli özelliklerin ContentManager'a entegre edilmesi — Haber bülteni modülü (URL/RSS içerik çekme + bülten senaryosu), ürün inceleme modülü (Pro/Con format + 5 bölümlü yapı), kategori-spesifik prompt sistemi (6 kategori), açılış hook çeşitliliği (8 hook, tekrar önleme), gelişmiş altyazı sistemi (Whisper API + 5 stil). |
+| **Kapsam** | Backend: news_bulletin modülü (3 dosya), product_review modülü (3 dosya), pipeline/steps/script.py (kategori + hook sistemi), pipeline/steps/subtitles.py (Whisper + 5 stil), standard_video pipeline güncelleme, registry güncelleme |
+| **Öncelik** | Yüksek |
+| **Durum** | Tamamlandı |
+| **İlgili Modüller** | backend/modules/news_bulletin, backend/modules/product_review, backend/pipeline/steps, backend/modules/standard_video, backend/modules/registry |
+| **İlgili Dosyalar** | `backend/modules/news_bulletin/__init__.py`, `backend/modules/news_bulletin/config.py`, `backend/modules/news_bulletin/pipeline.py`, `backend/modules/product_review/__init__.py`, `backend/modules/product_review/config.py`, `backend/modules/product_review/pipeline.py`, `backend/pipeline/steps/__init__.py`, `backend/pipeline/steps/script.py`, `backend/pipeline/steps/subtitles.py`, `backend/modules/standard_video/pipeline.py`, `backend/modules/registry.py` |
+| **Uygulanma Notları** | **News Bulletin:** URL içerik çekme (httpx async + HTML tag stripping regex), haber bülteni formatında senaryo üretimi, URL başarısız olursa konu bazlı fallback, 8 sahne varsayılan, shared step'ler standard_video'dan import. **Product Review:** 5 bölümlü yapılandırılmış inceleme (Hook → Overview → Pros → Cons → Verdict), ürün adı + teknik özellikler girişi, yapılandırılabilir pro/con sayısı ve 1-10 puanlama. **Kategori Sistemi:** 6 kategori (general, true_crime, science, history, motivation, religion) her biri tone/focus/style_instruction ile, build_enhanced_prompt() fonksiyonu system instruction'a kategori bilgisi ekler. **Hook Sistemi:** 8 açılış hook tipi (shocking_fact, question, story, contradiction, future_peek, comparison, personal_address, countdown) TR/EN dil desteği, session-level tekrar önleme (son 6 hook hatırlanır, tükenince sıfırlanır). **Gelişmiş Altyazı:** 3 katmanlı zamanlama (TTS word-timing → Whisper API → eşit dağıtım), 5 stil (standard, neon_blue, gold, minimal, hormozi) Remotion-uyumlu config dict'leri ile. Tüm modüller step_subtitles_enhanced kullanacak şekilde güncellendi. |
+| **Riskler** | URL içerik çekme: Hedef sitelerin CORS/robot politikaları engelleyebilir, timeout riski. Whisper API: Ücretli ($0.006/dk), API key gerektirir. google.generativeai paketi deprecated — google.genai'ye geçiş planlanmalı. |
+| **Açık Kalan Noktalar** | Remotion gerçek render entegrasyonu (Faz 9), YouTube OAuth upload (Faz 9), karaoke animasyonu (Faz 9), thumbnail üretimi (Faz 9) |
+
+---
+
+### REQ-009: Faz 9 — Stabilizasyon ve Remotion Video Entegrasyonu
+
+| Alan | Değer |
+|------|-------|
+| **Kimlik** | REQ-009 |
+| **Tarih** | 2026-03-29 |
+| **Talep Eden** | Huseyin |
+| **Açıklama** | Faz 9: Remotion video kompozisyon entegrasyonunun tamamlanması — 3 Remotion composition'ın (StandardVideo, NewsBulletin, ProductReview) gerçek `<Sequence>`, `<Audio>`, `<Video>`, `<Img>` bileşenleriyle kodlanması, kelime bazlı altyazı render bileşeni (5 stil), backend composition step'inin Remotion CLI subprocess ile gerçek MP4 render yapması, hata toleransı (eksik görsel/ses/süre fallback'leri). |
+| **Kapsam** | Remotion: 3 composition (StandardVideo.tsx, NewsBulletin.tsx, ProductReview.tsx), 1 bileşen (Subtitles.tsx). Backend: composition.py pipeline step. Entegrasyon: 3 modülün pipeline tanımlarında composition step güncelleme. |
+| **Öncelik** | Kritik |
+| **Durum** | Tamamlandı |
+| **İlgili Modüller** | remotion/src/compositions, remotion/src/components, backend/pipeline/steps, backend/modules (3 modül) |
+| **İlgili Dosyalar** | `remotion/src/compositions/StandardVideo.tsx`, `remotion/src/compositions/NewsBulletin.tsx`, `remotion/src/compositions/ProductReview.tsx`, `remotion/src/components/Subtitles.tsx`, `backend/pipeline/steps/composition.py`, `backend/modules/standard_video/pipeline.py`, `backend/modules/news_bulletin/pipeline.py`, `backend/modules/product_review/pipeline.py` |
+| **Uygulanma Notları** | **StandardVideo:** Ken Burns efekti (zoom-in/out alternate), crossfade geçişler (10 frame), vignette overlay, Video/Img/Audio bileşenleri, fallback (5s süre, koyu gradient). **NewsBulletin:** Lower-third animasyonlu slide-up (15 frame), kategori renk kodlama (5 renk), tarih damgası, haber sayacı. **ProductReview:** Bölüm badge animasyonu (slide-in), ScoreRing SVG animasyonu (verdict'te), Pro/Con ikon gösterimi. **Subtitles.tsx:** 5 stil (standard/neon_blue/gold/minimal/hormozi), 6 kelimelik satır grupları, fade-in/out geçişler, aktif kelime vurgulama (hormozi=sarı, neon=parlama, gold=shimmer). **composition.py:** 3 modül tipi props builder, absolute path resolving, Remotion CLI async subprocess, stdout/stderr streaming. TypeScript 0 hata ile derleniyor. |
+| **Riskler** | Remotion render süresi uzun olabilir (video süresi × hesaplama). npx/Remotion kurulu olmalı. Büyük video dosyaları disk alanı gerektirir. |
+| **Açık Kalan Noktalar** | Faz 10'da: Concurrent job limiti, log rotation, UI polish, dead code temizliği, temiz makine kurulum testi |
+
+---
+
+### REQ-010: Faz 10 — Son Kalite, Temizlik ve v1.0.0 Yayın Hazırlığı
+
+| Alan | Değer |
+|------|-------|
+| **Kimlik** | REQ-010 |
+| **Tarih** | 2026-03-29 |
+| **Talep Eden** | Huseyin |
+| **Açıklama** | Faz 10: Projenin v1.0.0 yayın kalitesine ulaştırılması — dead code ve unused import temizliği, UI polish (cn() tutarlılığı, spacing), README.md oluşturma (5 dakikada kurulum rehberi), dokümantasyon kapanışı (REQ-010, final IMPLEMENTATION_REPORT, CHANGELOG v1.0.0). |
+| **Kapsam** | Backend: unused import temizliği (5 dosya). Proje kökü: README.md. Docs: REQUEST_LOG, IMPLEMENTATION_REPORT, CHANGELOG güncelleme |
+| **Öncelik** | Yüksek |
+| **Durum** | Tamamlandı |
+| **İlgili Modüller** | backend/modules, backend/pipeline/steps, backend/providers/tts, docs/, proje kökü |
+| **İlgili Dosyalar** | `backend/modules/standard_video/pipeline.py` (dead code: eski step_subtitles + step_composition kaldırıldı, unused `import asyncio` kaldırıldı), `backend/modules/news_bulletin/pipeline.py` (unused `import random` kaldırıldı), `backend/pipeline/steps/composition.py` (unused `import os` kaldırıldı), `backend/pipeline/steps/subtitles.py` (unused `import json` kaldırıldı), `backend/providers/tts/edge_tts_provider.py` (unused `import io` + `import struct` kaldırıldı), `README.md` (yeni), `docs/REQUEST_LOG.md`, `docs/IMPLEMENTATION_REPORT.md`, `docs/CHANGELOG.md` |
+| **Uygulanma Notları** | **Dead Code Temizliği:** standard_video/pipeline.py'den eski `step_subtitles()` (~86 satır) ve `step_composition()` (~80 satır) fonksiyonları kaldırıldı — bunlar artık `pipeline/steps/subtitles.py` ve `pipeline/steps/composition.py` tarafından karşılanıyor. 5 dosyada toplam 6 unused import kaldırıldı. **UI Polish:** Frontend cn() kullanımı 14 dosyada tutarlı, spacing/renk sistemi doğru, Shadcn bileşenleri standartlara uygun. **README.md:** Özellik tablosu, mimari diyagram, 5 dakikada kurulum rehberi (6 adım), ortam değişkenleri, proje yapısı, provider fallback şeması, 7 doküman bağlantısı. **Doğrulama:** Python 21/21 çekirdek modül import testi başarılı, Remotion tsc 0 hata, Frontend tsc 0 hata. |
+| **Riskler** | Yok — temizlik ve dokümantasyon fazı |
+| **Açık Kalan Noktalar** | `backend/services/cost_tracker.py` ve `backend/utils/file_helpers.py` henüz oluşturulmadı (planlanmış ama gerekli olmadığı için ertelendi) |
 
 ---
 

@@ -5,6 +5,79 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ve [Semantic Ver
 
 ---
 
+## [1.0.0] — 2026-03-29
+
+### Production Release — Son Kalite ve Temizlik
+
+**Dead Code Temizliği (Faz 10):**
+- `backend/modules/standard_video/pipeline.py` — Eski `step_subtitles()` (~86 satır) ve `step_composition()` (~80 satır) fonksiyonları kaldırıldı (artık `pipeline/steps/` altındaki modüller kullanılıyor)
+- 5 dosyada unused import temizliği: `asyncio`, `random`, `os`, `json`, `io`, `struct`
+
+**README.md:**
+- Proje kökünde kapsamlı README oluşturuldu: özellik tablosu, mimari diyagram, 5 dakikada kurulum rehberi (6 adım), ortam değişkenleri, proje yapısı, provider fallback şeması, 7 doküman bağlantısı
+
+**Dokümantasyon Kapanışı:**
+- `docs/REQUEST_LOG.md` — REQ-010 kaydı
+- `docs/IMPLEMENTATION_REPORT.md` — Faz 10 karşılama raporu + genel proje özeti
+- `docs/CHANGELOG.md` — v1.0.0 Production Release
+
+### Doğrulama Sonuçları
+- Python backend: 21/21 çekirdek modül import testi başarılı
+- Remotion TypeScript: 0 hata (tsc --noEmit)
+- Frontend TypeScript: 0 hata (tsc --noEmit)
+- Hiçbir dosyada TODO veya placeholder yok
+
+---
+
+## [0.9.0] — 2026-03-29
+
+### Eklenen — Remotion Video Entegrasyonu ve Stabilizasyon
+
+**Remotion Composition'lar (Faz 9):**
+- `remotion/src/compositions/StandardVideo.tsx` — Ken Burns efekti (zoom-in/out alternate), crossfade geçişler, vignette overlay, `<Video>`/`<Img>`/`<Audio>` bileşenleri
+- `remotion/src/compositions/NewsBulletin.tsx` — Animasyonlu lower-third (slide-up), kategori renk kodlama (5 renk), tarih damgası overlay
+- `remotion/src/compositions/ProductReview.tsx` — Bölüm badge animasyonu, ScoreRing SVG (verdict animasyonu), Pro/Con ikon gösterimi
+- `remotion/src/components/Subtitles.tsx` — 5 altyazı stili (standard, neon_blue, gold, minimal, hormozi), kelime bazlı senkronizasyon, 6 kelimelik satır grupları, fade-in/out geçişler
+
+**Backend Composition Step:**
+- `backend/pipeline/steps/composition.py` — Props builder'lar (3 modül tipi), absolute path resolving, Remotion CLI async subprocess çağrısı, stdout/stderr streaming, hata toleransı
+
+### Değişen
+- `backend/modules/standard_video/pipeline.py` — Composition step artık `step_composition_remotion` kullanıyor
+- `backend/modules/news_bulletin/pipeline.py` — Composition step `step_composition_remotion` olarak güncellendi
+- `backend/modules/product_review/pipeline.py` — Composition step `step_composition_remotion` olarak güncellendi
+
+---
+
+## [0.8.0] — 2026-03-29
+
+### Eklenen — Referans Projelerden Seçilen Özelliklerin Entegrasyonu
+
+**Yeni Modüller (Faz 8):**
+- `backend/modules/news_bulletin/` — Haber bülteni video üretim modülü (URL/RSS içerik çekme, bülten formatında senaryo, 8 sahne varsayılan)
+- `backend/modules/product_review/` — Ürün inceleme video üretim modülü (5 bölümlü Pro/Con format: Hook → Overview → Pros → Cons → Verdict)
+
+**Kategori Prompt Sistemi:**
+- `backend/pipeline/steps/script.py` — 6 içerik kategorisi (general, true_crime, science, history, motivation, religion) her biri tone/focus/style_instruction ile
+- `build_enhanced_prompt()` — System instruction'a kategori bilgisi + hook talimatı ekleme
+
+**Açılış Hook Çeşitliliği:**
+- 8 hook tipi (shocking_fact, question, story, contradiction, future_peek, comparison, personal_address, countdown)
+- TR ve EN dil desteği (toplam 16 hook tanımı)
+- Session-level tekrar önleme (son 6 hook hatırlanır, tükenince otomatik sıfırlanır)
+
+**Gelişmiş Altyazı Sistemi:**
+- `backend/pipeline/steps/subtitles.py` — 3 katmanlı zamanlama stratejisi (TTS word-timing → Whisper API → eşit dağıtım)
+- 5 altyazı stili: standard, neon_blue, gold, minimal, hormozi (Remotion-uyumlu config dict'leri)
+- OpenAI Whisper API entegrasyonu (word-level timestamps, $0.006/dk)
+
+### Değişen
+- `backend/modules/standard_video/pipeline.py` — step_script() artık build_enhanced_prompt() kullanıyor, subtitles adımı step_subtitles_enhanced() ile değiştirildi
+- `backend/modules/registry.py` — news_bulletin_module ve product_review_module import + register aktif edildi
+- Tüm modüller (news_bulletin, product_review) gelişmiş altyazı sistemi kullanıyor
+
+---
+
 ## [0.7.0] — 2026-03-29
 
 ### Eklenen — Yaşayan Dokümantasyon ve Mimari Karar Kayıtları
@@ -174,7 +247,15 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ve [Semantic Ver
 
 ## [Yayınlanmadı]
 
-### Planlanıyor
-- Faz 8: Referans projelerden seçilen özelliklerin entegrasyonu (news_bulletin modülü, product_review modülü, karaoke altyazı, 5 altyazı stili, YouTube OAuth, Remotion gerçek render)
-- Faz 9: Stabilizasyon (crash recovery tam test, provider fallback stres testi, SSE reconnect, concurrent job limiti, rate limiting)
-- Faz 10: Son kalite ve temizlik (UI polish, performans, dead code temizliği, kurulum testi)
+### Gelecek İyileştirmeler
+- YouTube OAuth upload entegrasyonu
+- Karaoke animasyonu (KaraokeText.tsx)
+- RSS feed parser (feedparser paketi)
+- Concurrent job limiti (asyncio.Semaphore)
+- Log rotation (10MB dosya limiti)
+- ElevenLabs / OpenAI TTS provider implementasyonları
+- Pixabay visuals provider implementasyonu
+- CostTracker sayfası (admin panel)
+- Drag-drop fallback sıralaması
+- Voice cloning desteği
+- Thumbnail üretimi

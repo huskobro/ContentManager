@@ -2,16 +2,18 @@
 Standard Video Pipeline — 6 adımlı video üretim pipeline'ı.
 
 Adımlar:
-  0. Script    — Senaryo üretimi (LLM provider → Gemini fallback)
+  0. Script    — Senaryo üretimi (LLM provider + kategori prompt + hook çeşitliliği)
   1. Metadata  — Başlık, açıklama, etiket üretimi (LLM provider)
   2. TTS       — Ses sentezi (TTS provider → Edge TTS fallback)
   3. Visuals   — Görsel indirme (Visuals provider → Pexels fallback)
-  4. Subtitles — Altyazı oluşturma (TTS word-timing verisi + cache)
-  5. Composition — Video birleştirme (Remotion — Faz 8'de gerçek impl.)
+  4. Subtitles — Gelişmiş altyazı (3 katmanlı zamanlama + 5 stil)
+  5. Composition — Video birleştirme (Remotion props hazırlama)
 
-Faz 6: Script, TTS ve Visuals adımları gerçek provider'ları kullanır.
-Metadata ve Subtitles adımları LLM + TTS çıktılarını işler.
-Composition adımı hâlâ mock — Remotion entegrasyonu Faz 8'de.
+Faz 8 güncellemeleri:
+  - Script adımı: build_enhanced_prompt() ile 6 kategori promptu ve
+    8 açılış hook'u (tekrar önleme) entegre edildi.
+  - Subtitles adımı: step_subtitles_enhanced() ile 3 katmanlı zamanlama
+    (TTS → Whisper → eşit dağıtım) ve 5 altyazı stili desteği eklendi.
 
 Her step fonksiyonu ProviderRegistry.execute_with_fallback() ile
 provider zincirini çalıştırır. API key veya provider yoksa graceful
@@ -20,7 +22,6 @@ hata döner (non-fatal adımlar atlanır, fatal adımlar job'u durdurur).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import random
 from typing import Any
@@ -28,6 +29,9 @@ from typing import Any
 from backend.modules.base import Capability, ContentModule, PipelineStepDef
 from backend.modules.standard_video.config import DEFAULT_CONFIG
 from backend.pipeline.cache import CacheManager
+from backend.pipeline.steps.composition import step_composition_remotion
+from backend.pipeline.steps.script import build_enhanced_prompt
+from backend.pipeline.steps.subtitles import step_subtitles_enhanced
 from backend.providers.registry import provider_registry
 from backend.utils.logger import get_logger
 
@@ -108,9 +112,16 @@ async def step_script(
     title = config.get("_job_title", "Yapay Zekanın Geleceği")
     language_name = _LANGUAGE_MAP.get(language, language)
 
-    system_instruction = _SCRIPT_SYSTEM_INSTRUCTION.format(
+    base_instruction = _SCRIPT_SYSTEM_INSTRUCTION.format(
         scene_count=scene_count,
         language_name=language_name,
+    )
+
+    # Kategori ve hook zenginleştirmesi
+    system_instruction, hook_instruction = build_enhanced_prompt(
+        title=title,
+        config=config,
+        base_system_instruction=base_instruction,
     )
 
     prompt = (
@@ -118,6 +129,9 @@ async def step_script(
         f"Bu konu hakkında {scene_count} sahneli bir YouTube video senaryosu yaz. "
         f"Dil: {language_name}."
     )
+
+    if hook_instruction:
+        prompt += hook_instruction
 
     result = await provider_registry.execute_with_fallback(
         category="llm",
@@ -432,177 +446,6 @@ async def step_visuals(
     }
 
 
-async def step_subtitles(
-    job_id: str,
-    step_key: str,
-    config: dict[str, Any],
-    cache: CacheManager,
-) -> dict[str, Any]:
-    """
-    Adım 4: Altyazı oluşturma.
-
-    TTS adımından gelen word-timing verilerini kullanarak
-    altyazı JSON'ı oluşturur. Whisper gerektirmez — Edge TTS
-    zaten word-level timing sağlar.
-    """
-    tts_data = cache.load_json("tts")
-    script_data = cache.load_json("script")
-
-    if not tts_data:
-        raise RuntimeError("TTS verisi bulunamadı — altyazı öncesinde TTS adımı tamamlanmalı.")
-
-    scenes = script_data.get("scenes", []) if script_data else []
-    tts_files = tts_data.get("files", [])
-
-    subtitle_entries = []
-    current_offset_ms = 0.0
-
-    for i, tts_file in enumerate(tts_files):
-        scene_num = tts_file.get("scene_number", i + 1)
-        duration_sec = tts_file.get("duration_seconds", 15.0)
-        word_timings = tts_file.get("word_timings", [])
-
-        narration = ""
-        if i < len(scenes):
-            narration = scenes[i].get("narration", "")
-
-        if word_timings:
-            # TTS'ten gelen gerçek word-timing'leri kullan
-            adjusted_timings = []
-            for wt in word_timings:
-                adjusted_timings.append({
-                    "word": wt["word"],
-                    "start": round((current_offset_ms + wt.get("start_ms", 0)) / 1000.0, 3),
-                    "end": round((current_offset_ms + wt.get("end_ms", 0)) / 1000.0, 3),
-                })
-        else:
-            # Word-timing yoksa eşit dağıtım
-            words = narration.split() if narration else [f"word_{j}" for j in range(5)]
-            time_per_word = (duration_sec * 1000) / max(len(words), 1)
-            adjusted_timings = []
-            for j, word in enumerate(words):
-                start_ms = current_offset_ms + j * time_per_word
-                end_ms = start_ms + time_per_word
-                adjusted_timings.append({
-                    "word": word,
-                    "start": round(start_ms / 1000.0, 3),
-                    "end": round(end_ms / 1000.0, 3),
-                })
-
-        subtitle_entries.append({
-            "scene_number": scene_num,
-            "text": narration or f"Sahne {scene_num}",
-            "start_time": round(current_offset_ms / 1000.0, 3),
-            "end_time": round((current_offset_ms + duration_sec * 1000) / 1000.0, 3),
-            "word_timings": adjusted_timings,
-        })
-
-        current_offset_ms += duration_sec * 1000
-
-    subtitles_data = {
-        "style": config.get("subtitle_style", "standard"),
-        "font_size": config.get("subtitle_font_size", 48),
-        "position": config.get("subtitle_position", "bottom"),
-        "total_duration": round(current_offset_ms / 1000.0, 3),
-        "entry_count": len(subtitle_entries),
-        "source": "tts_word_timing",
-        "entries": subtitle_entries,
-    }
-
-    output_path = cache.save_json(step_key, subtitles_data)
-
-    return {
-        "provider": "tts_word_timing",
-        "style": config.get("subtitle_style", "standard"),
-        "entry_count": len(subtitle_entries),
-        "total_duration": round(current_offset_ms / 1000.0, 3),
-        "output_path": str(output_path),
-        "cost_estimate_usd": 0.0,
-    }
-
-
-async def step_composition(
-    job_id: str,
-    step_key: str,
-    config: dict[str, Any],
-    cache: CacheManager,
-) -> dict[str, Any]:
-    """
-    Adım 5: Video kompozisyon — Remotion (Faz 8'de gerçek entegrasyon).
-
-    Şu an tüm asset'lerin mevcut olduğunu doğrular ve bir manifest
-    oluşturur. Gerçek Remotion render'ı Faz 8'de eklenecek.
-    """
-    script_data = cache.load_json("script")
-    tts_data = cache.load_json("tts")
-    visuals_data = cache.load_json("visuals")
-    subtitles_data = cache.load_json("subtitles")
-
-    # Asset özeti
-    scene_count = len(script_data.get("scenes", [])) if script_data else 0
-    total_duration = tts_data.get("total_duration_seconds", 0) if tts_data else 0
-    visual_count = visuals_data.get("downloaded", 0) if visuals_data else 0
-    subtitle_count = subtitles_data.get("entry_count", 0) if subtitles_data else 0
-
-    log.info(
-        "Composition asset özeti",
-        job_id=job_id[:8],
-        scene_count=scene_count,
-        total_duration=total_duration,
-        visual_count=visual_count,
-        subtitle_count=subtitle_count,
-    )
-
-    # Remotion input props oluştur (Faz 8'de kullanılacak)
-    composition_props = {
-        "resolution": config.get("video_resolution", "1920x1080"),
-        "fps": config.get("video_fps", 30),
-        "duration_seconds": round(total_duration, 2),
-        "scene_count": scene_count,
-        "subtitle_style": config.get("subtitle_style", "standard"),
-        "ken_burns_enabled": config.get("ken_burns_enabled", True),
-        "ken_burns_intensity": config.get("ken_burns_intensity", 0.05),
-        "background_music_enabled": config.get("background_music_enabled", False),
-        "scenes": [],
-    }
-
-    # Her sahne için asset bilgilerini topla
-    tts_files = tts_data.get("files", []) if tts_data else []
-    visual_files = visuals_data.get("files", []) if visuals_data else []
-
-    for i in range(scene_count):
-        scene_asset: dict[str, Any] = {"scene_number": i + 1}
-
-        if i < len(tts_files):
-            scene_asset["audio_file"] = tts_files[i].get("filename")
-            scene_asset["audio_duration"] = tts_files[i].get("duration_seconds", 0)
-
-        if i < len(visual_files):
-            scene_asset["visual_file"] = visual_files[i].get("filename")
-
-        composition_props["scenes"].append(scene_asset)
-
-    # Placeholder final video oluştur (Faz 8'de Remotion render'ı yapılacak)
-    placeholder_video = (
-        f"REMOTION_RENDER_PENDING_{job_id[:8]}_"
-        f"{config.get('video_resolution', '1920x1080')}_"
-        f"{config.get('video_fps', 30)}fps"
-    ).encode("utf-8") * 100
-
-    final_path = cache.save_binary(step_key, placeholder_video, "final.mp4")
-    cache.save_json(step_key, composition_props)
-
-    return {
-        "provider": "remotion_pending",
-        "resolution": config.get("video_resolution", "1920x1080"),
-        "duration_seconds": round(total_duration, 2),
-        "scene_count": scene_count,
-        "output_file": str(final_path),
-        "output_path": str(final_path),
-        "cost_estimate_usd": 0.0,
-    }
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Yardımcı fonksiyonlar
 # ─────────────────────────────────────────────────────────────────────────────
@@ -783,7 +626,7 @@ class StandardVideoModule(ContentModule):
                 label="Altyazı Oluşturma",
                 order=4,
                 capability=Capability.SUBTITLES,
-                execute=step_subtitles,
+                execute=step_subtitles_enhanced,
                 is_fatal=False,
                 default_provider="tts_word_timing",
             ),
@@ -792,7 +635,7 @@ class StandardVideoModule(ContentModule):
                 label="Video Kompozisyon",
                 order=5,
                 capability=Capability.COMPOSITION,
-                execute=step_composition,
+                execute=step_composition_remotion,
                 is_fatal=True,
                 default_provider="remotion",
             ),

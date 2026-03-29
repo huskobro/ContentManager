@@ -124,13 +124,13 @@ def _register_all_modules() -> None:
     from backend.modules.standard_video import standard_video_module
     module_registry.register(standard_video_module)
 
-    # News Bulletin — Faz 8'de doldurulacak
-    # from backend.modules.news_bulletin import news_bulletin_module
-    # module_registry.register(news_bulletin_module)
+    # News Bulletin modülü
+    from backend.modules.news_bulletin import news_bulletin_module
+    module_registry.register(news_bulletin_module)
 
-    # Product Review — Faz 8'de doldurulacak
-    # from backend.modules.product_review import product_review_module
-    # module_registry.register(product_review_module)
+    # Product Review modülü
+    from backend.modules.product_review import product_review_module
+    module_registry.register(product_review_module)
 
 
 # Import-time kayıt

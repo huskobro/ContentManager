@@ -1,30 +1,45 @@
-/**
- * NewsBulletin composition — haber bülteni modülü.
- *
- * Her haber öğesi bir sahne olarak render edilir:
- *   - Arka plan görsel (haber görseli / stock footage)
- *   - Lower-third grafik (başlık + kaynak + kategori)
- *   - Tarih damgası overlay'i
- *   - TTS ses + altyazı
- *
- * Faz 8'de eklenecek:
- *   - Animasyonlu lower-third giriş/çıkış
- *   - Kategori renk kodlama
- *   - Haber arası geçiş animasyonları
- *   - Kayan yazı (ticker) bileşeni
- */
+import React from "react";
+import {
+  AbsoluteFill,
+  Sequence,
+  Audio,
+  Video,
+  Img,
+  useVideoConfig,
+  useCurrentFrame,
+  interpolate,
+  spring,
+} from "remotion";
+import { Subtitles } from "../components/Subtitles";
+import type { NewsBulletinProps, NewsItem, SubtitleChunk, SubtitleStyle } from "../types";
 
-import { AbsoluteFill, Sequence, useVideoConfig } from "remotion";
-import type { NewsBulletinProps, NewsItem } from "../types";
+const CATEGORY_COLORS: Record<string, string> = {
+  ekonomi: "#10b981",
+  spor: "#3b82f6",
+  teknoloji: "#8b5cf6",
+  siyaset: "#ef4444",
+  dunya: "#f59e0b",
+};
+
+const getCategoryColor = (category?: string): string => {
+  if (!category) return "#64748b";
+  return CATEGORY_COLORS[category.toLowerCase()] ?? "#64748b";
+};
+
+const DEFAULT_DURATION_SECONDS = 5;
+const FADE_IN_FRAMES = 12;
+const LOWER_THIRD_SLIDE_FRAMES = 15;
 
 export const NewsBulletin: React.FC<NewsBulletinProps> = ({
   title,
   items,
+  subtitles,
   subtitleStyle,
   settings,
   dateStamp,
 }) => {
   const { fps } = useVideoConfig();
+  const globalFrame = useCurrentFrame();
 
   if (items.length === 0) {
     return (
@@ -59,7 +74,7 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
               maxWidth: 400,
             }}
           >
-            Haber verisi bekleniyor. RSS pipeline tamamlandığında bu
+            Haber verisi bekleniyor. RSS pipeline tamamlandiginda bu
             composition otomatik olarak doldurulur.
           </div>
           <div
@@ -69,8 +84,9 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
               color: "#475569",
             }}
           >
-            {settings.width}x{settings.height} · {settings.fps}fps ·{" "}
-            Tarih: {dateStamp.slice(0, 10)} · Altyazı: {subtitleStyle}
+            {settings.width}x{settings.height} &middot; {settings.fps}fps
+            &middot; Tarih: {dateStamp.slice(0, 10)} &middot; Altyazi:{" "}
+            {subtitleStyle}
           </div>
         </div>
       </AbsoluteFill>
@@ -82,9 +98,15 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       {items.map((item: NewsItem, idx: number) => {
-        const durationFrames = Math.ceil(item.durationInSeconds * fps);
+        const durationSeconds =
+          item.durationInSeconds > 0
+            ? item.durationInSeconds
+            : DEFAULT_DURATION_SECONDS;
+        const durationFrames = Math.ceil(durationSeconds * fps);
         const from = frameOffset;
         frameOffset += durationFrames;
+
+        const subtitleChunk: SubtitleChunk | undefined = subtitles[idx];
 
         return (
           <Sequence
@@ -93,106 +115,224 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
             durationInFrames={durationFrames}
             name={`Haber ${idx + 1}: ${item.headline.slice(0, 40)}`}
           >
-            <AbsoluteFill
-              style={{
-                backgroundColor: "#0f172a",
-                fontFamily: "Inter, system-ui, sans-serif",
-              }}
-            >
-              {/* Arka plan — Faz 8'de <Video>/<Img> */}
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ fontSize: 13, color: "#475569" }}>
-                  {item.visualType === "video" ? "🎬" : "🖼️"}{" "}
-                  {item.visualSrc || `haber_${idx + 1}`}
-                </div>
-              </div>
-
-              {/* Tarih damgası — sol üst */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: 20,
-                  left: 24,
-                  fontSize: 13,
-                  color: "#94a3b8",
-                  fontWeight: 500,
-                }}
-              >
-                {dateStamp.slice(0, 10)}
-              </div>
-
-              {/* Haber numarası — sağ üst */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: 20,
-                  right: 24,
-                  fontSize: 12,
-                  color: "#64748b",
-                }}
-              >
-                {idx + 1} / {items.length}
-              </div>
-
-              {/* Lower-third grafik */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  background:
-                    "linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 60%, transparent 100%)",
-                  padding: "60px 40px 32px",
-                }}
-              >
-                {item.category && (
-                  <div
-                    style={{
-                      display: "inline-block",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.1em",
-                      color: "#f59e0b",
-                      marginBottom: 8,
-                      padding: "2px 8px",
-                      borderRadius: 3,
-                      backgroundColor: "rgba(245, 158, 11, 0.15)",
-                    }}
-                  >
-                    {item.category}
-                  </div>
-                )}
-                <div
-                  style={{
-                    fontSize: 24,
-                    fontWeight: 700,
-                    color: "#fff",
-                    lineHeight: 1.3,
-                    marginBottom: 6,
-                  }}
-                >
-                  {item.headline}
-                </div>
-                {item.source && (
-                  <div style={{ fontSize: 13, color: "#94a3b8" }}>
-                    Kaynak: {item.source}
-                  </div>
-                )}
-              </div>
-            </AbsoluteFill>
+            <NewsItemScene
+              item={item}
+              index={idx}
+              total={items.length}
+              dateStamp={dateStamp}
+              subtitleChunk={subtitleChunk}
+              subtitleStyle={subtitleStyle}
+              durationFrames={durationFrames}
+              isFirst={idx === 0}
+            />
           </Sequence>
         );
       })}
+
+      <AbsoluteFill
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 100%)",
+          pointerEvents: "none",
+        }}
+      />
+    </AbsoluteFill>
+  );
+};
+
+interface NewsItemSceneProps {
+  item: NewsItem;
+  index: number;
+  total: number;
+  dateStamp: string;
+  subtitleChunk: SubtitleChunk | undefined;
+  subtitleStyle: SubtitleStyle;
+  durationFrames: number;
+  isFirst: boolean;
+}
+
+const NewsItemScene: React.FC<NewsItemSceneProps> = ({
+  item,
+  index,
+  total,
+  dateStamp,
+  subtitleChunk,
+  subtitleStyle,
+  durationFrames,
+  isFirst,
+}) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  const fadeInOpacity = isFirst
+    ? 1
+    : interpolate(frame, [0, FADE_IN_FRAMES], [0, 1], {
+        extrapolateRight: "clamp",
+      });
+
+  const lowerThirdTranslateY = interpolate(
+    frame,
+    [0, LOWER_THIRD_SLIDE_FRAMES],
+    [80, 0],
+    { extrapolateRight: "clamp" }
+  );
+
+  const lowerThirdOpacity = interpolate(
+    frame,
+    [0, LOWER_THIRD_SLIDE_FRAMES],
+    [0, 1],
+    { extrapolateRight: "clamp" }
+  );
+
+  const categoryColor = getCategoryColor(item.category);
+
+  return (
+    <AbsoluteFill
+      style={{
+        fontFamily: "Inter, system-ui, sans-serif",
+        opacity: fadeInOpacity,
+      }}
+    >
+      <AbsoluteFill>
+        {item.visualSrc ? (
+          item.visualType === "video" ? (
+            <Video
+              src={item.visualSrc}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : (
+            <Img
+              src={item.visualSrc}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          )
+        ) : (
+          <AbsoluteFill
+            style={{
+              background:
+                "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)",
+            }}
+          />
+        )}
+      </AbsoluteFill>
+
+      <AbsoluteFill
+        style={{
+          background:
+            "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 40%, transparent 70%)",
+        }}
+      />
+
+      {item.audioSrc ? <Audio src={item.audioSrc} /> : null}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 24,
+          fontSize: 13,
+          color: "#ffffff",
+          fontWeight: 600,
+          padding: "4px 10px",
+          backgroundColor: "rgba(0,0,0,0.45)",
+          borderRadius: 4,
+        }}
+      >
+        {dateStamp.slice(0, 10)}
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          right: 24,
+          fontSize: 13,
+          color: "#ffffff",
+          fontWeight: 600,
+          padding: "4px 10px",
+          backgroundColor: "rgba(0,0,0,0.45)",
+          borderRadius: 4,
+        }}
+      >
+        {index + 1} / {total}
+      </div>
+
+      {subtitleChunk && subtitleChunk.words.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            top: "60%",
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <Subtitles
+              subtitleChunk={subtitleChunk}
+              style={subtitleStyle}
+              sceneStartFrame={0}
+              sceneDurationFrames={durationFrames}
+            />
+        </div>
+      )}
+
+      <div
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background:
+            "linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 60%, transparent 100%)",
+          padding: "60px 40px 32px",
+          transform: `translateY(${lowerThirdTranslateY}px)`,
+          opacity: lowerThirdOpacity,
+        }}
+      >
+        {item.category && (
+          <div
+            style={{
+              display: "inline-block",
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: "#ffffff",
+              marginBottom: 8,
+              padding: "3px 10px",
+              borderRadius: 4,
+              backgroundColor: categoryColor,
+            }}
+          >
+            {item.category}
+          </div>
+        )}
+        <div
+          style={{
+            fontSize: 26,
+            fontWeight: 700,
+            color: "#ffffff",
+            lineHeight: 1.3,
+            marginBottom: 6,
+          }}
+        >
+          {item.headline}
+        </div>
+        {item.source && (
+          <div style={{ fontSize: 13, color: "#94a3b8" }}>
+            Kaynak: {item.source}
+          </div>
+        )}
+      </div>
+
+      <AbsoluteFill
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.35) 100%)",
+          pointerEvents: "none",
+        }}
+      />
     </AbsoluteFill>
   );
 };

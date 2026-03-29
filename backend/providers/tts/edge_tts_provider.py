@@ -17,8 +17,6 @@ Kütüphane: edge-tts (v7+)
 
 from __future__ import annotations
 
-import io
-import struct
 from typing import Any
 
 import edge_tts
