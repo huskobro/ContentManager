@@ -1,164 +1,453 @@
-# ContentManager — Özellik ve Ekran İşlev Dokümanı
+# ContentManager -- Ozellik ve Aksiyon Haritasi
 
-> Son güncelleme: 2026-03-29 · Versiyon: v0.1.0
+> Versiyon: v0.7.0 | Tarih: 2026-03-29
 
-Bu doküman, her sayfanın, her bileşenin, her butonun ve her ayarın ne yaptığını tanımlar.
-
----
-
-## Genel Arayüz Bileşenleri
-
-### AppShell (`components/layout/AppShell.tsx`)
-
-| Öğe | Davranış |
-|-----|----------|
-| Yerleşim | Sol sidebar + üst header + orta içerik alanı (`<Outlet />`) |
-| Responsive | Sidebar genişliğine göre içerik alanı sol margin değiştirilir. Mobilde sidebar off-canvas, masaüstünde sabit. |
-| Mode prop | `"user"` → kullanıcı navigasyonu, `"admin"` → admin navigasyonu |
-
-### Sidebar (`components/layout/Sidebar.tsx`)
-
-| Öğe | Davranış |
-|-----|----------|
-| Logo ("CM") | Tıklanınca modun ana sayfasına yönlendirir (user → `/dashboard`, admin → `/admin/dashboard`) |
-| Navigasyon linkleri | `NavLink` ile aktif sayfa vurgulanır (mavi arka plan). Daraltılmış modda sadece ikon gösterilir. |
-| Daralt/Genişlet butonu | Masaüstünde sidebar genişliğini 220px ↔ 60px arasında geçirir. Tercih `localStorage`'da saklanır. |
-| Mobil overlay | Mobilde sidebar dışına tıklanınca sidebar kapanır (yarı saydam siyah backdrop). |
-| Admin geçiş bağlantısı | User modunda sidebar altında "Admin Paneli" bağlantısı gösterilir (shield ikonu ile). |
-| Mod etiketi | Daraltılmamış durumda "İçerik Üretimi" veya "Admin Paneli" yazısı üstte gösterilir. |
-
-**User Modu Menü Öğeleri:**
-
-| Öğe | İkon | Yol | Açıklama |
-|-----|------|-----|----------|
-| Dashboard | LayoutDashboard | `/dashboard` | Özet istatistikler ve sistem durumu |
-| Video Oluştur | PlusCircle | `/create` | Yeni video pipeline başlatma |
-| İşler | ListVideo | `/jobs` | Aktif ve geçmiş iş listesi |
-| Ayarlar | Settings | `/settings` | Kullanıcı video varsayımları |
-
-**Admin Modu Menü Öğeleri:**
-
-| Öğe | İkon | Yol | Açıklama |
-|-----|------|-----|----------|
-| Admin Dashboard | LayoutDashboard | `/admin/dashboard` | Yönetim özeti |
-| Modül Yönetimi | Boxes | `/admin/modules` | Modül açma/kapama |
-| Provider Yönetimi | Plug | `/admin/providers` | API ve fallback |
-| Global Ayarlar | Sliders | `/admin/global-settings` | Sistem varsayımları |
-| Maliyet Takibi | BarChart3 | `/admin/cost-tracker` | Harcama raporu |
-| Tüm İşler | ListVideo | `/admin/jobs` | Admin iş yönetimi |
-
-### Header (`components/layout/Header.tsx`)
-
-| Öğe | İkon | Konum | Davranış |
-|-----|------|-------|----------|
-| Hamburger menü | Menu | Sol (yalnızca mobil) | `mobileSidebarOpen` state'ini `true` yapar |
-| Sayfa başlığı | — | Orta | Aktif rota'ya göre `PAGE_TITLES` eşleştirmesinden alınır |
-| Admin modu etiketi | ShieldCheck | Orta alt | Admin modunda sarı renkli "Admin Modu" yazısı |
-| Tema butonu | Sun / Moon | Sağ | Dark ↔ Light geçişi; `uiStore.toggleTheme()` çağrısı; `localStorage` ve `<html class>` güncellenir |
-| Admin giriş butonu | KeyRound | Sağ (user modda) | PIN giriş modalını açar |
-| Admin kilitle butonu | ShieldOff | Sağ (admin modda) | Admin oturumunu sonlandırır, `/dashboard`'a yönlendirir |
-
-**Admin PIN Modalı:**
-
-| Öğe | Davranış |
-|-----|----------|
-| PIN input | `type="password"`, `inputMode="numeric"`, max 8 karakter, ortalanmış tracking |
-| Hatalı PIN | Input bordürü kırmızıya döner, "Hatalı PIN" mesajı gösterilir, input temizlenir |
-| İptal butonu | Modalı kapatır, state'i sıfırlar |
-| Giriş butonu | PIN doğrulanırsa `adminUnlocked = true` yapılır, `/admin/dashboard`'a yönlendirilir |
-| Dış tıklama | Modalı kapatmaz (bilinçli karar — güvenlik) |
+Bu dokuman, ContentManager arayuzundeki her bilesenin, her butonun, her form elemaninin arka plandaki API endpoint ve Zustand store metodu ile iliskisini birebir haritalandirir. Hicbir placeholder veya TODO icermez; her satir gercek koda karsilik gelir.
 
 ---
 
-## Sayfa Bazlı İşlevler
+## Icindekiler
 
-### Dashboard (`pages/user/Dashboard.tsx`)
-
-| Bileşen | Veri Kaynağı | İşlev |
-|---------|-------------|-------|
-| StatCard: Aktif İşler | `jobStore.getActiveJobs().length` | `queued` veya `running` statüsündeki iş sayısı |
-| StatCard: Tamamlanan | `jobStore.getCompletedJobs()` filtrelenmiş | `completed` statüsündeki iş sayısı |
-| StatCard: Başarısız | `jobStore.getCompletedJobs()` filtrelenmiş | `failed` statüsündeki iş sayısı |
-| StatCard: Toplam | aktif + tamamlanan | Tüm işlerin sayısı |
-| Sistem Durumu | `GET /health` (sayfa mount'unda) | API, veritabanı ve ortam durumunu renkli badge'lerle gösterir |
-| Hızlı Başlat: Standart Video | — | `/create` sayfasına yönlendirir |
-| Hızlı Başlat: İşleri Görüntüle | — | `/jobs` sayfasına yönlendirir |
-
-### CreateVideo (`pages/user/CreateVideo.tsx`)
-
-**Mevcut durum (Faz 1):** Bilgi ekranı — modül seçimi ve topic girişi Faz 3'te eklenecek.
-
-### JobList (`pages/user/JobList.tsx`)
-
-**Mevcut durum (Faz 1):** Bilgi ekranı — SSE tabanlı canlı liste Faz 3'te eklenecek.
-
-### UserSettings (`pages/user/UserSettings.tsx`)
-
-**Mevcut durum (Faz 1):** Bilgi ekranı — kullanıcı override formu Faz 3'te eklenecek.
-
-### AdminDashboard (`pages/admin/AdminDashboard.tsx`)
-
-| Bileşen | İşlev |
-|---------|-------|
-| Uyarı banner | "Admin modundasınız" bilgi mesajı (amber tonlu) |
-| Modül Yönetimi kartı | `/admin/modules` sayfasına yönlendirir |
-| Provider Yönetimi kartı | `/admin/providers` sayfasına yönlendirir |
-| Global Ayarlar kartı | `/admin/global-settings` sayfasına yönlendirir |
-| Maliyet Takibi kartı | `/admin/cost-tracker` sayfasına yönlendirir |
+1. [Genel Layout Bilesenleri](#1-genel-layout-bilesenleri)
+   - [AppShell](#11-appshell)
+   - [Sidebar](#12-sidebar)
+   - [Header](#13-header)
+2. [Kullanici Sayfalari](#2-kullanici-sayfalari)
+   - [Dashboard](#21-dashboard)
+   - [CreateVideo](#22-createvideo)
+   - [JobList](#23-joblist)
+   - [JobDetail](#24-jobdetail)
+   - [UserSettings](#25-usersettings)
+3. [Admin Sayfalari](#3-admin-sayfalari)
+   - [AdminDashboard](#31-admindashboard)
+   - [GlobalSettings](#32-globalsettings)
+   - [ModuleManager](#33-modulemanager)
+   - [ProviderManager](#34-providermanager)
+   - [AdminJobs](#35-adminjobs)
+4. [Zustand Store -> API Haritasi](#4-zustand-store---api-haritasi)
+5. [SSE Event Tipleri](#5-sse-event-tipleri)
 
 ---
 
-## State Yönetimi İşlevleri
+## 1. Genel Layout Bilesenleri
 
-### uiStore
+### 1.1 AppShell
 
-| Fonksiyon | Tetikleyen | Etki |
-|-----------|-----------|------|
-| `toggleTheme()` | Header tema butonu | `<html>` class değişir, localStorage güncellenir |
-| `toggleSidebar()` | Sidebar daralt butonu | Sidebar genişliği 220px ↔ 60px |
-| `setMobileSidebarOpen(bool)` | Hamburger / overlay tıklama | Mobil sidebar açılır/kapanır |
-| `unlockAdmin()` | PIN doğrulaması başarılı | `adminUnlocked = true` |
-| `lockAdmin()` | Header kilitle butonu | `adminUnlocked = false` |
-| `addToast(toast)` | Herhangi bir bileşen | Bildirim eklenir, `duration` ms sonra otomatik kalkar |
-| `removeToast(id)` | Otomatik timer veya manuel | Bildirim kuyruğundan kaldırır |
+**Dosya:** `components/layout/AppShell.tsx`
 
-### jobStore
+AppShell, tum sayfalari saran ust duzey layout bilesenidir. Sol tarafta Sidebar, ustte Header ve ortada React Router `<Outlet />` icerir.
 
-| Fonksiyon | Açıklama |
-|-----------|----------|
-| `setJobs(jobs)` | Backend'den toplu yükleme |
-| `upsertJob(job)` | Tekil iş ekleme veya güncelleme |
-| `updateJobStatus(id, status, errorMessage?)` | İş durumu değişimi (SSE'den) |
-| `updateStep(jobId, stepKey, update)` | Pipeline adım güncelleme (SSE'den) |
-| `appendLog(jobId, entry)` | Log satırı ekleme (son 500 satır tutulur) |
-| `setOutputPath(jobId, path)` | Final video çıktı yolu |
-| `getActiveJobs()` | `queued` veya `running` durumundaki işler |
-| `getCompletedJobs()` | `completed`, `failed` veya `cancelled` durumundaki işler |
-
-### settingsStore
-
-| Fonksiyon | Açıklama |
-|-----------|----------|
-| `setUserDefaults(partial)` | Birden fazla ayarı güncelle |
-| `patchUserDefault(key, value)` | Tek ayar güncelle |
-| `setLoaded(bool)` | Backend'den yükleme tamamlandı mı |
+| Ozellik | Aciklama |
+|---------|----------|
+| `mode` prop | `"user"` veya `"admin"` -- React Router parent route tarafindan belirlenir |
+| Responsive davranisin | Sidebar kapali iken `lg:ml-[60px]`, acik iken `lg:ml-[220px]` margin uygular |
+| Yapisal bilesenler | `<Sidebar />` + `<Header />` + `<Outlet />` |
 
 ---
 
-## API Client İşlevleri (`api/client.ts`)
+### 1.2 Sidebar
 
-| Fonksiyon | İmza | Açıklama |
-|-----------|------|----------|
-| `api.get<T>` | `(path, options?) → Promise<T>` | GET isteği |
-| `api.post<T>` | `(path, body?, options?) → Promise<T>` | POST isteği |
-| `api.put<T>` | `(path, body?, options?) → Promise<T>` | PUT isteği |
-| `api.patch<T>` | `(path, body?, options?) → Promise<T>` | PATCH isteği |
-| `api.delete<T>` | `(path, options?) → Promise<T>` | DELETE isteği |
-| `openSSE` | `(path, onMessage, onError?) → () => void` | EventSource stream açar, cleanup fonksiyonu döner |
-| `APIError` | `class extends Error { status, body }` | HTTP hata sınıfı |
+**Dosya:** `components/layout/Sidebar.tsx`
 
-`adminPin` options parametresi ile admin korumalı endpoint'lere `X-Admin-Pin` header'ı gönderilir.
+#### Kullanici Menusu (mode = "user")
+
+| Menu Ogesi | Ikon | Yol | Aciklama |
+|------------|------|-----|----------|
+| Dashboard | LayoutDashboard | `/dashboard` | Istatistik ozeti sayfasi |
+| Video Olustur | PlusCircle | `/create` | Yeni video pipeline baslatma |
+| Isler | ListVideo | `/jobs` | Is listesi ve takip |
+| Ayarlar | Settings | `/settings` | Kullanici tercihleri |
+| Admin Paneli | ShieldCheck | (sidebar alt kismi) | Admin giris linki |
+
+#### Admin Menusu (mode = "admin")
+
+| Menu Ogesi | Ikon | Yol |
+|------------|------|-----|
+| Admin Dashboard | LayoutDashboard | `/admin/dashboard` |
+| Modul Yonetimi | Boxes | `/admin/modules` |
+| Provider Yonetimi | Plug | `/admin/providers` |
+| Global Ayarlar | Sliders | `/admin/global-settings` |
+| Tum Isler | ListVideo | `/admin/jobs` |
+
+#### Sidebar Aksiyonlari
+
+| Aksiyon | Tetikleyici | Store Metodu | Etki |
+|---------|-------------|--------------|------|
+| Daralt/Genislet | "Daralt" butonu | `uiStore.toggleSidebar()` | Genislik 220px ile 60px arasi gecis yapar, localStorage'da saklanir |
+| Mobil acma | Hamburger ikonu | `uiStore.setMobileSidebarOpen(true)` | Overlay olarak sidebar acar |
+| Mobil kapatma | Arka plan (backdrop) tiklamasi | `uiStore.setMobileSidebarOpen(false)` | Overlay sidebar'i kapatir |
+| Logo tiklama | Logo | React Router `navigate` | `mode=user` ise `/dashboard`, `mode=admin` ise `/admin/dashboard` sayfasina yonlendirir |
 
 ---
 
-*Bu doküman her yeni bileşen, buton veya ekran eklendiğinde güncellenir.*
+### 1.3 Header
+
+**Dosya:** `components/layout/Header.tsx`
+
+#### Header Elemanlari
+
+| Eleman | Ikon | Tetikleyici | Store / API | Sonuc |
+|--------|------|-------------|-------------|-------|
+| Hamburger | Menu | Tiklama (yalnizca mobil) | `uiStore.setMobileSidebarOpen(true)` | Mobil sidebar'i acar |
+| Sayfa basligi | -- | Otomatik | React Router `location` -> `PAGE_TITLES` map | Mevcut sayfa adini gosterir |
+| Admin rozeti | ShieldCheck | -- (yalnizca admin modu) | `uiStore.adminUnlocked` | Sari "Admin Modu" metni gosterir |
+| Tema degistirme | Sun / Moon | Tiklama | `uiStore.toggleTheme()` | Dark ile light tema arasi gecis, localStorage'a kaydeder |
+| Admin kilit acma | KeyRound | Tiklama (kullanici modu) | PIN modalini acar | PIN giris diyalogu gosterir |
+| Admin kilitleme | ShieldOff | Tiklama (admin modu) | `uiStore.lockAdmin()` | Admin'i kilitler, `/dashboard` sayfasina yonlendirir |
+
+#### PIN Modali
+
+| Eleman | Tipi | Davranis |
+|--------|------|----------|
+| PIN girisi | `password`, numeric, `maxLength=8` | Ortali, `tracking-widest` stilinde |
+| Gonder butonu | button | localStorage'daki `"cm-admin-pin"` ile karsilastirir, eslesirse `uiStore.unlockAdmin()` cagrilir ve `/admin/dashboard` sayfasina yonlendirilir |
+| Iptal butonu | button | Modali kapatir, state'i sifirlar |
+| Hatali PIN | -- | Kirmizi kenarlık, "Hatali PIN" metni gorunur, giris alani temizlenir |
+
+---
+
+## 2. Kullanici Sayfalari
+
+### 2.1 Dashboard
+
+**Dosya:** `pages/user/Dashboard.tsx`
+
+#### Sayfa Yuklenirken Yapilan API Cagirilari
+
+| Cagri | API Endpoint | Store Metodu |
+|-------|-------------|--------------|
+| Is listesi | `GET /api/jobs?page=1&page_size=10` | `jobStore.fetchJobs({page:1, page_size:10})` |
+| Istatistikler | `GET /api/jobs/stats` | `jobStore.fetchStats()` |
+| Sistem sagligi | `GET /health` | Dogrudan `fetch("/health")` |
+
+#### UI Elemanlari
+
+| Eleman | Veri Kaynagi | Backend Eslesmesi |
+|--------|-------------|-------------------|
+| StatCard: Aktif Isler | `stats.queued + stats.running` | `GET /api/jobs/stats` |
+| StatCard: Tamamlanan | `stats.completed` | `GET /api/jobs/stats` |
+| StatCard: Basarisiz | `stats.failed` | `GET /api/jobs/stats` |
+| StatCard: Toplam | `stats.total` | `GET /api/jobs/stats` |
+| System Health: API | `/health` yaniti -> `response.status` | `GET /health` |
+| System Health: DB | `/health` yaniti -> `response.database` | `GET /health` |
+| System Health: Env | `/health` yaniti -> `response.environment` | `GET /health` |
+| Son Isler listesi | `jobStore.jobs` (ilk 5 kayit) | `GET /api/jobs` |
+| Yenile butonu | Tiklama | `jobStore.fetchJobs()` + `jobStore.fetchStats()` |
+| Yeni Video butonu | Tiklama | `navigate("/create")` |
+| Hizli islem: Standart Video | Tiklama | `navigate("/create")` |
+| Hizli islem: Haber Bulteni | Tiklama | `navigate("/create")` |
+| Hizli islem: Urun Inceleme | Tiklama | `navigate("/create")` |
+
+---
+
+### 2.2 CreateVideo
+
+**Dosya:** `pages/user/CreateVideo.tsx`
+
+#### Form Elemanlari
+
+| Eleman | Tipi | Secenekler | Backend Eslesmesi |
+|--------|------|-----------|-------------------|
+| Modul secimi | 3 kart | `standard_video`, `news_bulletin`, `product_review` | `POST /api/jobs` -> `module_key` alani |
+| Baslik girisi | text input | Serbest metin | `POST /api/jobs` -> `title` alani |
+| Dil secimi | dropdown | `tr`, `en`, `de`, `fr`, `es` | `POST /api/jobs` -> `language` alani |
+| TTS Provider | select (gelismis ayar) | `edge_tts`, `elevenlabs`, `openai_tts` | `POST /api/jobs` -> `settings_overrides.tts_provider` |
+| Altyazi Stili | select (gelismis ayar) | `standard`, `neon_blue`, `gold`, `minimal`, `hormozi` | `POST /api/jobs` -> `settings_overrides.subtitle_style` |
+| Olustur butonu | submit | -- | `POST /api/jobs` cagirilir, ardindan `navigate(/jobs/{id})` |
+
+#### POST /api/jobs Istek Govdesi
+
+```json
+{
+  "module_key": "standard_video",
+  "title": "kullanici girisi",
+  "language": "tr",
+  "settings_overrides": {
+    "tts_provider": "edge_tts",
+    "subtitle_style": "standard"
+  }
+}
+```
+
+---
+
+### 2.3 JobList
+
+**Dosya:** `pages/user/JobList.tsx`
+
+#### Filtre ve Sayfalama
+
+| Eleman | Tipi | Secenekler | Backend Eslesmesi |
+|--------|------|-----------|-------------------|
+| Durum filtre tablari | 6 sekme | `all`, `queued`, `running`, `completed`, `failed`, `cancelled` | `GET /api/jobs?status=X` |
+| Modul filtresi | dropdown | `all`, `standard_video`, `news_bulletin`, `product_review` | `GET /api/jobs?module_key=X` |
+| Sayfalama | onceki/sonraki butonlari | `page_size=15` | `GET /api/jobs?page=X&page_size=15` |
+| Is satiri | tiklanabilir satir | -- | `navigate(/jobs/{id})` |
+
+#### Tablo Sutunlari
+
+| Sutun | Veri Kaynagi | Backend Alani |
+|-------|-------------|---------------|
+| Baslik | `job.title` | `jobs.title` |
+| Modul | `job.module_key` -> `MODULE_INFO` etiketi | `jobs.module_key` |
+| Ilerleme | Tamamlanan adim sayisi / toplam adim sayisi | `job_steps` tablasundaki durum degerleri |
+| Durum | `job.status` -> `STATUS_CONFIG` | `jobs.status` |
+| Tarih | `job.created_at` formatli | `jobs.created_at` |
+
+---
+
+### 2.4 JobDetail
+
+**Dosya:** `pages/user/JobDetail.tsx`
+
+#### Veri Cekme
+
+| Cagri | API | Store Metodu |
+|-------|-----|--------------|
+| Is detayi | `GET /api/jobs/{jobId}` | `jobStore.fetchJobById(jobId)` |
+| SSE akisi | `GET /api/jobs/{jobId}/events` | `jobStore.subscribeToJob(jobId)` |
+
+#### SSE Event Isleyicileri
+
+| Event Tipi | Store Metodu | UI Guncelleme |
+|-----------|--------------|---------------|
+| `job_status` | `jobStore.updateJobStatus(id, data.status)` | Durum rozeti ve ilerleme cubugu guncellenir |
+| `step_update` | `jobStore.updateStep(id, data.key, data)` | Adim durum ikonu, sure ve provider bilgisi guncellenir |
+| `log` | `jobStore.appendLog(id, entry)` | Log goruntuleyiciye yeni satir eklenir |
+| `heartbeat` | -- | Baglanti canli tutma (keepalive) |
+| `complete` | `unsubscribe()` | SSE dinleme durdurulur |
+
+#### UI Elemanlari
+
+| Eleman | Aksiyon | Backend |
+|--------|---------|---------|
+| Geri butonu | `navigate(-1)` | -- |
+| Iptal butonu | `jobStore.cancelJob(id)` | `PATCH /api/jobs/{id}` -> `{status:"cancelled"}` |
+| Yenile butonu | `jobStore.fetchJobById(id)` | `GET /api/jobs/{id}` |
+| Ilerleme cubugu | Tamamlanan/toplam adim yuzdesi | Adimlardan hesaplanir |
+| Hata kutusu | `job.error_message` gosterimi | `jobs.error_message` |
+| Cikti linki | `job.output_path` | `sessions/{id}/` dizini |
+| Maliyet gosterimi | `job.cost_estimate_usd` formatli | `jobs.cost_estimate_usd` |
+| Adim listesi | `order` alanina gore sirali | `job_steps` tablosu |
+| Log goruntuleyici | Otomatik kaydir, kopyala butonu | SSE log event'leri |
+| Log kopyala | Tum log metnini panoya kopyalar | -- (istemci tarafi) |
+
+#### Pipeline Adimlari
+
+| Adim Anahtari | Etiket | Yetenek (Capability) | Olumcul (Fatal) |
+|---------------|--------|---------------------|-----------------|
+| `script` | Senaryo Uretimi | `SCRIPT_GENERATION` | Evet |
+| `metadata` | Metadata Uretimi | `METADATA_GENERATION` | Hayir |
+| `tts` | Ses Sentezi | `TTS` | Evet |
+| `visuals` | Gorsel Indirme | `VISUALS` | Hayir |
+| `subtitles` | Altyazi Olusturma | `SUBTITLES` | Hayir |
+| `composition` | Video Birlestirme | `COMPOSITION` | Evet |
+
+---
+
+### 2.5 UserSettings
+
+**Dosya:** `pages/user/UserSettings.tsx`
+
+#### Veri Cekme
+
+Sayfa yuklendiginde: `GET /api/settings/resolved?module_key=standard_video` -> `settingsStore.fetchResolvedSettings()`
+
+#### Ayar Alanlari
+
+| Bolum | Ayar Anahtari | Tipi | Secenekler | Store Metodu | Kilitlenebilir |
+|-------|--------------|------|-----------|--------------|----------------|
+| Icerik Dili | `language` | select | `tr`, `en`, `de`, `fr`, `es` | `settingsStore.patchUserDefault` | Evet |
+| TTS Provider | `ttsProvider` | select | `edge_tts`, `elevenlabs`, `openai_tts` | `settingsStore.patchUserDefault` | Evet |
+| Altyazi Toggle | `subtitleEnabled` | switch | acik/kapali | `settingsStore.patchUserDefault` | Evet |
+| Altyazi Stili | `subtitleStyle` | select | `standard`, `neon_blue`, `gold`, `minimal`, `hormozi` | `settingsStore.patchUserDefault` | Evet |
+| Gorsel Provider | `visualsProvider` | select | `pexels`, `pixabay` | `settingsStore.patchUserDefault` | Evet |
+| Video Cozunurluk | `videoResolution` | select | `1920x1080`, `1280x720`, `3840x2160` | `settingsStore.patchUserDefault` | Evet |
+| Video FPS | `videoFps` | select | `24`, `30`, `60` | `settingsStore.patchUserDefault` | Evet |
+| Metadata | `metadataEnabled` | switch | acik/kapali | `settingsStore.patchUserDefault` | Evet |
+| Thumbnail | `thumbnailEnabled` | switch | acik/kapali | `settingsStore.patchUserDefault` | Evet |
+| YouTube Yayin | `publishToYoutube` | switch | acik/kapali | `settingsStore.patchUserDefault` | Evet |
+| YouTube Gizlilik | `youtubePrivacy` | select | `private`, `unlisted`, `public` | `settingsStore.patchUserDefault` | Evet |
+
+#### Butonlar
+
+| Buton | Aksiyon | Store Metodu |
+|-------|---------|--------------|
+| Kaydet | Tum degisiklikleri kaydeder | `settingsStore.setUserDefaults(formState)` |
+| Sifirla | Varsayilanlara dondurur | `settingsStore.setUserDefaults(initialDefaults)` |
+
+#### Kilit Gostergesi
+
+Eger bir ayar anahtari `resolvedSettings.lockedKeys` icinde yer aliyorsa, o alanin yaninda kilit ikonu gorunur ve alan devre disi (disabled) olur. Bu kilit admin tarafindan uygulanir.
+
+---
+
+## 3. Admin Sayfalari
+
+### 3.1 AdminDashboard
+
+**Dosya:** `pages/admin/AdminDashboard.tsx`
+
+#### UI Elemanlari
+
+| Eleman | Veri Kaynagi | Backend |
+|--------|-------------|---------|
+| StatCard: Toplam Is | `stats.total` | `GET /api/jobs/stats` |
+| StatCard: Basari Orani | `completed / total * 100` | Hesaplanan deger |
+| StatCard: Basarisiz | `stats.failed` | `GET /api/jobs/stats` |
+| StatCard: Aktif Isler | `stats.queued + stats.running` | `GET /api/jobs/stats` |
+| Sistem Sagligi | `/health` yaniti | `GET /health` |
+| Is Dagilimi cubuk grafigi | Duruma gore istatistikler | `GET /api/jobs/stats` |
+| Hizli Link: Moduller | Tiklama | `/admin/modules` sayfasina yonlendirir |
+| Hizli Link: Providerlar | Tiklama | `/admin/providers` sayfasina yonlendirir |
+| Hizli Link: Ayarlar | Tiklama | `/admin/global-settings` sayfasina yonlendirir |
+| Hizli Link: Isler | Tiklama | `/admin/jobs` sayfasina yonlendirir |
+
+---
+
+### 3.2 GlobalSettings
+
+**Dosya:** `pages/admin/GlobalSettings.tsx`
+
+#### Aksiyonlar
+
+| Aksiyon | API Endpoint | Store Metodu | Yetkilendirme |
+|---------|-------------|--------------|---------------|
+| Ayarlari yukle | `GET /api/settings?scope=admin&scope_id=` | `adminStore.fetchSettings("admin", "")` | `X-Admin-Pin` header |
+| Ayar olustur | `POST /api/settings` | `adminStore.createSetting(payload)` | `X-Admin-Pin` header |
+| Deger duzenle | `PUT /api/settings/{id}` | `adminStore.updateSetting(id, payload)` | `X-Admin-Pin` header |
+| Kilit ac/kapat | `PUT /api/settings/{id}` | `adminStore.updateSetting(id, {locked})` | `X-Admin-Pin` header |
+| Ayar sil | `DELETE /api/settings/{id}` | `adminStore.deleteSetting(id)` | `X-Admin-Pin` header |
+
+#### Form Alanlari
+
+| Alan | Tipi | Aciklama |
+|------|------|----------|
+| `key` | text | Ayar anahtari |
+| `value` | text / JSON | Ayar degeri |
+| `description` | text | Aciklama |
+| `locked` | checkbox | Kullanici tarafindan degistirilemez yapar |
+
+---
+
+### 3.3 ModuleManager
+
+**Dosya:** `pages/admin/ModuleManager.tsx`
+
+#### Moduller
+
+- `standard_video` -- Standart Video
+- `news_bulletin` -- Haber Bulteni
+- `product_review` -- Urun Inceleme
+
+#### Aksiyonlar
+
+| Aksiyon | API Endpoint | Store Metodu | Yetkilendirme |
+|---------|-------------|--------------|---------------|
+| Modul ayarlarini yukle | `GET /api/settings?scope=module&scope_id={module}` | `adminStore.fetchSettings("module", module)` | `X-Admin-Pin` header |
+| Aktif/Pasif degistir | `POST /api/settings` -> `scope=module`, `key=active`, `value=true/false` | `adminStore.createSetting()` | `X-Admin-Pin` header |
+| Modul ayari ekle | `POST /api/settings` -> `scope=module`, `scope_id={module}` | `adminStore.createSetting()` | `X-Admin-Pin` header |
+| Modul ayari duzenle | `PUT /api/settings/{id}` | `adminStore.updateSetting()` | `X-Admin-Pin` header |
+| Modul ayari sil | `DELETE /api/settings/{id}` | `adminStore.deleteSetting()` | `X-Admin-Pin` header |
+
+---
+
+### 3.4 ProviderManager
+
+**Dosya:** `pages/admin/ProviderManager.tsx`
+
+#### Provider Kategorileri ve Providerlar
+
+| Kategori | Providerlar |
+|----------|-------------|
+| LLM | `gemini`, `openai_llm` |
+| TTS | `elevenlabs`, `openai_tts`, `edge_tts` |
+| Visuals | `pexels`, `pixabay` |
+
+#### Aksiyonlar
+
+| Aksiyon | API Endpoint | Store Metodu | Yetkilendirme |
+|---------|-------------|--------------|---------------|
+| Provider ayarlarini yukle | `GET /api/settings?scope=provider&scope_id={provider}` | `adminStore.fetchSettings("provider", provider)` | `X-Admin-Pin` header |
+| API anahtari kaydet | `POST /api/settings` -> `scope=provider`, `key=api_key` | `adminStore.createSetting()` | `X-Admin-Pin` header |
+| Ayar duzenle | `PUT /api/settings/{id}` | `adminStore.updateSetting()` | `X-Admin-Pin` header |
+| Ayar sil | `DELETE /api/settings/{id}` | `adminStore.deleteSetting()` | `X-Admin-Pin` header |
+| Fallback siralamasi kaydet | `POST /api/settings` -> `scope=admin`, `key={kategori}_fallback_order` | `adminStore.createSetting()` | `X-Admin-Pin` header |
+
+#### Hassas Alanlar
+
+`api_key` alanlari `type=password` olarak render edilir. Yaninda Eye/EyeOff ikon butonu ile sifre gosterme/gizleme islevi saglanir.
+
+---
+
+### 3.5 AdminJobs
+
+**Dosya:** `pages/admin/AdminJobs.tsx`
+
+#### Aksiyonlar
+
+| Aksiyon | API Endpoint | Store Metodu | Yetkilendirme |
+|---------|-------------|--------------|---------------|
+| Isleri yukle | `GET /api/jobs?page=X&page_size=20&status=Y&module_key=Z` | `jobStore.fetchJobs()` | -- |
+| Is iptal et | `PATCH /api/jobs/{id}` -> `{status:"cancelled"}` | `jobStore.cancelJob(id)` | -- |
+| Is sil | `DELETE /api/jobs/{id}` | `adminStore.deleteJob(id)` | `X-Admin-Pin` header |
+| Toplu temizlik | Her terminal durumundaki is icin `DELETE` | `adminStore.deleteJob(id)` (her is icin) | `X-Admin-Pin` header |
+
+---
+
+## 4. Zustand Store -> API Haritasi
+
+### useJobStore
+
+| Metot | API Cagrisi | HTTP Metodu |
+|-------|------------|-------------|
+| `fetchJobs(params?)` | `/api/jobs?...` | `GET` |
+| `fetchJobById(id)` | `/api/jobs/{id}` | `GET` |
+| `fetchStats()` | `/api/jobs/stats` | `GET` |
+| `createJob(payload)` | `/api/jobs` | `POST` |
+| `cancelJob(id)` | `/api/jobs/{id}` | `PATCH` |
+| `subscribeToJob(id)` | `/api/jobs/{id}/events` | SSE (`EventSource`) |
+
+### useAdminStore
+
+| Metot | API Cagrisi | HTTP Metodu | Yetkilendirme |
+|-------|------------|-------------|---------------|
+| `fetchSettings(scope, scopeId?)` | `/api/settings?scope=X&scope_id=Y` | `GET` | `X-Admin-Pin` header |
+| `createSetting(payload)` | `/api/settings` | `POST` | `X-Admin-Pin` header |
+| `updateSetting(id, payload)` | `/api/settings/{id}` | `PUT` | `X-Admin-Pin` header |
+| `deleteSetting(id)` | `/api/settings/{id}` | `DELETE` | `X-Admin-Pin` header |
+| `deleteJob(id)` | `/api/jobs/{id}` | `DELETE` | `X-Admin-Pin` header |
+
+### useSettingsStore
+
+| Metot | API Cagrisi | HTTP Metodu |
+|-------|------------|-------------|
+| `fetchResolvedSettings(moduleKey?)` | `/api/settings/resolved?module_key=X` | `GET` |
+
+### useUIStore
+
+| Metot | API Cagrisi | Kalicilik |
+|-------|------------|-----------|
+| `toggleTheme()` | -- | localStorage `"cm-ui"` |
+| `toggleSidebar()` | -- | localStorage `"cm-ui"` |
+| `unlockAdmin()` | -- | Yalnizca bellekte (in-memory) |
+| `lockAdmin()` | -- | Yalnizca bellekte (in-memory) |
+| `addToast(toast)` | -- | Yalnizca bellekte (in-memory) |
+
+---
+
+## 5. SSE Event Tipleri
+
+**Endpoint:** `GET /api/jobs/{job_id}/events`
+
+| Event | Veri Formati | Isleyici |
+|-------|-------------|----------|
+| `job_status` | `{job_id, status, error_message?}` | `jobStore.updateJobStatus()` |
+| `step_update` | `{job_id, key, status, message?, provider?, duration_ms?, cost_estimate_usd?, cached?}` | `jobStore.updateStep()` |
+| `log` | `{job_id, level, message, step?, timestamp}` | `jobStore.appendLog()` |
+| `heartbeat` | `{}` | Islem yok (keepalive) |
+| `complete` | `{job_id}` | SSE aboneligini sonlandirir |
+
+---
+
+> Bu dokuman, ContentManager v0.7.0 kod tabani ile birebir eslesecek sekilde yazilmistir. Her UI elemani, ilgili API endpoint'i ve Zustand store metodu ile haritalandirilmistir.

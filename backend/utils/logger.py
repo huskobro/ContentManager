@@ -91,6 +91,18 @@ class _ContextLogger(logging.LoggerAdapter):
         log.info("adım tamamlandı", job_id="x", step="tts", duration_ms=900)
     """
 
+    # LogRecord'un dahili (built-in) alanları — bunlarla çakışma riski var.
+    # Kullanıcı log.info("...", filename="x.wav") dediğinde LogRecord'un
+    # kendi 'filename' alanıyla çarpışır. Bu yüzden çakışanları "ctx_" ön
+    # ekiyle yeniden adlandırıyoruz.
+    _LOGRECORD_RESERVED = frozenset({
+        "args", "created", "exc_info", "exc_text", "filename",
+        "funcName", "levelno", "lineno", "module", "msecs",
+        "msg", "name", "pathname", "process", "processName",
+        "relativeCreated", "stack_info", "taskName", "thread",
+        "threadName", "message", "levelname",
+    })
+
     def process(
         self, msg: str, kwargs: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
@@ -106,7 +118,16 @@ class _ContextLogger(logging.LoggerAdapter):
             if k not in ("exc_info", "stack_info", "stacklevel")
         }
         extra.update(leftover)
-        kwargs["extra"] = extra
+
+        # LogRecord ile çakışan anahtarları "ctx_" ön ekiyle yeniden adlandır
+        safe_extra: dict[str, Any] = {}
+        for key, value in extra.items():
+            if key in self._LOGRECORD_RESERVED:
+                safe_extra[f"ctx_{key}"] = value
+            else:
+                safe_extra[key] = value
+
+        kwargs["extra"] = safe_extra
         return msg, kwargs
 
 

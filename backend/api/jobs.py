@@ -34,6 +34,7 @@ from backend.models.schemas import (
     JobResponse,
     JobStatusUpdate,
 )
+from backend.pipeline.runner import run_pipeline
 from backend.services.job_manager import JobManager, sse_hub
 from backend.utils.logger import get_logger
 
@@ -57,21 +58,34 @@ router = APIRouter()
         "otomatik olarak sıraya alınır."
     ),
 )
-def create_job(
+async def create_job(
     payload: JobCreate,
     db: Session = Depends(get_db),
 ) -> JobResponse:
     """
-    Yeni bir pipeline işi oluşturur.
+    Yeni bir pipeline işi oluşturur ve pipeline'ı arka planda başlatır.
 
     İş oluşturulduğunda:
     - UUID4 tabanlı benzersiz kimlik atanır
     - 5 katmanlı ayar çözümlenir ve snapshot kaydedilir
     - Session dizini (sessions/{job_id}/) oluşturulur
     - Modüle göre pipeline adımları oluşturulur
+    - Pipeline runner asyncio background task olarak başlatılır
     """
     manager = JobManager(db)
     job = manager.create_job(payload)
+
+    # Pipeline'ı arka planda başlat (kendi DB session'ını kullanır)
+    asyncio.create_task(
+        run_pipeline(job.id),
+        name=f"pipeline-{job.id[:8]}",
+    )
+
+    log.info(
+        "Pipeline background task başlatıldı",
+        job_id=job.id[:8],
+        module_key=payload.module_key,
+    )
 
     return JobResponse.model_validate(job)
 
