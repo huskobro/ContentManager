@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="tr" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="ContentManager — Modüler YouTube İçerik Üretim Platformu" />
+    <title>ContentManager</title>
+    <!--
+      Dark mode başlangıç scripti: localStorage'dan tema okunur ve
+      React mount olmadan önce <html> class'ı güncellenir.
+      Bu, "flash of unstyled content" sorununu engeller.
+    -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem("cm-theme");
+          if (theme === "light") {
+            document.documentElement.classList.remove("dark");
+          } else {
+            // "dark" veya ilk açılış — default dark
+            document.documentElement.classList.add("dark");
+          }
+        } catch (_) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-background text-foreground antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

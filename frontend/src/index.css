@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Değişken Sistemi (Shadcn uyumlu) ───────────────────────────────── */
+@layer base {
+  :root {
+    /* Light mode — kullanıcı açıkça light seçerse aktif */
+    --background: 0 0% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 90%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+
+    --sidebar: 220 25% 97%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-border: 214 32% 88%;
+    --sidebar-accent: 210 40% 92%;
+    --sidebar-accent-foreground: 222 47% 11%;
+  }
+
+  .dark {
+    /* Dark mode — uygulama default'u */
+    --background: 224 71% 4%;
+    --foreground: 213 31% 91%;
+
+    --card: 224 71% 6%;
+    --card-foreground: 213 31% 91%;
+
+    --popover: 224 71% 6%;
+    --popover-foreground: 213 31% 91%;
+
+    --primary: 221 83% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 222 47% 12%;
+    --secondary-foreground: 213 31% 91%;
+
+    --muted: 223 47% 11%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 216 34% 17%;
+    --accent-foreground: 213 31% 91%;
+
+    --destructive: 0 63% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 216 34% 17%;
+    --input: 216 34% 17%;
+    --ring: 221 83% 60%;
+
+    --sidebar: 224 71% 5%;
+    --sidebar-foreground: 213 31% 91%;
+    --sidebar-border: 216 34% 14%;
+    --sidebar-accent: 216 34% 12%;
+    --sidebar-accent-foreground: 213 31% 91%;
+  }
+
+  /* Genel sıfırlama */
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Log viewer için monospace scrollable alan */
+  .log-viewer {
+    @apply font-mono text-xs leading-relaxed;
+  }
+
+  /* Scrollbar — dark modda daha az göze çarpan */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground;
+  }
+}

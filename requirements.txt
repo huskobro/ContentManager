@@ -1,0 +1,33 @@
+# ── Web Framework ────────────────────────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# ── Validation & Settings ────────────────────────────────────────────────────
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# ── Database ─────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.36
+
+# ── HTTP Client (provider API çağrıları için) ────────────────────────────────
+httpx==0.28.1
+aiohttp==3.11.10
+
+# ── Environment ──────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+
+# ── TTS Providers ────────────────────────────────────────────────────────────
+elevenlabs==1.9.0
+edge-tts==6.1.12
+openai==1.57.2
+
+# ── LLM Providers ────────────────────────────────────────────────────────────
+# openai yukarıda zaten mevcut (GPT + Whisper)
+google-generativeai==0.8.3
+
+# ── Audio / Video işleme ─────────────────────────────────────────────────────
+ffmpeg-python==0.2.0
+
+# ── Utility ──────────────────────────────────────────────────────────────────
+python-multipart==0.0.20   # FastAPI form/file upload
+aiofiles==24.1.0           # async dosya I/O
