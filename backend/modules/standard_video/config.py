@@ -7,6 +7,11 @@ Admin panelinden override edilebilir.
 Yapı:
     DEFAULT_CONFIG dict'i modülün get_default_config() metodundan döner
     ve SettingsResolver'ın module katmanına bootstrap olarak yazılabilir.
+
+Not:
+    Sadece pipeline step'lerinde fiilen okunan ayarlar burada tutulur.
+    Pipeline'da okunmayan ayarlar (ör. composition_engine, background_music_*)
+    2026-03-31 teşhis raporuyla kaldırılmıştır — bkz. docs/QA_LOG.md
 """
 
 from __future__ import annotations
@@ -21,15 +26,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "language": "tr",
 
     # ── Script üretimi ──────────────────────────────────────────────────
-    "llm_provider": "gemini",
-    "llm_model": "gemini-2.5-flash",
+    "llm_provider": "kieai",
     "script_temperature": 0.8,
     "script_max_tokens": 4096,
-
-    # ── Metadata ────────────────────────────────────────────────────────
-    "metadata_provider": "gemini",
-    "generate_metadata": True,
-    "metadata_language": "tr",
 
     # ── TTS ─────────────────────────────────────────────────────────────
     "tts_provider": "edge_tts",
@@ -38,27 +37,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # ── Görseller ───────────────────────────────────────────────────────
     "visuals_provider": "pexels",
-    "visuals_per_scene": 1,
-    "visuals_orientation": "landscape",
-    "visuals_min_duration": 5,
 
     # ── Altyazı ─────────────────────────────────────────────────────────
     "subtitle_style": "standard",
     "subtitle_font_size": 48,
-    "subtitle_position": "bottom",
-    "generate_subtitles": True,
 
     # ── Video kompozisyon ───────────────────────────────────────────────
     "video_resolution": "1920x1080",
     "video_fps": 30,
-    "video_format": "mp4",
-    "composition_engine": "remotion",
 
     # ── Ken Burns efekti ────────────────────────────────────────────────
     "ken_burns_enabled": True,
     "ken_burns_intensity": 0.05,
-
-    # ── Müzik ───────────────────────────────────────────────────────────
-    "background_music_enabled": False,
-    "background_music_volume": 0.15,
 }

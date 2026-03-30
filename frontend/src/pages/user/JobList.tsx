@@ -67,7 +67,15 @@ export default function JobList() {
   // ── Odak Geri Yükleme ────────────────────────────────────────────────────
   const { captureForRestore, restoreFocusDeferred } = useFocusRestore();
 
-  // ── Klavye Navigasyonu ───────────────────────────────────────────────────
+  // ── Klavye Navigasyonu & Roving Tabindex ─────────────────────────────────
+  // useRovingTabindex önce çağrılmalı: notifyKeyboard referansı
+  // useScopedKeyboardNavigation'a onKeyboardMove olarak geçiliyor.
+  // İlk render'da onKeyboardMoveRef undefined olur, ikinci render'da
+  // düzgün set edilir — hook içinde ref pattern kullanıldığı için sorunsuz.
+  // notifyKeyboard referansı, useScopedKeyboardNavigation'a geçmek için
+  // önce bir ref üzerinden sabitlenir.
+  const notifyKeyboardRef = useRef<(() => void) | undefined>(undefined);
+
   const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: jobs.length,
     disabled: anyPanelOpen,
@@ -83,15 +91,17 @@ export default function JobList() {
       setQuickLookJob(null);
       setSheetJob(null);
     },
-    onKeyboardMove: notifyKeyboard,
+    onKeyboardMove: () => notifyKeyboardRef.current?.(),
   });
 
-  // ── Roving Tabindex ──────────────────────────────────────────────────────
   const { getTabIndex, notifyKeyboard } = useRovingTabindex({
     focusedIdx,
     itemCount: jobs.length,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
+
+  // Ref'i her render'da güncel tut
+  notifyKeyboardRef.current = notifyKeyboard;
 
   // ── ESC Kapatma Yığını — Overlay önceliği ────────────────────────────────
   // QuickLook: priority 20 (en üstte), Sheet: priority 10

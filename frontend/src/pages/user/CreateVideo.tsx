@@ -336,18 +336,18 @@ export default function CreateVideo() {
             <label htmlFor="language" className="text-sm font-medium text-foreground">
               İçerik Dili
             </label>
-            {lockedKeys.includes("default_language") && (
-              <Lock size={11} className="text-amber-400" title="Admin tarafından kilitlendi" />
+            {lockedKeys.includes("language") && (
+              <Lock size={11} className="text-amber-400" aria-label="Admin tarafından kilitlendi" />
             )}
           </div>
           <select
             id="language"
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            disabled={lockedKeys.includes("default_language")}
+            disabled={lockedKeys.includes("language")}
             className={cn(
               "w-full rounded-lg border bg-input px-4 py-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors",
-              lockedKeys.includes("default_language")
+              lockedKeys.includes("language")
                 ? "border-border opacity-60 cursor-not-allowed"
                 : "border-border"
             )}
@@ -378,18 +378,18 @@ export default function CreateVideo() {
                 <label htmlFor="ttsProvider" className="text-sm font-medium text-foreground">
                   TTS Provider
                 </label>
-                {lockedKeys.includes("default_tts_provider") && (
-                  <Lock size={11} className="text-amber-400" title="Admin tarafından kilitlendi" />
+                {lockedKeys.includes("tts_provider") && (
+                  <Lock size={11} className="text-amber-400" aria-label="Admin tarafından kilitlendi" />
                 )}
               </div>
               <select
                 id="ttsProvider"
                 value={ttsProvider}
                 onChange={(e) => setTtsProvider(e.target.value)}
-                disabled={lockedKeys.includes("default_tts_provider")}
+                disabled={lockedKeys.includes("tts_provider")}
                 className={cn(
                   "w-full rounded-lg border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring",
-                  lockedKeys.includes("default_tts_provider")
+                  lockedKeys.includes("tts_provider")
                     ? "border-border opacity-60 cursor-not-allowed"
                     : "border-border"
                 )}
@@ -405,18 +405,18 @@ export default function CreateVideo() {
                 <label htmlFor="subtitleStyle" className="text-sm font-medium text-foreground">
                   Altyazı Stili
                 </label>
-                {lockedKeys.includes("default_subtitle_style") && (
-                  <Lock size={11} className="text-amber-400" title="Admin tarafından kilitlendi" />
+                {lockedKeys.includes("subtitle_style") && (
+                  <Lock size={11} className="text-amber-400" aria-label="Admin tarafından kilitlendi" />
                 )}
               </div>
               <select
                 id="subtitleStyle"
                 value={subtitleStyle}
                 onChange={(e) => setSubtitleStyle(e.target.value)}
-                disabled={lockedKeys.includes("default_subtitle_style")}
+                disabled={lockedKeys.includes("subtitle_style")}
                 className={cn(
                   "w-full rounded-lg border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring",
-                  lockedKeys.includes("default_subtitle_style")
+                  lockedKeys.includes("subtitle_style")
                     ? "border-border opacity-60 cursor-not-allowed"
                     : "border-border"
                 )}

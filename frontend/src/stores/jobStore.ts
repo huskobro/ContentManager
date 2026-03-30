@@ -280,6 +280,7 @@ export const useJobStore = create<JobState>()((set, get) => ({
           cost_estimate_usd: data.cost_estimate_usd as number ?? 0,
           cached: (data.cached as boolean) ?? false,
           output_artifact: data.output_artifact as string | null,
+          started_at: data.started_at as string | null,
         });
       },
 
@@ -371,6 +372,7 @@ export const useJobStore = create<JobState>()((set, get) => ({
             cost_estimate_usd: (data.cost_estimate_usd as number) ?? 0,
             cached: (data.cached as boolean) ?? false,
             output_artifact: data.output_artifact as string | null,
+            started_at: data.started_at as string | null,
           });
         }
       },

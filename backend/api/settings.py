@@ -457,3 +457,65 @@ def set_output_folder(
         exists=output_path.exists(),
         message=f"Output klasörü ayarlandı: {output_path}",
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELETE /api/settings/admin/output-folder — Output klasörünü sıfırla (admin)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OutputFolderResetResponse(BaseModel):
+    """Output folder sıfırlama için response."""
+    default_path: str
+    message: str
+
+
+@router.delete(
+    "/settings/admin/output-folder",
+    response_model=OutputFolderResetResponse,
+    summary="Output klasörünü varsayılana sıfırla",
+    description=(
+        "DB'deki output_dir kaydını siler ve runtime app_settings.output_dir'i "
+        "config default'una (BASE_DIR/output) döndürür. "
+        "Admin PIN gereklidir (X-Admin-Pin header)."
+    ),
+)
+def reset_output_folder(
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> OutputFolderResetResponse:
+    """
+    Output klasörünü varsayılan değere sıfırlar.
+
+    - DB'deki output_dir kaydını kaldırır (varsa)
+    - runtime app_settings.output_dir'i config default'una döndürür
+    - Default klasörü oluşturur (mkdir, exist_ok=True)
+    """
+    from backend.config import BASE_DIR
+
+    # Config default'undaki path'i hesapla — Settings field default'u
+    default_path = BASE_DIR / "output"
+    default_path.mkdir(parents=True, exist_ok=True)
+
+    # Runtime güncelle
+    app_settings.output_dir = default_path
+
+    # DB'den sil (varsa)
+    resolver = SettingsResolver(db)
+    existing = (
+        db.query(Setting)
+        .filter(Setting.scope == "admin", Setting.scope_id == "", Setting.key == "output_dir")
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+
+    log.info(
+        "Output klasörü varsayılana sıfırlandı",
+        default_path=str(default_path),
+    )
+
+    return OutputFolderResetResponse(
+        default_path=str(default_path),
+        message=f"Output klasörü varsayılana sıfırlandı: {default_path}",
+    )

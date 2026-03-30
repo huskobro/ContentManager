@@ -558,7 +558,7 @@ describe("Scope ownership — overlay açıkken alttaki scope pasif", () => {
     const onSpaceOverlay    = vi.fn();
 
     // Alt liste scope'u (A) — overlay yokken aktif
-    const { result: resultA, rerender: rerenderA } = renderHook(
+    const { result: _resultA, rerender: rerenderA } = renderHook(
       ({ disabled }: { disabled: boolean }) =>
         useScopedKeyboardNavigation({ itemCount: 3, disabled, onSpace: onSpaceUnderneath }),
       { initialProps: { disabled: false } }

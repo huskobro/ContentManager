@@ -15,16 +15,13 @@ import {
   Plug,
   Sliders,
   ListVideo,
-  CheckCircle2,
   AlertCircle,
   Clock,
   Loader2,
   RefreshCw,
   TrendingUp,
-  DollarSign,
-  Activity,
 } from "lucide-react";
-import { useJobStore, type JobStats } from "@/stores/jobStore";
+import { useJobStore } from "@/stores/jobStore";
 import { cn } from "@/lib/utils";
 
 // ─── Sağlık tipi ─────────────────────────────────────────────────────────────

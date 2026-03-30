@@ -87,7 +87,7 @@ const DEFAULT_USER_SETTINGS: UserVideoDefaults = {
 
 function mapResolvedToDefaults(
   resolved: Record<string, unknown>,
-  current: UserVideoDefaults
+  _current: UserVideoDefaults
 ): Partial<UserVideoDefaults> {
   const mapped: Partial<UserVideoDefaults> = {};
 

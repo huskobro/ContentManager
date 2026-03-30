@@ -32,7 +32,6 @@ import {
 } from "lucide-react";
 import {
   useJobStore,
-  type Job,
   type StepStatus,
   type PipelineStep,
   type LogEntry,
@@ -384,6 +383,47 @@ export default function JobDetail() {
   );
 }
 
+// ─── Elapsed Timer (çalışan adımlar için canlı süre) ──────────────────────
+
+function ElapsedTimer({ startedAt }: { startedAt: string }) {
+  const [elapsed, setElapsed] = useState("");
+
+  useEffect(() => {
+    const start = new Date(startedAt).getTime();
+    if (isNaN(start)) return;
+
+    function update() {
+      const diff = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      if (diff < 60) {
+        setElapsed(`${diff}s`);
+      } else if (diff < 3600) {
+        const m = Math.floor(diff / 60);
+        const s = diff % 60;
+        setElapsed(`${m}dk ${s}s`);
+      } else {
+        const h = Math.floor(diff / 3600);
+        const m = Math.floor((diff % 3600) / 60);
+        setElapsed(`${h}sa ${m}dk`);
+      }
+    }
+
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [startedAt]);
+
+  return (
+    <span
+      className="shrink-0 flex items-center gap-1 text-xs text-blue-400 tabular-nums"
+      title="Geçen süre (bu adım başladığından beri)"
+    >
+      <Clock size={11} />
+      <span className="text-blue-400/60 text-[10px]">geçen</span>
+      {elapsed}
+    </span>
+  );
+}
+
 // ─── Render Progress Widget ────────────────────────────────────────────────
 
 const PHASE_LABELS: Record<RenderProgress["phase"], string> = {
@@ -484,12 +524,14 @@ function StepRow({ step, renderProgress }: { step: PipelineStep; renderProgress?
           </span>
         )}
 
-        {/* Süre */}
-        {durationStr && (
+        {/* Süre: tamamlanmış → statik, çalışan → canlı sayaç */}
+        {step.status === "running" && step.started_at ? (
+          <ElapsedTimer startedAt={step.started_at} />
+        ) : durationStr ? (
           <span className="shrink-0 text-xs text-muted-foreground w-14 text-right">
             {durationStr}
           </span>
-        )}
+        ) : null}
 
         {/* Maliyet */}
         {step.cost_estimate_usd > 0 && (

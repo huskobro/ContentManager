@@ -66,6 +66,8 @@ export default function AdminJobs() {
   // ── Odak Geri Yükleme ────────────────────────────────────────────────────
   const { captureForRestore, restoreFocusDeferred } = useFocusRestore();
 
+  const notifyKeyboardRef = useRef<(() => void) | undefined>(undefined);
+
   const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: jobs.length,
     disabled: anyPanelOpen,
@@ -81,7 +83,7 @@ export default function AdminJobs() {
       setQuickLookJob(null);
       setSheetJob(null);
     },
-    onKeyboardMove: notifyKeyboard,
+    onKeyboardMove: () => notifyKeyboardRef.current?.(),
   });
 
   const { getTabIndex, notifyKeyboard } = useRovingTabindex({
@@ -89,6 +91,8 @@ export default function AdminJobs() {
     itemCount: jobs.length,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
+
+  notifyKeyboardRef.current = notifyKeyboard;
 
   // ── ESC Kapatma Yığını ────────────────────────────────────────────────────
   useDismissOnEsc(quickLookJob !== null, () => setQuickLookJob(null), 20);

@@ -84,18 +84,27 @@ def _decode_value(raw: str) -> Any:
     """
     Setting.value sütunundaki JSON-encoded string'i Python nesnesine çevirir.
 
+    Çoklu encode olmuş değerleri de güvenle çözer: string olduğu sürece
+    tekrar json.loads dener, stabil olunca (artık string değilse veya
+    parse edilemiyorsa) durur. En fazla 5 katman (güvenlik sınırı).
+
     Örnekler:
       '"edge_tts"' → "edge_tts"
       '30'         → 30
       'true'       → True
       '["a","b"]'  → ["a", "b"]
       '{"k": "v"}' → {"k": "v"}
+      '"[\\"a\\",\\"b\\"]"' → ["a", "b"]  (çoklu encode)
     """
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        # JSON parse edilemezse ham string olarak döndür
-        return raw
+    result: Any = raw
+    for _ in range(5):  # Güvenlik sınırı: en fazla 5 decode katmanı
+        if not isinstance(result, str):
+            break
+        try:
+            result = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            break
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

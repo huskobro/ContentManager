@@ -73,6 +73,25 @@ interface AdminState {
   /** İşi siler (admin) */
   deleteJob: (jobId: string) => Promise<boolean>;
 
+  /**
+   * Output klasörünü özel endpoint üzerinden kaydeder.
+   * Generic settings endpoint'i yerine POST /api/settings/admin/output-folder
+   * kullanır; backend path doğrulama, dizin oluşturma ve yazma testi yapar,
+   * ardından app_settings.output_dir'i runtime'da günceller.
+   *
+   * @returns Başarılıysa normalize edilmiş path, hata durumunda null
+   */
+  setOutputFolder: (path: string) => Promise<string | null>;
+
+  /**
+   * Output klasörünü config default'una sıfırlar.
+   * DELETE /api/settings/admin/output-folder çağırır;
+   * backend DB kaydını siler ve runtime app_settings.output_dir'i default'a döndürür.
+   *
+   * @returns Başarılıysa default path string, hata durumunda null
+   */
+  resetOutputFolder: () => Promise<string | null>;
+
   /** Ayar listesini temizle */
   clearSettings: () => void;
 }
@@ -82,7 +101,7 @@ function getAdminPin(): string {
   return localStorage.getItem("cm-admin-pin") ?? "0000";
 }
 
-export const useAdminStore = create<AdminState>()((set, get) => ({
+export const useAdminStore = create<AdminState>()((set, _get) => ({
   settings: [],
   loading: false,
   error: null,
@@ -164,6 +183,53 @@ export const useAdminStore = create<AdminState>()((set, get) => ({
       return true;
     } catch {
       return false;
+    }
+  },
+
+  setOutputFolder: async (path) => {
+    try {
+      const pin = getAdminPin();
+      const data = await api.post<{
+        path: string;
+        absolute_path: string;
+        exists: boolean;
+        message: string;
+      }>(
+        "/settings/admin/output-folder",
+        { path },
+        { adminPin: pin }
+      );
+      // Backend normalize edilmiş mutlak path'i döner (absolute_path).
+      // Settings listesindeki output_dir kaydını güncelle ki UI senkron kalsın.
+      set((s) => ({
+        settings: s.settings.map((r) =>
+          r.key === "output_dir" ? { ...r, value: data.absolute_path } : r
+        ),
+      }));
+      return data.absolute_path;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Output klasörü kaydedilemedi";
+      set({ error: message });
+      return null;
+    }
+  },
+
+  resetOutputFolder: async () => {
+    try {
+      const pin = getAdminPin();
+      const data = await api.delete<{ default_path: string; message: string }>(
+        "/settings/admin/output-folder",
+        { adminPin: pin }
+      );
+      // Store'daki output_dir kaydını kaldır — artık DB'de yok, UI default gösterecek
+      set((s) => ({
+        settings: s.settings.filter((r) => r.key !== "output_dir"),
+      }));
+      return data.default_path;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Output klasörü sıfırlanamadı";
+      set({ error: message });
+      return null;
     }
   },
 

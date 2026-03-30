@@ -2,7 +2,7 @@
  * GlobalSettings — Admin genel ayar yönetimi (Schema-Driven UI).
  *
  * Bölümler:
- *   1. Sistem Ayarları (max_concurrent_jobs, output_dir, video_format, default_language)
+ *   1. Sistem Ayarları (max_concurrent_jobs, output_dir, video_format, language)
  *   2. Pipeline Varsayılanları (default_tts/llm/visuals/subtitle, fallback orders)
  *
  * Faz 10.7 değişiklikleri:
@@ -43,7 +43,7 @@ import {
   type SystemSettingDef,
   type SettingCategory,
 } from "@/lib/constants";
-import { api } from "@/api/client";
+import { api, APIError } from "@/api/client";
 
 import { cn } from "@/lib/utils";
 
@@ -100,7 +100,11 @@ function FolderPickerDialog({ isOpen, onClose, onSelect, initialPath }: FolderPi
         setIsRoot(data.is_root);
         setSubdirs(data.subdirectories);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Dizin yüklenemedi");
+        if (err instanceof APIError && err.status === 401) {
+          setError("Admin PIN gerekli veya geçersiz — Ayarlar sayfasından PIN girin");
+        } else {
+          setError(err instanceof Error ? err.message : "Dizin yüklenemedi");
+        }
       } finally {
         setLoading(false);
       }
@@ -624,8 +628,17 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
 // ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function GlobalSettings() {
-  const { settings, loading, error, fetchSettings, createSetting, updateSetting, deleteSetting } =
-    useAdminStore();
+  const {
+    settings,
+    loading,
+    error,
+    fetchSettings,
+    createSetting,
+    updateSetting,
+    deleteSetting,
+    setOutputFolder,
+    resetOutputFolder,
+  } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
   const loadData = useCallback(() => {
@@ -639,6 +652,40 @@ export default function GlobalSettings() {
   const handleSave = useCallback(
     async (def: SystemSettingDef, value: unknown, locked: boolean) => {
       const existing = settings.find((r) => r.key === def.key);
+
+      // ── output_dir: özel endpoint kullan ──────────────────────────────────
+      // Generic settings endpoint yalnızca DB'ye yazar; runtime app_settings ve
+      // dizin oluşturma/yazma doğrulaması için backend'in özel endpoint'i gerekir.
+      if (def.key === "output_dir") {
+        const pathStr = typeof value === "string" ? value.trim() : "";
+        if (!pathStr) {
+          // Boş → özel reset endpoint: DB kaydını sil + runtime app_settings.output_dir'i default'a döndür
+          const defaultPath = await resetOutputFolder();
+          if (defaultPath !== null) {
+            addToast({
+              type: "info",
+              title: "Klasör sıfırlandı",
+              description: `Varsayılan klasör kullanılacak: ${defaultPath}`,
+            });
+            loadData();
+          } else {
+            addToast({ type: "error", title: "Sıfırlanamadı", description: def.label });
+          }
+          return;
+        }
+        // Özel endpoint: path doğrula + dizin oluştur + runtime güncelle
+        const normalized = await setOutputFolder(pathStr);
+        if (normalized !== null) {
+          addToast({ type: "success", title: "Klasör kaydedildi", description: normalized });
+          loadData();
+        } else {
+          // setOutputFolder store'daki error'ı zaten set etti; ek toast göster
+          addToast({ type: "error", title: "Klasör kaydedilemedi", description: "Yol geçersiz veya yazma izni yok." });
+        }
+        return;
+      }
+
+      // ── Diğer ayarlar: generic endpoint ───────────────────────────────────
 
       // Boş değer → kaydı sil (varsayılana dön)
       if (isEmpty(value)) {
@@ -679,7 +726,7 @@ export default function GlobalSettings() {
         }
       }
     },
-    [settings, updateSetting, createSetting, deleteSetting, addToast, loadData]
+    [settings, updateSetting, createSetting, deleteSetting, setOutputFolder, resetOutputFolder, addToast, loadData]
   );
 
   const categories: SettingCategory[] = ["system", "pipeline"];

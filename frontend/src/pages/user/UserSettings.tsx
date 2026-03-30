@@ -109,19 +109,17 @@ export default function UserSettings() {
   async function handleSave() {
     setSaving(true);
     try {
+      // Sadece pipeline'da fiilen okunan ayarları kaydet.
+      // Etkisiz ayarlar (subtitle_enabled, metadata_enabled, thumbnail_enabled,
+      // publish_to_youtube, youtube_privacy) henüz backend'de aktif değil — gönderilmez.
       const settingsPayload = {
         settings: [
           { scope: "user" as const, scope_id: "", key: "language", value: form.language },
           { scope: "user" as const, scope_id: "", key: "tts_provider", value: form.ttsProvider },
           { scope: "user" as const, scope_id: "", key: "visuals_provider", value: form.visualsProvider },
           { scope: "user" as const, scope_id: "", key: "subtitle_style", value: form.subtitleStyle },
-          { scope: "user" as const, scope_id: "", key: "subtitle_enabled", value: form.subtitleEnabled },
           { scope: "user" as const, scope_id: "", key: "video_resolution", value: form.videoResolution },
           { scope: "user" as const, scope_id: "", key: "video_fps", value: form.videoFps },
-          { scope: "user" as const, scope_id: "", key: "metadata_enabled", value: form.metadataEnabled },
-          { scope: "user" as const, scope_id: "", key: "thumbnail_enabled", value: form.thumbnailEnabled },
-          { scope: "user" as const, scope_id: "", key: "publish_to_youtube", value: form.publishToYoutube },
-          { scope: "user" as const, scope_id: "", key: "youtube_privacy", value: form.youtubePrivacy },
         ],
       };
       await api.post("/settings/user", settingsPayload);
@@ -232,32 +230,20 @@ export default function UserSettings() {
             />
           </SettingRow>
 
-          {/* Altyazı etkin */}
+          {/* Altyazı stili */}
           <SettingRow
             icon={<Subtitles size={14} />}
-            label="Altyazı"
-            description="Altyazı aktif ve stil seçimi"
-            locked={isLocked("subtitle_enabled")}
+            label="Altyazı Stili"
+            description="Video altyazısının görünüm stili"
+            locked={isLocked("subtitle_style")}
           >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Altyazı Aktif</span>
-                <ToggleSwitch
-                  checked={form.subtitleEnabled}
-                  onChange={(v) => handleChange("subtitleEnabled", v)}
-                  locked={isLocked("subtitle_enabled")}
-                />
-              </div>
-              {form.subtitleEnabled && (
-                <SelectField
-                  value={form.subtitleStyle}
-                  onChange={(v) => handleChange("subtitleStyle", v)}
-                  options={SUBTITLE_STYLES}
-                  locked={isLocked("subtitle_style")}
-                  placeholder="Altyazı Stili"
-                />
-              )}
-            </div>
+            <SelectField
+              value={form.subtitleStyle}
+              onChange={(v) => handleChange("subtitleStyle", v)}
+              options={SUBTITLE_STYLES}
+              locked={isLocked("subtitle_style")}
+              placeholder="Altyazı Stili"
+            />
           </SettingRow>
         </div>
       </div>
@@ -317,24 +303,30 @@ export default function UserSettings() {
         </div>
       </div>
 
-      {/* ── Bölüm 3: Yayın & Ek Özellikler ── */}
+      {/* ── Bölüm 3: Yayın & Ek Özellikler (henüz aktif değil) ── */}
       <div className="space-y-3">
         <SectionLabel icon={<Youtube size={13} />} label="Yayın & Ek Özellikler" />
 
-        <div className="rounded-xl border border-border bg-card divide-y divide-border">
+        <div className="rounded-xl border border-border bg-card divide-y divide-border opacity-60">
+          <div className="px-4 py-2 bg-amber-500/5 border-b border-amber-500/10">
+            <p className="text-[11px] text-amber-400 font-medium">
+              Bu ayarlar henüz backend pipeline'da aktif değil. Yakında kullanıma sunulacak.
+            </p>
+          </div>
+
           {/* SEO Metadata */}
           <SettingRow
             icon={<Settings size={14} />}
             label="SEO Metadata"
             description="Başlık, açıklama ve etiket otomatik üretimi"
-            locked={isLocked("metadata_enabled")}
+            locked
           >
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Metadata Üretimi Aktif</span>
               <ToggleSwitch
                 checked={form.metadataEnabled}
-                onChange={(v) => handleChange("metadataEnabled", v)}
-                locked={isLocked("metadata_enabled")}
+                onChange={() => {}}
+                locked
               />
             </div>
           </SettingRow>
@@ -344,14 +336,14 @@ export default function UserSettings() {
             icon={<Monitor size={14} />}
             label="Thumbnail"
             description="Video kapak resmi otomatik üretimi"
-            locked={isLocked("thumbnail_enabled")}
+            locked
           >
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Thumbnail Üretimi Aktif</span>
               <ToggleSwitch
                 checked={form.thumbnailEnabled}
-                onChange={(v) => handleChange("thumbnailEnabled", v)}
-                locked={isLocked("thumbnail_enabled")}
+                onChange={() => {}}
+                locked
               />
             </div>
           </SettingRow>
@@ -361,32 +353,15 @@ export default function UserSettings() {
             icon={<Youtube size={14} />}
             label="YouTube Yayını"
             description="Tamamlanan videoları YouTube'a otomatik yükle"
-            locked={isLocked("publish_to_youtube")}
+            locked
           >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">YouTube'a Yayınla</span>
-                <ToggleSwitch
-                  checked={form.publishToYoutube}
-                  onChange={(v) => handleChange("publishToYoutube", v)}
-                  locked={isLocked("publish_to_youtube")}
-                />
-              </div>
-              {form.publishToYoutube && (
-                <SelectField
-                  value={form.youtubePrivacy}
-                  onChange={(v) =>
-                    handleChange("youtubePrivacy", v as "private" | "unlisted" | "public")
-                  }
-                  options={[
-                    { value: "private", label: "Özel (Private)" },
-                    { value: "unlisted", label: "Liste Dışı (Unlisted)" },
-                    { value: "public", label: "Herkese Açık (Public)" },
-                  ]}
-                  locked={isLocked("youtube_privacy")}
-                  placeholder="Gizlilik Ayarı"
-                />
-              )}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">YouTube'a Yayınla</span>
+              <ToggleSwitch
+                checked={form.publishToYoutube}
+                onChange={() => {}}
+                locked
+              />
             </div>
           </SettingRow>
         </div>

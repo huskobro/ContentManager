@@ -34,6 +34,7 @@ from backend.pipeline.steps.script import build_enhanced_prompt
 from backend.pipeline.steps.subtitles import step_subtitles_enhanced
 from backend.providers.registry import provider_registry
 from backend.utils.logger import get_logger
+from backend.utils.text import normalize_narration
 
 log = get_logger(__name__)
 
@@ -298,7 +299,7 @@ async def step_tts(
 
         # TTS metnini normalize et — LLM çıktısındaki Markdown kalıntılarını ve
         # özel karakterleri temizle. Subtitle ile aynı string gönderilmeli.
-        tts_text = _normalize_narration_for_tts(narration)
+        tts_text = normalize_narration(narration)
 
         result = await provider_registry.execute_with_fallback(
             category="tts",
@@ -469,45 +470,6 @@ async def step_visuals(
 # ─────────────────────────────────────────────────────────────────────────────
 # Yardımcı fonksiyonlar
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-import re as _re
-
-
-def _normalize_narration_for_tts(text: str) -> str:
-    """
-    Narasyon metnini TTS için normalize eder.
-
-    LLM çıktısında kalabilecek Markdown kalıntıları (*, **, #, `backtick` vb.)
-    ve aşırı boşlukları temizler. TTS'e giden string ile subtitle'ın
-    sahne metni (narration) olabildiğince aynı token dizisini paylaşır;
-    bu sayede word-timing hizalaması kaymasız olur.
-
-    Args:
-        text: Ham narasyon metni (LLM çıktısından).
-
-    Returns:
-        TTS sentezi ve altyazı için uyumlu temiz metin.
-    """
-    if not text:
-        return text
-
-    # Markdown kalın/italik işaretlerini kaldır (**, *, __, _)
-    cleaned = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
-    cleaned = _re.sub(r"_{1,3}(.*?)_{1,3}", r"\1", cleaned)
-    # Markdown başlıkları (## Başlık → Başlık)
-    cleaned = _re.sub(r"^#{1,6}\s+", "", cleaned, flags=_re.MULTILINE)
-    # Backtick kod bloklarını temizle
-    cleaned = _re.sub(r"`+([^`]*)`+", r"\1", cleaned)
-    # Satır başındaki madde işaretlerini kaldır (- , • , * )
-    cleaned = _re.sub(r"^\s*[-•*]\s+", "", cleaned, flags=_re.MULTILINE)
-    # Birden fazla satır sonunu tek satır sonuna indir
-    cleaned = _re.sub(r"\n{2,}", " ", cleaned)
-    cleaned = _re.sub(r"\n", " ", cleaned)
-    # Birden fazla boşluğu teke indir ve strip
-    cleaned = _re.sub(r" {2,}", " ", cleaned).strip()
-
-    return cleaned
 
 
 def _normalize_script(

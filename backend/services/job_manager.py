@@ -536,6 +536,7 @@ class JobManager:
             "cost_estimate_usd": cost_estimate_usd,
             "cached": cached,
             "output_artifact": output_artifact,
+            "started_at": step.started_at,
             "timestamp": now,
         }
         await sse_hub.publish(job_id, "step_update", step_event_data)

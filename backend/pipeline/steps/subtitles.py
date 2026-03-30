@@ -22,13 +22,13 @@ yerine kullanılabilir.
 from __future__ import annotations
 
 import os
-import re as _re
 from typing import Any
 
 import httpx
 
 from backend.pipeline.cache import CacheManager
 from backend.utils.logger import get_logger
+from backend.utils.text import normalize_narration
 
 log = get_logger(__name__)
 
@@ -119,25 +119,6 @@ SUBTITLE_STYLES: dict[str, dict[str, Any]] = {
         "background_opacity": 0.5,
     },
 }
-
-
-def _normalize_narration(text: str) -> str:
-    """
-    Altyazı metnini normalize eder — TTS pipeline'ı ile aynı temizleme
-    uygulanır. İki tarafın kelimesi kelimesine aynı string'i işlemesini
-    ve word-timing hizalamasının kaymasız olmasını garantiler.
-    """
-    if not text:
-        return text
-    cleaned = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
-    cleaned = _re.sub(r"_{1,3}(.*?)_{1,3}", r"\1", cleaned)
-    cleaned = _re.sub(r"^#{1,6}\s+", "", cleaned, flags=_re.MULTILINE)
-    cleaned = _re.sub(r"`+([^`]*)`+", r"\1", cleaned)
-    cleaned = _re.sub(r"^\s*[-•*]\s+", "", cleaned, flags=_re.MULTILINE)
-    cleaned = _re.sub(r"\n{2,}", " ", cleaned)
-    cleaned = _re.sub(r"\n", " ", cleaned)
-    cleaned = _re.sub(r" {2,}", " ", cleaned).strip()
-    return cleaned
 
 
 def get_style_config(style_name: str) -> dict[str, Any]:
@@ -359,7 +340,7 @@ async def step_subtitles_enhanced(
         scene_entry = scenes_by_number.get(scene_num, {})
         raw_narration = scene_entry.get("narration", "")
         # TTS ile aynı normalizasyonu uygula — word-timing hizalaması için zorunlu
-        narration = _normalize_narration(raw_narration)
+        narration = normalize_narration(raw_narration)
 
         word_timings: list[dict[str, Any]] = []
         scene_timing_source = "unknown"

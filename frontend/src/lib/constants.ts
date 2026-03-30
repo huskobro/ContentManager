@@ -11,7 +11,8 @@
  */
 
 import React from "react";
-import { Video, Newspaper, ShoppingBag } from "lucide-react";
+import { Video, Newspaper, ShoppingBag, type LucideProps } from "lucide-react";
+import type { ForwardRefExoticComponent, RefAttributes } from "react";
 import type { JobStatus } from "@/stores/jobStore";
 
 // ─── İş Durumu Yapılandırması ───────────────────────────────────────────────
@@ -65,7 +66,7 @@ export const MODULE_FILTERS: { value: string; label: string }[] = [
 
 // ─── Modül İkon Yardımcısı ──────────────────────────────────────────────────
 
-const MODULE_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
+const MODULE_ICONS: Record<string, ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>> = {
   standard_video: Video,
   news_bulletin: Newspaper,
   product_review: ShoppingBag,
@@ -148,7 +149,7 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
     ],
   },
   {
-    key: "default_language",
+    key: "language",
     label: "Varsayılan İçerik Dili",
     description: "Yeni işlerde önerilen dil kodu (ISO 639-1).",
     type: "select",
@@ -165,7 +166,7 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
 
   // ── Pipeline Varsayılanları ──────────────────────────────────────────────
   {
-    key: "default_tts_provider",
+    key: "tts_provider",
     label: "Varsayılan TTS Sağlayıcısı",
     description: "Ses sentezi için birincil provider.",
     type: "select",
@@ -178,7 +179,7 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
     ],
   },
   {
-    key: "default_llm_provider",
+    key: "llm_provider",
     label: "Varsayılan LLM Sağlayıcısı",
     description: "Senaryo ve metadata üretimi için birincil provider.",
     type: "select",
@@ -191,7 +192,7 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
     ],
   },
   {
-    key: "default_visuals_provider",
+    key: "visuals_provider",
     label: "Varsayılan Görsel Sağlayıcısı",
     description: "Sahne görselleri için birincil provider.",
     type: "select",
@@ -203,7 +204,7 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
     ],
   },
   {
-    key: "default_subtitle_style",
+    key: "subtitle_style",
     label: "Varsayılan Altyazı Stili",
     description: "Video kompozisyonunda kullanılacak altyazı stili.",
     type: "select",

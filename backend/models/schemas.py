@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,6 +199,57 @@ class SettingResponse(BaseModel):
     description: str | None = None
     created_at: str
     updated_at: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _decode_json_value(cls, data: Any) -> Any:
+        """
+        ORM Setting.value sütunu JSON-encoded string tutar (ör. '"shorts"', '30').
+        API yanıtında decode edilmiş Python değeri döndürülmeli.
+
+        Çoklu encode olmuş değerleri de güvenle çözer: string olduğu sürece
+        tekrar json.loads dener (en fazla 5 katman).
+        """
+        import json as _json
+
+        def _iterative_decode(raw: Any) -> Any:
+            """String olduğu sürece json.loads tekrarla, stabil olunca dur."""
+            result = raw
+            for _ in range(5):
+                if not isinstance(result, str):
+                    break
+                try:
+                    result = _json.loads(result)
+                except (_json.JSONDecodeError, TypeError):
+                    break
+            return result
+
+        # from_attributes ile ORM nesnesi gelir
+        if hasattr(data, "value"):
+            raw = data.value
+            if isinstance(raw, str):
+                decoded = _iterative_decode(raw)
+                # Eğer decode sonucu raw'dan farklıysa, dict'e çevir
+                if decoded is not raw or not isinstance(decoded, str):
+                    return {
+                        "id": data.id,
+                        "scope": data.scope,
+                        "scope_id": data.scope_id,
+                        "key": data.key,
+                        "value": decoded,
+                        "locked": data.locked,
+                        "description": data.description,
+                        "created_at": data.created_at,
+                        "updated_at": data.updated_at,
+                    }
+        # dict olarak geldiyse (örn. test veya manual çağrı)
+        elif isinstance(data, dict) and "value" in data:
+            raw = data["value"]
+            if isinstance(raw, str):
+                decoded = _iterative_decode(raw)
+                if decoded is not raw or not isinstance(decoded, str):
+                    data = {**data, "value": decoded}
+        return data
 
 
 class SettingBulkCreate(BaseModel):

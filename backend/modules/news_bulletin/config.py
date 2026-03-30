@@ -10,10 +10,10 @@ StandardVideo'dan farklar:
   - script_temperature: 0.6 (haberlerde daha dusuk yaraticilik, daha yuksek dogruluk)
   - tts_speed: 1.05 (haber spikeri hizi)
   - ken_burns_enabled: False (haber gorselleri statik)
-  - background_music_enabled: False
-  - news_sources: [] (URL/RSS listesi, runtime'da doldurulur)
-  - news_max_articles: 5
-  - news_summary_max_chars: 500
+
+Not:
+    Sadece pipeline step'lerinde fiilen okunan ayarlar burada tutulur.
+    Pipeline'da okunmayan ayarlar 2026-03-31 teshis raporuyla kaldirilmistir.
 """
 
 from __future__ import annotations
@@ -28,8 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "language": "tr",
 
     # -- Script uretimi -------------------------------------------------
-    "llm_provider": "gemini",
-    "llm_model": "gemini-2.5-flash",
+    "llm_provider": "kieai",
     "script_temperature": 0.6,
     "script_max_tokens": 4096,
 
@@ -38,9 +37,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "news_max_articles": 5,
     "news_summary_max_chars": 500,
 
-    # -- Metadata -------------------------------------------------------
-    "generate_metadata": True,
-
     # -- TTS ------------------------------------------------------------
     "tts_provider": "edge_tts",
     "tts_voice": "tr-TR-AhmetNeural",
@@ -48,23 +44,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # -- Gorseller ------------------------------------------------------
     "visuals_provider": "pexels",
-    "visuals_orientation": "landscape",
-    "visuals_min_duration": 5,
 
     # -- Altyazi --------------------------------------------------------
     "subtitle_style": "standard",
     "subtitle_font_size": 48,
-    "subtitle_position": "bottom",
-    "generate_subtitles": True,
 
     # -- Video kompozisyon ----------------------------------------------
     "video_resolution": "1920x1080",
     "video_fps": 30,
-    "composition_engine": "remotion",
 
     # -- Ken Burns efekti -----------------------------------------------
     "ken_burns_enabled": False,
-
-    # -- Muzik ----------------------------------------------------------
-    "background_music_enabled": False,
 }

@@ -10,7 +10,7 @@ interface HeaderProps {
 }
 
 export default function Header({ mode, pageTitle }: HeaderProps) {
-  const { theme, toggleTheme, setMobileSidebarOpen, adminUnlocked, unlockAdmin, lockAdmin } =
+  const { theme, toggleTheme, setMobileSidebarOpen, unlockAdmin, lockAdmin } =
     useUIStore();
   const navigate = useNavigate();
 

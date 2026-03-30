@@ -65,7 +65,7 @@ const MODULES = [
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function ModuleManager() {
-  const { settings, loading, error, fetchSettings, createSetting, updateSetting, clearSettings } =
+  const { settings, loading, error, fetchSettings, createSetting, updateSetting } =
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
@@ -76,6 +76,8 @@ export default function ModuleManager() {
 
   // ── Klavye Navigasyonu ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null);
+
+  const notifyKeyboardRef = useRef<(() => void) | undefined>(undefined);
 
   const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: MODULES.length,
@@ -104,7 +106,7 @@ export default function ModuleManager() {
         setExpandedModule(null);
       }
     },
-    onKeyboardMove: notifyKeyboard,
+    onKeyboardMove: () => notifyKeyboardRef.current?.(),
   });
 
   const { getTabIndex, notifyKeyboard } = useRovingTabindex({
@@ -112,6 +114,8 @@ export default function ModuleManager() {
     itemCount: MODULES.length,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
+
+  notifyKeyboardRef.current = notifyKeyboard;
 
   const loadModuleSettings = useCallback(
     async (moduleKey: string) => {
@@ -283,7 +287,6 @@ export default function ModuleManager() {
               {isExpanded && (
                 <div id={panelId} role="group" aria-label={`${mod.label} ayarları`}>
                 <ModuleSettingsPanel
-                  moduleKey={mod.key}
                   settings={selectedModule === mod.key ? settings : moduleSettings}
                   loading={loading && selectedModule === mod.key}
                   onReload={() => loadModuleSettings(mod.key)}
@@ -301,12 +304,10 @@ export default function ModuleManager() {
 // ─── Modül Ayarları Paneli (delete kaldırıldı) ────────────────────────────────
 
 function ModuleSettingsPanel({
-  moduleKey,
   settings: moduleSettings,
   loading,
   onReload,
 }: {
-  moduleKey: string;
   settings: SettingRecord[];
   loading: boolean;
   onReload: () => void;

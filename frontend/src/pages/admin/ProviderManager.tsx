@@ -24,6 +24,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
+import { type Toast } from "@/stores/uiStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
 import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
@@ -147,7 +148,7 @@ const FALLBACK_OPTIONS = {
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function ProviderManager() {
-  const { settings, loading, error, fetchSettings, createSetting, updateSetting } =
+  const { settings, loading, error, fetchSettings } =
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
@@ -159,6 +160,8 @@ export default function ProviderManager() {
 
   // ── Klavye Navigasyonu ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null);
+
+  const notifyKeyboardRef = useRef<(() => void) | undefined>(undefined);
 
   const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: PROVIDERS.length,
@@ -180,7 +183,7 @@ export default function ProviderManager() {
         setExpandedProvider(null);
       }
     },
-    onKeyboardMove: notifyKeyboard,
+    onKeyboardMove: () => notifyKeyboardRef.current?.(),
   });
 
   const { getTabIndex, notifyKeyboard } = useRovingTabindex({
@@ -188,6 +191,8 @@ export default function ProviderManager() {
     itemCount: PROVIDERS.length,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
+
+  notifyKeyboardRef.current = notifyKeyboard;
 
   const loadProviderSettings = useCallback(
     async (providerKey: string) => {
@@ -500,7 +505,7 @@ function ProviderSettingsPanel({
 
 function ProviderKeyRow({
   label,
-  fieldKey,
+  fieldKey: _fieldKey,
   value,
   sensitive,
   placeholder,
@@ -596,7 +601,7 @@ function FallbackOrderEditor({
   addToast,
 }: {
   adminSettings: SettingRecord[];
-  addToast: (t: { type: string; title: string; description?: string }) => void;
+  addToast: (t: Omit<Toast, "id">) => void;
 }) {
   const { createSetting } = useAdminStore();
 
