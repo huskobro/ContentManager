@@ -101,8 +101,8 @@ export function getModuleIcon(moduleKey: string, size: number = 14): React.React
 //   "providers" → API anahtarları ve sağlayıcı yapılandırmaları
 //   "pipeline"  → Pipeline varsayılanları
 
-export type SettingFieldType = "number" | "string" | "password" | "array" | "multiselect" | "select" | "path" | "textarea";
-export type SettingCategory = "system" | "pipeline";
+export type SettingFieldType = "number" | "string" | "password" | "array" | "multiselect" | "select" | "path" | "textarea" | "toggle";
+export type SettingCategory = "system" | "pipeline" | "script" | "video_audio";
 
 export interface SystemSettingDef {
   key: string;
@@ -257,6 +257,161 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
     ],
   },
 
+  // ── Senaryo Üretimi ──────────────────────────────────────────────────────
+  {
+    key: "scene_count",
+    label: "Sahne Sayısı",
+    description: "Senaryo kaç sahneden oluşsun. Her sahne ~15-25 sn TTS süresi üretir.",
+    type: "number",
+    category: "script",
+    default: 10,
+    min: 3,
+    max: 20,
+  },
+  {
+    key: "category",
+    label: "İçerik Kategorisi",
+    description: "Senaryo üretim tonunu ve odağını belirler. Pipeline'da LLM system prompt'una eklenir.",
+    type: "select",
+    category: "script",
+    default: "general",
+    options: [
+      { value: "general", label: "Genel" },
+      { value: "true_crime", label: "Suç & Gizem" },
+      { value: "science", label: "Bilim & Teknoloji" },
+      { value: "history", label: "Tarih" },
+      { value: "motivation", label: "Motivasyon & Kişisel Gelişim" },
+      { value: "religion", label: "Din & Maneviyat" },
+    ],
+  },
+  {
+    key: "use_hook_variety",
+    label: "Açılış Hook Çeşitliliği",
+    description: "Etkin olduğunda her senaryoda farklı açılış hook tipi seçilir (şok edici gerçek, soru, hikaye vb.). Tekrar önleme sistemi son 6 hook'u takip eder.",
+    type: "toggle",
+    category: "script",
+    default: true,
+  },
+  {
+    key: "script_temperature",
+    label: "Senaryo Yaratıcılık (Temperature)",
+    description: "LLM temperature (0.0–2.0). Düşük = tutarlı/tekrarcı, Yüksek = yaratıcı/beklenmedik. Standart: 0.8, Haber: 0.6, Ürün: 0.7. Ondalık girin: 0.8",
+    type: "number",
+    category: "script",
+    default: 0.8,
+    min: 0,
+    max: 2,
+  },
+  {
+    key: "script_max_tokens",
+    label: "Senaryo Max Token",
+    description: "LLM çıktısı için token sınırı. Çok sahne veya uzun narasyon gerekiyorsa artır.",
+    type: "number",
+    category: "script",
+    default: 4096,
+    min: 1024,
+    max: 16384,
+  },
+  {
+    key: "job_timeout_seconds",
+    label: "İş Zaman Aşımı (saniye)",
+    description: "Bir iş bu süreden uzun sürerse iptal edilir. Varsayılan: 1800 (30 dakika).",
+    type: "number",
+    category: "script",
+    default: 1800,
+    min: 300,
+    max: 7200,
+  },
+
+  // ── Video & Ses ─────────────────────────────────────────────────────────
+  {
+    key: "tts_voice",
+    label: "TTS Sesi",
+    description: "Edge TTS için varsayılan ses kimliği. tr-TR-AhmetNeural (erkek) veya tr-TR-EmelNeural (kadın).",
+    type: "select",
+    category: "video_audio",
+    default: "tr-TR-AhmetNeural",
+    options: [
+      { value: "tr-TR-AhmetNeural", label: "Ahmet (Türkçe Erkek)" },
+      { value: "tr-TR-EmelNeural", label: "Emel (Türkçe Kadın)" },
+      { value: "en-US-AriaNeural", label: "Aria (İngilizce Kadın)" },
+      { value: "en-US-GuyNeural", label: "Guy (İngilizce Erkek)" },
+      { value: "de-DE-ConradNeural", label: "Conrad (Almanca Erkek)" },
+    ],
+  },
+  {
+    key: "tts_speed",
+    label: "TTS Hızı",
+    description: "Ses sentezi hız çarpanı. 1.0 = normal, 1.1 = %10 hızlı, 0.9 = %10 yavaş. Ondalık girin: 1.0",
+    type: "number",
+    category: "video_audio",
+    default: 1.0,
+    min: 0,
+    max: 3,
+  },
+  {
+    key: "video_resolution",
+    label: "Video Çözünürlüğü",
+    description: "Remotion render çözünürlüğü. Shorts için 1080×1920 kullanın.",
+    type: "select",
+    category: "video_audio",
+    default: "1920x1080",
+    options: [
+      { value: "1920x1080", label: "1920×1080 (Full HD · 16:9)" },
+      { value: "1080x1920", label: "1080×1920 (Dikey · 9:16 Shorts)" },
+      { value: "1280x720", label: "1280×720 (HD)" },
+    ],
+  },
+  {
+    key: "video_fps",
+    label: "Video FPS",
+    description: "Remotion render kare hızı.",
+    type: "select",
+    category: "video_audio",
+    default: 30,
+    options: [
+      { value: "24", label: "24 FPS (Sinematik)" },
+      { value: "30", label: "30 FPS (Standart)" },
+      { value: "60", label: "60 FPS (Akıcı)" },
+    ],
+  },
+  {
+    key: "subtitle_font_size",
+    label: "Altyazı Font Boyutu",
+    description: "Pixel cinsinden altyazı boyutu. Varsayılan: 48. Shorts için 56-64 önerilir.",
+    type: "number",
+    category: "video_audio",
+    default: 48,
+    min: 24,
+    max: 96,
+  },
+  {
+    key: "subtitle_use_whisper",
+    label: "Whisper Altyazı Zamanlaması",
+    description: "Etkin olduğunda Edge TTS word-timing yoksa OpenAI Whisper API kullanılır (~$0.006/dk). Çoğu durumda Edge TTS word-timing yeterlidir.",
+    type: "toggle",
+    category: "video_audio",
+    default: false,
+  },
+  {
+    key: "ken_burns_enabled",
+    label: "Ken Burns Efekti",
+    description: "Görsellere yavaş zoom/pan hareketi ekler. Haber bülteni için genellikle kapalı tutulur.",
+    type: "toggle",
+    category: "video_audio",
+    default: true,
+  },
+  {
+    key: "ken_burns_intensity",
+    label: "Ken Burns Yoğunluğu",
+    description: "Ken Burns efektinin zoom miktarı (0.01–0.3). 0.05 = hafif, 0.15 = belirgin. Ondalık girin: 0.05",
+    type: "number",
+    category: "video_audio",
+    default: 0.05,
+    min: 0,
+    max: 1,
+  },
+
 ];
 
 // ─── Prompt Settings Schema ─────────────────────────────────────────────────
@@ -331,5 +486,13 @@ export const SETTING_CATEGORY_META: Record<
   pipeline: {
     label: "Pipeline Varsayılanları",
     description: "Yeni işlerde kullanılacak varsayılan provider ve stil seçimleri.",
+  },
+  script: {
+    label: "Senaryo Üretimi",
+    description: "LLM senaryo üretim parametreleri: kategori, hook sistemi, temperature, sahne sayısı.",
+  },
+  video_audio: {
+    label: "Video & Ses",
+    description: "TTS sesi, hızı, video çözünürlüğü, FPS, altyazı boyutu ve Ken Burns efekti.",
   },
 };

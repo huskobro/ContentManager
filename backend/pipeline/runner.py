@@ -118,6 +118,18 @@ async def run_pipeline(job_id: str) -> None:
             )
             return
 
+        # ── Prompt template key aliasing ──────────────────────────────────
+        # Admin panel'de ayarlar "{module_key}_script_prompt" olarak kaydedilir.
+        # Pipeline adımları "script_prompt_template" / "metadata_prompt_template" okur.
+        # Burada alias ekliyoruz: mevcut değeri ezmeden (setdefault).
+        _module_key = job.module_key  # ör. "standard_video"
+        _script_key = f"{_module_key}_script_prompt"
+        if config.get(_script_key):
+            config.setdefault("script_prompt_template", config[_script_key])
+        _metadata_key = f"{_module_key}_metadata_prompt"
+        if config.get(_metadata_key):
+            config.setdefault("metadata_prompt_template", config[_metadata_key])
+
         # Job title'ı config'e ekle (step fonksiyonlarının erişebilmesi için)
         config["_job_title"] = job.title
         config["_job_id"] = job_id

@@ -423,6 +423,80 @@ npx tsc -p tsconfig.app.json --noEmit → sıfır hata  ✅
 
 ---
 
+## 2026-03-31 — Çoklu Encode Onarımı + TTS/Altyazı Senkron Denetimi + Admin Panel Genişletme
+
+### Değişiklik Özeti
+
+**Görev 1 — Çoklu encode onarımı (kritik):**
+
+| Sorun | Root Cause | Fix |
+|---|---|---|
+| `tts_fallback_order`, `llm_fallback_order`, `visuals_fallback_order` DB'de bozuk | Fragment array pattern: `['["edge_tts"', '"openai_tts"]', 'edge_tts']` | `_repair_list_elements` + `_repair_multi_encoded_values` startup onarımı |
+| `settings_resolver._decode_value` yalnızca tek katman decode | `json.loads` tek kez çağrılıyordu | Iteratif decode (max 5 tur) |
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/main.py` | `_repair_list_elements()` + `_repair_multi_encoded_values()` startup adımı (0b) |
+| `backend/services/settings_resolver.py` | `_decode_value()` → iteratif json.loads (5 tur) |
+| `backend/models/schemas.py` | `SettingResponse._decode_json_value` — iteratif decode eklendi |
+| `backend/tests/test_migration_and_paths.py` | +28 test: `TestDecodeValueIterative` (9), `TestRepairMultiEncodedValues` (9), `TestCanonicalTextChain` (7), `TestSettingResponseDecoder` (+3) |
+
+**Görev 2 — TTS/Altyazı senkron denetimi:**
+
+Kod incelemesiyle doğrulandı: her iki zincir de aynı kaynak üzerinden `normalize_narration()` geçiriyor; senkron sorunu yok.
+
+**Görev 3 — Admin panel genişletme (script + video/audio ayarları + prompt templates):**
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/lib/constants.ts` | `toggle` SettingFieldType; `script`, `video_audio` kategori; `SYSTEM_SETTINGS_SCHEMA`'ya 14 yeni entry; `PROMPT_SETTINGS_SCHEMA` |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | toggle render branch; `PromptRow` + `PromptTemplatesCard` component; `script`, `video_audio` kategori render |
+| `backend/pipeline/runner.py` | `{module_key}_script_prompt` → `script_prompt_template` aliasing; `{module_key}_metadata_prompt` → `metadata_prompt_template` aliasing |
+
+---
+
+### Çalıştırılan Testler
+
+#### Backend (`python3 -m pytest backend/tests/test_migration_and_paths.py`)
+
+```
+43 passed in 0.40s  ✅
+```
+
+| Test Grubu | Test Sayısı | Sonuç |
+|---|---|---|
+| `TestMigrateLegacySettingKeys` | 4 | ✅ |
+| `TestOutputPathSanitization` | 5 | ✅ |
+| `TestSettingResponseDecoder` | 8 | ✅ |
+| `TestDecodeValueIterative` | 9 | ✅ |
+| `TestRepairMultiEncodedValues` | 9 | ✅ |
+| `TestCanonicalTextChain` | 7 | ✅ |
+| **TOPLAM** | **43** | **✅** |
+
+#### Frontend (`npx tsc --noEmit`)
+
+```
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
+### Doğrulanamayan Noktalar
+
+1. **Prompt template alan görünümü tarayıcıda test edilmedi:** `PromptTemplatesCard` bileşeni jsdom'da render test edilmedi; yalnızca tsc ile tip kontrolü yapıldı.
+2. **Startup onarım logu:** `_repair_multi_encoded_values` çalışınca "Çoklu encode onarımı tamamlandı" logu alınması beklenir; ancak gerçek DB üzerinde test edilmedi.
+
+---
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| `{module_key}_script_prompt` key aliasing news_bulletin/product_review için de geçerli | Düşük | `runner.py` aliasing modül adına göre dinamik — tüm modüller için çalışır |
+| Prompt template textarea boş kaydedilirse `""` vs null davranışı | Düşük | `config.setdefault` yalnızca truthy değerler için alias yapıyor — boş string alias yapılmaz, hardcoded template kullanılır. İstenen davranış bu. |
+
+---
+
 ## 2026-03-31 — Tam Sistem Teşhis ve Hardcoded Envanter Raporu
 
 > **Not:** Bu kayıt bir teşhis raporudur. Kod değişikliği yapılmamıştır.
