@@ -198,19 +198,24 @@ export function useScopedKeyboardNavigation(
       // Modifier tuşlarla birlikte basılmışsa geç (kısayol çakışması önlemi)
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      // Metin girişi alanları — yalnızca gerçek DOM element'ler için kontrol et
-      const target = e.target as HTMLElement;
-      if (target && target.tagName) {
+      // Metin girişi alanları — yalnızca gerçek HTMLElement'lerde kontrol et
+      // instanceof HTMLElement: Window, Document veya null hedefleri güvenle dışlar
+      const target = e.target;
+      if (target instanceof HTMLElement) {
         const tag = target.tagName.toUpperCase();
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-        if (target.isContentEditable) return;
+        if (
+          target.isContentEditable ||
+          target.getAttribute("contenteditable") === "true" ||
+          target.contentEditable === "true"
+        )
+          return;
 
         // ARIA metin girişi rolleri
-        const role = target.getAttribute?.("role");
+        const role = target.getAttribute("role");
         if (
           role === "textbox" ||
           role === "combobox" ||
-          role === "listbox" ||
           role === "spinbutton" ||
           role === "searchbox"
         )

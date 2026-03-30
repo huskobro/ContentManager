@@ -339,6 +339,113 @@ describe("keyboardStore scope stack", () => {
   });
 });
 
+// ─── Guard Koşulları — Interactive Hedef ────────────────────────────────────
+
+describe("Guard koşulları — interactive hedef", () => {
+  beforeEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+  afterEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+
+  it("contenteditable içinde ArrowDown navigasyonu çalışmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    const el = document.createElement("div");
+    el.contentEditable = "true";
+    document.body.appendChild(el);
+
+    act(() => {
+      const event = new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, "target", { value: el });
+      window.dispatchEvent(event);
+    });
+
+    expect(result.current.focusedIdx).toBe(-1);
+    document.body.removeChild(el);
+  });
+
+  it("role='textbox' içinde ArrowDown çalışmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    const el = document.createElement("div");
+    el.setAttribute("role", "textbox");
+    document.body.appendChild(el);
+
+    act(() => {
+      const event = new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, "target", { value: el });
+      window.dispatchEvent(event);
+    });
+
+    expect(result.current.focusedIdx).toBe(-1);
+    document.body.removeChild(el);
+  });
+
+  it("role='combobox' içinde ArrowDown çalışmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    const el = document.createElement("div");
+    el.setAttribute("role", "combobox");
+    document.body.appendChild(el);
+
+    act(() => {
+      const event = new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, "target", { value: el });
+      window.dispatchEvent(event);
+    });
+
+    expect(result.current.focusedIdx).toBe(-1);
+    document.body.removeChild(el);
+  });
+
+  it("window target ile navigation çalışır", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    act(() => fireKey("ArrowDown"));
+    expect(result.current.focusedIdx).toBe(0);
+  });
+
+  it("altKey ile ArrowDown çalışmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    act(() => fireKey("ArrowDown", { altKey: true }));
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+
+  it("isComposing=true iken ArrowDown çalışmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    act(() => fireKey("ArrowDown", { isComposing: true }));
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+});
+
 // ─── Quick Look Space Davranış Simülasyonu ───────────────────────────────────
 
 describe("Quick Look Space toggle davranışı", () => {
