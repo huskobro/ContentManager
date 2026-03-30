@@ -31,6 +31,7 @@ Her ADR su sorulari yanitlar:
 - [ADR-013: Varsayilan TTS -- Edge TTS](#adr-013-varsayilan-tts--edge-tts)
 - [ADR-014: Canli Guncelleme -- SSE (Server-Sent Events)](#adr-014-canli-guncelleme--sse-server-sent-events)
 - [ADR-015: Loglama -- Yapilandirilmis JSON Logging](#adr-015-loglama--yapilandirilmis-json-logging)
+- [ADR-016: Arka Plan Kuyrugu ve Global SSE -- Aninda Calistirma Yerine Worker Loop](#adr-016-arka-plan-kuyrugu-ve-global-sse--aninda-calistirma-yerine-worker-loop)
 
 ---
 
@@ -1118,6 +1119,90 @@ Frontend: SSE ile canli guncelleme
 
 ---
 
-*Bu dokuman yasayan bir referanstir. Her yeni mimari karar `ADR-XXX` formatinda eklenir.
-Mevcut kararlar yeni bilgiler isiginda guncellenir ve "Tekrar Degerlendirme Kosullari"
-bolumu tetiklendiginde revize edilir.*
+---
+
+## ADR-016: Arka Plan Kuyrugu ve Global SSE -- Aninda Calistirma Yerine Worker Loop
+
+**Karar:** Toplu is (batch) destegi ile birlikte is calistirma modeli "aninda baslatma" (immediate execution) yerine "arka plan kuyrugu + worker loop" mimarisine tasiniyor. Frontend canli is durumu icin tekil is SSE'sine ek olarak, iş listesi ve Dashboard icin global bir SSE kanali veya kisa aralikli polling mekanizmasi benimseniyor.
+
+**Tarih:** 2026-03-30
+**Durum:** Kabul edildi -- Faz 10.5 kapsaminda uygulanacak
+**Faz:** 10.5
+
+### Baglam
+
+Faz 10.5 oncesindeki mimaride `POST /api/jobs` istegi geldiginde `asyncio.create_task(run_pipeline(job_id))` ile is aninda baslatiliyordu. Tek is icin bu yaklasim yeterliydi: kullanici formu gonderiyor, is hemen calisiyordu.
+
+Toplu uretim (batch) ozelligi eklendikten sonra bu model yetersiz kalmaktadir:
+
+- Kullanici tek form gonderimiyle 10, 20, hatta 50 video isi olusturabilir.
+- Her `POST /api/jobs` yanina hemen `asyncio.create_task()` eklenmesi, tum bu islerin esasmanlı baslatilmasi demektir.
+- `max_concurrent_jobs=2` limiti kod seviyesinde uygulanmadigi icin sistem, TTS/LLM API'lerine esit sayida paralel istek gonderir, rate limit'e carpabilir ve tek bir makinenin islemci/bellek kaynaklarini doyurabilir.
+- API limitlerine takilmamak icin geri cekme (backoff) mantigi hem pipeline runner hem de POST handler'da olmak uzere iki yerde yonetilmek zorunda kalir -- tek sorumluluk ilkesini ihlal eder.
+
+Ek olarak, batch is gonderdikten sonra kullanici is listesine yonlendirilir. Sayfayi manuel yenilemeden kuyruktaki/calisan islerin durumunun gorulmesi icin bir canli guncelleme mekanizmasi gereklidir. Mevcut SSE altyapisi yalnizca `/api/jobs/{id}/events` uzerinden tekil is dinlemesine izin vermektedir; Dashboard ve JobList gibi liste ekranlari icin uygun degildir.
+
+### Degerlendirilen Alternatifler
+
+| Alternatif | Avantajlari | Neden Elendi |
+|-----------|------------|--------------|
+| **Mevcut model (asyncio.create_task her POST'ta)** | Basit, sifir ek yapi | Batch ile esamanli cok sayida istek baslatir; rate limit ve kaynak tuketimi kontrolsuz. Limit uygulamak icin tum baslangic noktalarini degistirmek gerekir. |
+| **Celery + Redis kuyrugu** | Guclu, uretim kanıtlanmis, retry/backoff dahili | Harici servis bagimliligi (Redis), ek kurulum, localhost-first mimariye aykiri (ADR-007). |
+| **Semaphore ile mevcut modeli yamalamak** | Kucuk degisiklik | `asyncio.Semaphore` yalnizca ayni process icindeki concurrent sayiyi sinirlar; restart sonrasi RUNNING kalan (interrupted) isleri kurtarmaz, QUEUED sirasini korumaz. |
+| **asyncio worker loop + SQLite kuyruk (secilen)** | Harici bagimlilık yok; SQLite zaten var; interrupted job recovery mevcut mantikla entegre; limit tek noktadan yonetilir | Uygulama icinde aktif bir loop gorevi bulunmak zorunda (ana uygulama yasadigi surece) |
+| **Periyodik polling (frontend)** | SSE altyapisi degistirmeden liste ekranlarini canli yapar | 5-10 sn aralık yeterli; daha kisa aralik gereksiz yuklenme olusturur. Tekil is icin SSE'yi degistirmez. |
+| **Global SSE kanali (/api/events)** | Gercek zamanli, polling'den temiz | Tum istemciler icin aboye state yonetimi gerektirir; implementasyon karmasikligi artar; batch senaryosunda 15-iş listesi sayfalı oldugu icin yararı sinirli. |
+
+### Secilen Cozum
+
+**Backend:**
+
+```
+POST /api/jobs
+  -> JobManager.create_job()      # Status: QUEUED, DB'ye yaz
+  -> (asyncio.create_task() YOK)  # Is HEMEN baslatilmaz
+  -> HTTP 201 don
+
+# Uygulama baslarken bir kez baslatilan arka plan loop:
+async def _worker_loop():
+    while True:
+        with SessionLocal() as db:
+            running_count = db.query(Job).filter(Job.status == "running").count()
+            if running_count < settings.max_concurrent_jobs:
+                next_job = db.query(Job)
+                    .filter(Job.status == "queued")
+                    .order_by(Job.created_at)
+                    .first()
+                if next_job:
+                    asyncio.create_task(run_pipeline(next_job.id))
+        await asyncio.sleep(2)  # 2 saniye bekleme
+```
+
+Bu loop:
+- `main.py`'deki lifespan baglaminda `asyncio.create_task(_worker_loop())` ile baslatilir
+- Max concurrent jobs limitini tek noktadan uygular
+- Yeni is eklendikten en fazla 2 saniye sonra otomatik olarak alır
+- SQLite WAL sayesinde `count()` ve `first()` sorgulari okunakli kilit olmadan calisir
+
+**Frontend:**
+
+- JobDetail sayfası: Degismez -- tekil SSE hâlâ `/api/jobs/{id}/events`
+- JobList ve Dashboard: Is listesi, 5 saniyede bir `fetchJobs()` + `fetchStats()` pollinge gecilir (mevcut "Yenile" butonu mantigi otomatik tetiklenir). Kullanici manual yenileme yapmak zorunda kalmaz, sayfayı acık tutmasi yeterlidir.
+- Toplu gonderim sonrasi: Kullanici `/jobs` sayfasına yonlendirilir; polling devreye girer ve kuyruktaki islerin "Kuyrukta" → "Calisiyor" → "Tamamlandi" gecislerini gosterir.
+
+### Mimari Etki
+
+| Degisen Yer | Onceki Durum | Sonraki Durum |
+|-------------|-------------|--------------|
+| `POST /api/jobs` | Is olustur + `asyncio.create_task()` baslatir | Is olustur, QUEUED yaz, HTTP 201 don |
+| `backend/main.py` | -- | Lifespan'de `_worker_loop` coroutine baslatilir |
+| `backend/services/job_manager.py` | `recover_interrupted_jobs()` mevcut | `_worker_loop()` ve slot hesabi eklenir |
+| `frontend/JobList.tsx` | Sadece sayfa yuklenirken bir kez cagri | 5 sn aralikli `useInterval` + `fetchJobs()` |
+| `frontend/Dashboard.tsx` | Sayfa yuklenirken cagri + manuel Yenile | 5 sn aralikli `useInterval` + `fetchStats()` |
+| Tekil SSE (`/api/jobs/{id}/events`) | Degismez | Degismez |
+
+### Tekrar Degerlendirme Kosullari
+
+- Kullanici sayisi 1'den fazlaya cikarsa (multi-user) veya 2 sn polling yetersiz kalirsa: `asyncio.Queue` ile olay-tetiklemeli kuyruga gecis dusunulebilir.
+- 100+ batch is sik kullanim haline gelirse: Redis + Celery gibi harici bir kuyruk sistemi degerlendirilir (ADR-007 revizyonu).
+- Liste ekranlarinda 5 sn polling sunucu yukunu artirirsa: Gerçek global SSE kanali (`/api/events`) uygulanabilir.

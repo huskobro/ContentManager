@@ -5,6 +5,60 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ve [Semantic Ver
 
 ---
 
+## [1.5.0] — 2026-03-30
+
+### Enterprise SaaS UI/UX — Global SSE, Worker Loop, Prompt Engine, State Sync
+
+Sistemi v1.0.0 "prototip"ten v1.5.0 "Enterprise SaaS İçerik Fabrikasına" dönüştüren 5 alt faz:
+
+**Faz 10.5 — Global Worker Loop, Batch Üretim ve SSE Kuyruk Mimarisi:**
+- `backend/services/job_manager.py` — `job_worker_loop()`: Arka plan worker loop ile kuyruk yönetimi, `max_concurrent_jobs` limitine saygı gösteren otomatik iş dispatch, `_SSEHub.broadcast()` ile global SSE yayını
+- `backend/main.py` — Startup'ta `asyncio.create_task(job_worker_loop())` ile worker loop başlatma, `recover_interrupted_jobs()` ile crash-sonrası kurtarma
+- `frontend/src/stores/jobStore.ts` — `connectGlobalStream()`: Global SSE kanalına bağlanma, tüm sayfalar push-based anlık güncelleme
+- `frontend/src/pages/user/CreateVideo.tsx` — Çok satırlı textarea ile batch üretim (her satır = 1 video), `video_format` (Long/Shorts) seçimi
+- `frontend/src/pages/user/Dashboard.tsx` — Global SSE ile aktif iş sayacı canlı güncelleme
+- `frontend/src/pages/user/JobList.tsx` — Global SSE stream ile polling-free iş listesi güncelleme
+- `backend/config.py` — `default_video_format: str = "long"` alanı eklendi
+- `backend/api/jobs.py` — `GET /api/events` global SSE endpoint'i
+
+**Faz 10.6 — Prompt Yönetim Motoru (Prompt Engine):**
+- `frontend/src/pages/admin/PromptManager.tsx` — Tüm pipeline prompt'larının admin panelden düzenlenmesi: Script system instruction, metadata prompt, kategori-spesifik prompt'lar, hook şablonları. Scope bazlı yönetim (admin/module), isDirty kontrolü, kaydet/sıfırla
+- `frontend/src/App.tsx` — `/admin/prompts` route eklendi
+- `frontend/src/components/layout/Sidebar.tsx` — Admin menüsüne "Prompt Yönetimi" eklendi
+- `backend/pipeline/steps/script.py` — Admin panelden gelen prompt override'larını kontrol eden `_resolve_prompt()` fonksiyonu
+
+**Faz 10.7 — Maliyet Takibi (Cost Tracker) ve Kilitleme Mekanizması:**
+- `frontend/src/pages/admin/CostTracker.tsx` — Provider bazlı maliyet dashboard'u: toplam maliyet, iş başına ortalama, provider breakdown, günlük/haftalık/aylık filtre
+- `frontend/src/App.tsx` — `/admin/costs` route eklendi
+- `frontend/src/components/layout/Sidebar.tsx` — Admin menüsüne "Maliyet Takibi" eklendi
+- `frontend/src/stores/settingsStore.ts` — `lockedKeys: string[]` desteği, `fetchResolvedSettings()` locked alan bilgisi döndürür
+- `frontend/src/pages/user/UserSettings.tsx` — Kilitli ayarlar Lock ikonu ile readonly gösterilir
+- `frontend/src/pages/user/CreateVideo.tsx` — Kilitli ayarlar form'da disabled + Lock ikonu
+
+**Faz 10.8 — Veri Tutarlılığı (Data Consistency) ve State Senkronizasyonu:**
+- API key alanları `constants.ts` SYSTEM_SETTINGS_SCHEMA'dan ve GlobalSettings'ten kaldırıldı → API key'ler artık yalnızca ProviderManager'dan yönetilir (Single Source of Truth)
+- Boş değer kaydetme → `deleteSetting()` çağrısı: GlobalSettings, ProviderManager, PromptManager'da tutarlı "boş = sil" semantiği
+- `GlobalSettings.tsx` — Her başarılı kayıt sonrası `loadData()` ile store yeniden senkronize
+- `ProviderManager.tsx` — API key kayıt akışı: provider scope + admin scope senkron güncelleme
+
+**Faz 10.9 — UI/UX Cilası ve Kritik Bug Fix'ler:**
+- `ProviderManager.tsx` — Fallback sırası badge'leri DB'den doğru senkronize (4/5 yerine 1/2/3 gösterimi), `isDirty` kontrolü ile gereksiz kayıt engelleme
+- `GlobalSettings.tsx` — Kayıt sonrası state geri dönme hatası düzeltildi (`loadData()` ile senkronizasyon)
+- `CreateVideo.tsx` — `video_format` default değeri doğru gösterilir (`fetchResolvedSettings` her modül değişikliğinde yeniden çağrılır)
+- `ModuleManager.tsx` — "Özel Ayar Ekle" free-text formu kaldırıldı (serbest giriş → hata kaynağı)
+- `ProviderManager.tsx` — "Özel Ayar Ekle" free-text formu kaldırıldı
+- `JobList.tsx` + `AdminJobs.tsx` — Modül filtresi dropdown → segmented button group (status filtresiyle tutarlı UI)
+- `backend/pipeline/runner.py` — **Kritik pipeline race condition düzeltmesi:** Worker loop `running` set ettikten sonra runner `queued` kontrolü ile reddediyordu → `not in ("queued", "running")` kontrolüne güncellendi
+- `backend/pipeline/runner.py` — `job.output_path` artık `output/` klasöründeki final videoyu işaret eder (session dizini yerine)
+
+### Doğrulama Sonuçları
+- Frontend TypeScript: 0 hata (tsc --noEmit)
+- Pipeline race condition: Fix sonrası video başarıyla üretildi
+- Global SSE: Tüm sayfalar push-based anlık güncelleme çalışıyor
+- State senkronizasyon: Kayıt → yeniden yükleme → doğru değer gösterimi
+
+---
+
 ## [1.0.0] — 2026-03-29
 
 ### Production Release — Son Kalite ve Temizlik
@@ -248,14 +302,12 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ve [Semantic Ver
 ## [Yayınlanmadı]
 
 ### Gelecek İyileştirmeler
-- YouTube OAuth upload entegrasyonu
+- YouTube OAuth upload entegrasyonu (Channel Hub — Faz 11)
 - Karaoke animasyonu (KaraokeText.tsx)
 - RSS feed parser (feedparser paketi)
-- Concurrent job limiti (asyncio.Semaphore)
 - Log rotation (10MB dosya limiti)
 - ElevenLabs / OpenAI TTS provider implementasyonları
 - Pixabay visuals provider implementasyonu
-- CostTracker sayfası (admin panel)
-- Drag-drop fallback sıralaması
+- Drag-drop fallback sıralaması (görsel sıralama)
 - Voice cloning desteği
 - Thumbnail üretimi

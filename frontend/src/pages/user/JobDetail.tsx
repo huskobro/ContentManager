@@ -18,13 +18,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Play,
-  Ban,
   XCircle,
   SkipForward,
-  Video,
-  Newspaper,
-  ShoppingBag,
   RefreshCw,
   FileVideo,
   Terminal,
@@ -32,55 +27,23 @@ import {
   ChevronUp,
   Copy,
   Zap,
+  Ban,
+  Download,
 } from "lucide-react";
 import {
   useJobStore,
   type Job,
-  type JobStatus,
   type StepStatus,
   type PipelineStep,
   type LogEntry,
+  type RenderProgress,
 } from "@/stores/jobStore";
 import { useUIStore } from "@/stores/uiStore";
+import { STATUS_CONFIG, MODULE_INFO, getModuleIcon } from "@/lib/constants";
+import { api } from "@/api/client";
 import { cn } from "@/lib/utils";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
-
-const STATUS_CONFIG: Record<
-  JobStatus,
-  { label: string; color: string; bg: string; icon: React.ReactNode }
-> = {
-  queued: {
-    label: "Kuyrukta",
-    color: "text-slate-400",
-    bg: "bg-slate-400/15",
-    icon: <Clock size={14} />,
-  },
-  running: {
-    label: "Çalışıyor",
-    color: "text-blue-400",
-    bg: "bg-blue-400/15",
-    icon: <Play size={14} />,
-  },
-  completed: {
-    label: "Tamamlandı",
-    color: "text-emerald-400",
-    bg: "bg-emerald-400/15",
-    icon: <CheckCircle2 size={14} />,
-  },
-  failed: {
-    label: "Başarısız",
-    color: "text-red-400",
-    bg: "bg-red-400/15",
-    icon: <XCircle size={14} />,
-  },
-  cancelled: {
-    label: "İptal Edildi",
-    color: "text-slate-500",
-    bg: "bg-slate-500/15",
-    icon: <Ban size={14} />,
-  },
-};
 
 const STEP_STATUS_ICON: Record<StepStatus, React.ReactNode> = {
   pending: <Clock size={16} className="text-slate-500" />,
@@ -88,12 +51,6 @@ const STEP_STATUS_ICON: Record<StepStatus, React.ReactNode> = {
   completed: <CheckCircle2 size={16} className="text-emerald-400" />,
   failed: <XCircle size={16} className="text-red-400" />,
   skipped: <SkipForward size={16} className="text-slate-500" />,
-};
-
-const MODULE_INFO: Record<string, { label: string; icon: React.ReactNode }> = {
-  standard_video: { label: "Standart Video", icon: <Video size={16} /> },
-  news_bulletin: { label: "Haber Bülteni", icon: <Newspaper size={16} /> },
-  product_review: { label: "Ürün İnceleme", icon: <ShoppingBag size={16} /> },
 };
 
 const LOG_LEVEL_COLORS: Record<LogEntry["level"], string> = {
@@ -115,6 +72,7 @@ export default function JobDetail() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [logsOpen, setLogsOpen] = useState(true);
 
   const job = getJobById(jobId ?? "");
@@ -152,6 +110,46 @@ export default function JobDetail() {
     }
   }, [jobId, cancelling, cancelJob, addToast]);
 
+  const handleRetry = useCallback(async () => {
+    if (!jobId || retrying) return;
+    setRetrying(true);
+    try {
+      await api.post(`/jobs/${jobId}/retry`);
+      await fetchJobById(jobId);
+      addToast({ type: "success", title: "İş yeniden başlatıldı" });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
+      addToast({ type: "error", title: "Yeniden başlatma başarısız", description: msg });
+    } finally {
+      setRetrying(false);
+    }
+  }, [jobId, retrying, fetchJobById, addToast]);
+
+  const handleDownload = useCallback(async () => {
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/output`);
+      if (!response.ok) {
+        const error = await response.json();
+        addToast({ type: "error", title: "İndirme başarısız", description: error.detail });
+        return;
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `video_${jobId.substring(0, 8)}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      addToast({ type: "success", title: "Video indiriliyor..." });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
+      addToast({ type: "error", title: "İndirme başarısız", description: msg });
+    }
+  }, [jobId, addToast]);
+
   // ── Yükleniyor ─────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -184,9 +182,10 @@ export default function JobDetail() {
   }
 
   const statusCfg = STATUS_CONFIG[job.status];
-  const modInfo = MODULE_INFO[job.module_key] ?? {
-    label: job.module_key,
-    icon: <Video size={16} />,
+  const modMeta = MODULE_INFO[job.module_key];
+  const modInfo = {
+    label: modMeta?.label ?? job.module_key,
+    icon: getModuleIcon(job.module_key, 16),
   };
 
   const completedSteps = job.steps.filter((s) => s.status === "completed").length;
@@ -234,7 +233,6 @@ export default function JobDetail() {
               statusCfg.bg
             )}
           >
-            {statusCfg.icon}
             {statusCfg.label}
           </span>
 
@@ -250,6 +248,31 @@ export default function JobDetail() {
                 <Ban size={12} />
               )}
               İptal Et
+            </button>
+          )}
+
+          {(job.status === "failed" || job.status === "cancelled") && (
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+            >
+              {retrying ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
+              Yeniden Dene
+            </button>
+          )}
+
+          {job.status === "completed" && (
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+            >
+              <Download size={12} />
+              İndir
             </button>
           )}
 
@@ -322,7 +345,11 @@ export default function JobDetail() {
           {job.steps
             .sort((a, b) => a.order - b.order)
             .map((step) => (
-              <StepRow key={step.key} step={step} />
+              <StepRow
+                key={step.key}
+                step={step}
+                renderProgress={step.key === "composition" ? job.renderProgress : null}
+              />
             ))}
         </div>
       </div>
@@ -357,9 +384,65 @@ export default function JobDetail() {
   );
 }
 
+// ─── Render Progress Widget ────────────────────────────────────────────────
+
+const PHASE_LABELS: Record<RenderProgress["phase"], string> = {
+  bundling:  "Paketleniyor",
+  rendering: "Render ediliyor",
+  encoding:  "Encode ediliyor",
+  done:      "Tamamlandı",
+};
+
+function RenderProgressWidget({ progress }: { progress: RenderProgress }) {
+  const pct = progress.overall_pct ?? 0;
+  const isActive = progress.phase !== "done";
+
+  return (
+    <div className="mx-4 mb-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
+      {/* Başlık satırı */}
+      <div className="flex items-center justify-between text-xs">
+        <div className="flex items-center gap-2 font-medium text-blue-300">
+          {isActive && <Loader2 size={12} className="animate-spin" />}
+          <span>{PHASE_LABELS[progress.phase]}</span>
+          {progress.phase === "rendering" && progress.total_frames > 0 && (
+            <span className="text-blue-400/70">
+              {progress.rendered_frames} / {progress.total_frames} frame
+            </span>
+          )}
+          {progress.phase === "bundling" && progress.bundling_pct != null && (
+            <span className="text-blue-400/70">%{progress.bundling_pct}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-muted-foreground">
+          {progress.eta && (
+            <span className="flex items-center gap-1">
+              <Clock size={11} />
+              {progress.eta}
+            </span>
+          )}
+          {pct > 0 && (
+            <span className="font-mono tabular-nums">%{pct.toFixed(0)}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1.5 w-full rounded-full bg-blue-500/15 overflow-hidden">
+        <div
+          className={cn(
+            "h-full rounded-full transition-all duration-500",
+            progress.phase === "done" ? "bg-emerald-400" : "bg-blue-400"
+          )}
+          style={{ width: `${Math.min(pct, 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Pipeline Adım Satırı ──────────────────────────────────────────────────
 
-function StepRow({ step }: { step: PipelineStep }) {
+function StepRow({ step, renderProgress }: { step: PipelineStep; renderProgress?: RenderProgress | null }) {
   const durationStr = step.duration_ms
     ? step.duration_ms >= 60000
       ? `${(step.duration_ms / 60000).toFixed(1)}dk`
@@ -369,51 +452,58 @@ function StepRow({ step }: { step: PipelineStep }) {
     : null;
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-3 px-4 py-3 transition-colors",
-        step.status === "running" && "bg-blue-500/5"
-      )}
-    >
-      {/* Durum ikonu */}
-      <div className="shrink-0">{STEP_STATUS_ICON[step.status]}</div>
+    <>
+      <div
+        className={cn(
+          "flex items-center gap-3 px-4 py-3 transition-colors",
+          step.status === "running" && "bg-blue-500/5"
+        )}
+      >
+        {/* Durum ikonu */}
+        <div className="shrink-0">{STEP_STATUS_ICON[step.status]}</div>
 
-      {/* Adım bilgisi */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">{step.label}</span>
-          {step.cached && (
-            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
-              CACHE
-            </span>
+        {/* Adım bilgisi */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">{step.label}</span>
+            {step.cached && (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">
+                CACHE
+              </span>
+            )}
+          </div>
+          {step.message && (
+            <p className="mt-0.5 text-xs text-muted-foreground truncate">{step.message}</p>
           )}
         </div>
-        {step.message && (
-          <p className="mt-0.5 text-xs text-muted-foreground truncate">{step.message}</p>
+
+        {/* Provider */}
+        {step.provider && (
+          <span className="hidden sm:block shrink-0 rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+            {step.provider}
+          </span>
+        )}
+
+        {/* Süre */}
+        {durationStr && (
+          <span className="shrink-0 text-xs text-muted-foreground w-14 text-right">
+            {durationStr}
+          </span>
+        )}
+
+        {/* Maliyet */}
+        {step.cost_estimate_usd > 0 && (
+          <span className="hidden sm:block shrink-0 text-xs text-muted-foreground w-16 text-right">
+            ${step.cost_estimate_usd.toFixed(4)}
+          </span>
         )}
       </div>
 
-      {/* Provider */}
-      {step.provider && (
-        <span className="hidden sm:block shrink-0 rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-          {step.provider}
-        </span>
+      {/* Render progress — yalnızca composition adımı running iken */}
+      {step.key === "composition" && step.status === "running" && renderProgress && (
+        <RenderProgressWidget progress={renderProgress} />
       )}
-
-      {/* Süre */}
-      {durationStr && (
-        <span className="shrink-0 text-xs text-muted-foreground w-14 text-right">
-          {durationStr}
-        </span>
-      )}
-
-      {/* Maliyet */}
-      {step.cost_estimate_usd > 0 && (
-        <span className="hidden sm:block shrink-0 text-xs text-muted-foreground w-16 text-right">
-          ${step.cost_estimate_usd.toFixed(4)}
-        </span>
-      )}
-    </div>
+    </>
   );
 }
 

@@ -3,12 +3,11 @@ import {
   AbsoluteFill,
   Sequence,
   Audio,
-  Video,
+  OffthreadVideo,
   Img,
   useVideoConfig,
   useCurrentFrame,
   interpolate,
-  spring,
 } from "remotion";
 import { Subtitles } from "../components/Subtitles";
 import type { NewsBulletinProps, NewsItem, SubtitleChunk, SubtitleStyle } from "../types";
@@ -196,7 +195,7 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
       <AbsoluteFill>
         {item.visualSrc ? (
           item.visualType === "video" ? (
-            <Video
+            <OffthreadVideo
               src={item.visualSrc}
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />

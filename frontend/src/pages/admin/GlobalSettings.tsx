@@ -1,114 +1,495 @@
 /**
- * GlobalSettings — Admin genel ayar yönetimi.
+ * GlobalSettings — Admin genel ayar yönetimi (Schema-Driven UI).
  *
- * scope="global" ve scope="admin" olan ayarların CRUD yönetimi.
- * Ayar değerlerini değiştirme, kilitli durumu toggle etme ve silme.
+ * Bölümler:
+ *   1. Sistem Ayarları (max_concurrent_jobs, output_dir, video_format, default_language)
+ *   2. Pipeline Varsayılanları (default_tts/llm/visuals/subtitle, fallback orders)
+ *
+ * Faz 10.7 değişiklikleri:
+ *   • "multiselect" tip: fallback order için checkbox-style butonlar (kullanıcı anahtar ezberlemez)
+ *   • Silme (delete) işlemi yok
+ *   • Master Promptlar ayrı PromptManager.tsx sayfasına taşındı
+ *
+ * Faz 10.8 değişiklikleri:
+ *   • "providers" kategorisi kaldırıldı — API anahtarları yalnızca ProviderManager'da
+ *   • Boş değer kaydı: empty/whitespace → deleteSetting (unset) yerine create/update değil
+ *   • React state sync: useEffect dbRecord bağımlılığı ile yerel state senkronize
  */
 
 import { useEffect, useState, useCallback } from "react";
 import {
   Sliders,
-  Plus,
-  Trash2,
   Lock,
   Unlock,
   Loader2,
   AlertCircle,
   RefreshCw,
   Save,
-  X,
+  Eye,
+  EyeOff,
+  FolderOpen,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
 } from "lucide-react";
-import { useAdminStore, type SettingRecord, type SettingScope } from "@/stores/adminStore";
+import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
+import {
+  SYSTEM_SETTINGS_SCHEMA,
+  SETTING_CATEGORY_META,
+  type SystemSettingDef,
+  type SettingCategory,
+} from "@/lib/constants";
+
+// Değer "boş" mı? Boş ise unset (deleteSetting) yapılacak.
+function isEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim() === "";
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
 import { cn } from "@/lib/utils";
 
-// ─── Sabitler ────────────────────────────────────────────────────────────────
+// ─── Değer dönüşüm yardımcıları ─────────────────────────────────────────────
 
-const SCOPE_TABS: { value: SettingScope; label: string }[] = [
-  { value: "admin", label: "Admin Ayarları" },
-];
+function rawToDisplay(def: SystemSettingDef, raw: unknown): string {
+  if (raw === null || raw === undefined || raw === "") return "";
+  if (def.type === "array" || def.type === "multiselect") {
+    if (Array.isArray(raw)) return raw.join(", ");
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.join(", ");
+      } catch {
+        return raw;
+      }
+    }
+    return String(raw);
+  }
+  if (def.type === "number") return String(raw);
+  return String(raw);
+}
 
-// ─── Bileşen ─────────────────────────────────────────────────────────────────
+function displayToPayload(def: SystemSettingDef, display: string): unknown {
+  if (def.type === "array" || def.type === "multiselect") {
+    return display
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (def.type === "number") {
+    const n = Number(display);
+    return isNaN(n) ? def.default : n;
+  }
+  return display;
+}
+
+function defaultToDisplay(def: SystemSettingDef): string {
+  return rawToDisplay(def, def.default);
+}
+
+// ─── Multi-Select bileşeni ──────────────────────────────────────────────────
+
+function MultiSelectInput({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  const selected = value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  function toggle(optValue: string) {
+    if (selected.includes(optValue)) {
+      onChange(selected.filter((s) => s !== optValue).join(", "));
+    } else {
+      onChange([...selected, optValue].join(", "));
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt) => {
+        const active = selected.includes(opt.value);
+        const order = selected.indexOf(opt.value) + 1;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => toggle(opt.value)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-all",
+              active
+                ? "border-primary/50 bg-primary/15 text-primary"
+                : "border-border bg-input text-muted-foreground hover:text-foreground hover:border-border/80"
+            )}
+          >
+            {active ? (
+              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
+                {order}
+              </span>
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+            )}
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Array Tag Input ─────────────────────────────────────────────────────────
+
+function ArrayTagInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const tags = value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  function removeTag(index: number) {
+    const next = tags.filter((_, i) => i !== index).join(", ");
+    onChange(next);
+  }
+
+  return (
+    <div className="flex min-h-[34px] flex-wrap items-center gap-1 rounded-lg border border-border bg-input px-2 py-1 focus-within:ring-2 focus-within:ring-ring transition-colors">
+      {tags.map((tag, i) => (
+        <span
+          key={i}
+          className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary"
+        >
+          {tag}
+          <button
+            type="button"
+            onClick={() => removeTag(i)}
+            className="text-primary/60 hover:text-primary transition-colors leading-none"
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        placeholder={tags.length === 0 ? "değer, değer, ..." : "ekle..."}
+        className="min-w-[80px] flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+        onKeyDown={(e) => {
+          if (e.key === "," || e.key === "Enter") {
+            e.preventDefault();
+            const newTag = (e.currentTarget.value ?? "").trim();
+            if (newTag && !tags.includes(newTag)) {
+              onChange([...tags, newTag].join(", "));
+            }
+            e.currentTarget.value = "";
+          } else if (e.key === "Backspace" && e.currentTarget.value === "" && tags.length > 0) {
+            removeTag(tags.length - 1);
+          }
+        }}
+        onBlur={(e) => {
+          const newTag = e.currentTarget.value.trim();
+          if (newTag && !tags.includes(newTag)) {
+            onChange([...tags, newTag].join(", "));
+            e.currentTarget.value = "";
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+// ─── Kategori kartı ──────────────────────────────────────────────────────────
+
+interface CategoryCardProps {
+  category: SettingCategory;
+  defs: SystemSettingDef[];
+  dbSettings: SettingRecord[];
+  onSave: (def: SystemSettingDef, value: unknown, locked: boolean) => Promise<void>;
+}
+
+function CategoryCard({ category, defs, dbSettings, onSave }: CategoryCardProps) {
+  const meta = SETTING_CATEGORY_META[category];
+  const [collapsed, setCollapsed] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setCollapsed((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 hover:bg-accent/40 transition-colors"
+      >
+        <div className="text-left">
+          <p className="text-sm font-semibold text-foreground">{meta.label}</p>
+          <p className="text-xs text-muted-foreground">{meta.description}</p>
+        </div>
+        {collapsed ? (
+          <ChevronDown size={16} className="text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronUp size={16} className="text-muted-foreground shrink-0" />
+        )}
+      </button>
+
+      {!collapsed && (
+        <div className="divide-y divide-border border-t border-border">
+          {defs.map((def) => {
+            const dbRecord = dbSettings.find((r) => r.key === def.key);
+            return (
+              <SettingRow
+                key={def.key}
+                def={def}
+                dbRecord={dbRecord ?? null}
+                onSave={onSave}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Ayar satırı ─────────────────────────────────────────────────────────────
+
+interface SettingRowProps {
+  def: SystemSettingDef;
+  dbRecord: SettingRecord | null;
+  onSave: (def: SystemSettingDef, value: unknown, locked: boolean) => Promise<void>;
+}
+
+function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
+  const initialDisplay = dbRecord
+    ? rawToDisplay(def, dbRecord.value)
+    : defaultToDisplay(def);
+
+  const [display, setDisplay] = useState(initialDisplay);
+  const [locked, setLocked] = useState(dbRecord?.locked ?? false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    setDisplay(dbRecord ? rawToDisplay(def, dbRecord.value) : defaultToDisplay(def));
+    setLocked(dbRecord?.locked ?? false);
+  }, [dbRecord, def]);
+
+  const isDirty =
+    display !== (dbRecord ? rawToDisplay(def, dbRecord.value) : defaultToDisplay(def)) ||
+    locked !== (dbRecord?.locked ?? false);
+
+  const isWideType = def.type === "multiselect";
+
+  async function handleSave() {
+    setSaving(true);
+    const payload = displayToPayload(def, display);
+    await onSave(def, payload, locked);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex gap-4 px-4 py-3",
+        isWideType ? "flex-col" : "flex-col sm:flex-row sm:items-start"
+      )}
+    >
+      {/* Sol: etiket + açıklama */}
+      <div className={cn("min-w-0", !isWideType && "sm:w-52 shrink-0")}>
+        <p className="text-xs font-medium text-foreground">{def.label}</p>
+        <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{def.description}</p>
+      </div>
+
+      {/* Sağ: input + kontroller */}
+      <div className="flex flex-1 items-start gap-2">
+        <div className="flex-1 min-w-0">
+          {def.type === "multiselect" ? (
+            <MultiSelectInput
+              value={display}
+              onChange={setDisplay}
+              options={def.options ?? []}
+            />
+          ) : def.type === "select" ? (
+            <select
+              value={display}
+              onChange={(e) => setDisplay(e.target.value)}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+            >
+              {def.options?.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          ) : def.type === "number" ? (
+            <input
+              type="number"
+              value={display}
+              min={def.min}
+              max={def.max}
+              onChange={(e) => setDisplay(e.target.value)}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+            />
+          ) : def.type === "password" ? (
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={display}
+                onChange={(e) => setDisplay(e.target.value)}
+                placeholder={display === "" ? "Ayarlanmamış" : undefined}
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 pr-8 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
+          ) : def.type === "array" ? (
+            <ArrayTagInput value={display} onChange={setDisplay} />
+          ) : def.type === "path" ? (
+            <div className="relative">
+              <input
+                type="text"
+                value={display}
+                onChange={(e) => setDisplay(e.target.value)}
+                placeholder="/tam/dizin/yolu"
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 pr-8 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors font-mono"
+              />
+              <FolderOpen
+                size={13}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+              />
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={display}
+              onChange={(e) => setDisplay(e.target.value)}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+            />
+          )}
+        </div>
+
+        {/* Kontroller */}
+        <div className="flex items-center gap-2 shrink-0 mt-0.5">
+          <button
+            type="button"
+            onClick={() => setLocked((v) => !v)}
+            title={locked ? "Kilidi kaldır" : "Kilitle (kullanıcı değiştiremez)"}
+            className={cn(
+              "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+              locked
+                ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"
+                : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
+          >
+            {locked ? <Lock size={12} /> : <Unlock size={12} />}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !isDirty}
+            className={cn(
+              "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+              saved
+                ? "bg-emerald-500/15 text-emerald-400"
+                : isDirty
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+            )}
+          >
+            {saving ? (
+              <Loader2 size={11} className="animate-spin" />
+            ) : saved ? (
+              <CheckCircle2 size={11} />
+            ) : (
+              <Save size={11} />
+            )}
+            {saved ? "Kaydedildi" : "Kaydet"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function GlobalSettings() {
   const { settings, loading, error, fetchSettings, createSetting, updateSetting, deleteSetting } =
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
-  const [activeScope] = useState<SettingScope>("admin");
-  const [showAddForm, setShowAddForm] = useState(false);
-
-  // Yeni ayar formu
-  const [newKey, setNewKey] = useState("");
-  const [newValue, setNewValue] = useState("");
-  const [newLocked, setNewLocked] = useState(false);
-  const [newDescription, setNewDescription] = useState("");
-  const [addLoading, setAddLoading] = useState(false);
-
   const loadData = useCallback(() => {
-    fetchSettings(activeScope, "");
-  }, [activeScope, fetchSettings]);
+    fetchSettings("admin", "");
+  }, [fetchSettings]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  async function handleAdd() {
-    if (!newKey.trim()) return;
-    setAddLoading(true);
+  const handleSave = useCallback(
+    async (def: SystemSettingDef, value: unknown, locked: boolean) => {
+      const existing = settings.find((r) => r.key === def.key);
 
-    let parsedValue: unknown = newValue;
-    try {
-      parsedValue = JSON.parse(newValue);
-    } catch {
-      // String olarak bırak
-    }
+      // Boş değer → kaydı sil (varsayılana dön)
+      if (isEmpty(value)) {
+        if (existing) {
+          const ok = await deleteSetting(existing.id);
+          if (ok) {
+            addToast({ type: "info", title: "Ayar sıfırlandı", description: `${def.label} varsayılana döndürüldü.` });
+            loadData();
+          } else {
+            addToast({ type: "error", title: "Silinemedi", description: def.label });
+          }
+        }
+        return;
+      }
 
-    const result = await createSetting({
-      scope: activeScope,
-      scope_id: "",
-      key: newKey.trim(),
-      value: parsedValue,
-      locked: newLocked,
-      description: newDescription.trim() || undefined,
-    });
+      if (existing) {
+        const result = await updateSetting(existing.id, { value, locked });
+        if (result) {
+          addToast({ type: "success", title: "Ayar güncellendi", description: def.label });
+          loadData();
+        } else {
+          addToast({ type: "error", title: "Güncellenemedi", description: def.label });
+        }
+      } else {
+        const result = await createSetting({
+          scope: "admin",
+          scope_id: "",
+          key: def.key,
+          value,
+          locked,
+          description: def.description,
+        });
+        if (result) {
+          addToast({ type: "success", title: "Ayar kaydedildi", description: def.label });
+          loadData();
+        } else {
+          addToast({ type: "error", title: "Kaydedilemedi", description: def.label });
+        }
+      }
+    },
+    [settings, updateSetting, createSetting, deleteSetting, addToast, loadData]
+  );
 
-    setAddLoading(false);
-
-    if (result) {
-      addToast({ type: "success", title: "Ayar oluşturuldu", description: newKey });
-      setNewKey("");
-      setNewValue("");
-      setNewLocked(false);
-      setNewDescription("");
-      setShowAddForm(false);
-    } else {
-      addToast({ type: "error", title: "Ayar oluşturulamadı" });
-    }
-  }
-
-  async function handleToggleLock(setting: SettingRecord) {
-    const result = await updateSetting(setting.id, {
-      value: setting.value,
-      locked: !setting.locked,
-    });
-    if (result) {
-      addToast({
-        type: "info",
-        title: result.locked ? "Ayar kilitlendi" : "Kilit kaldırıldı",
-        description: setting.key,
-      });
-    }
-  }
-
-  async function handleDelete(setting: SettingRecord) {
-    const ok = await deleteSetting(setting.id);
-    if (ok) {
-      addToast({ type: "success", title: "Ayar silindi", description: setting.key });
-    } else {
-      addToast({ type: "error", title: "Silinemedi" });
-    }
-  }
+  const categories: SettingCategory[] = ["system", "pipeline"];
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -117,95 +498,28 @@ export default function GlobalSettings() {
         <div className="flex items-center gap-2">
           <Sliders size={20} className="text-purple-400" />
           <h2 className="text-lg font-semibold text-foreground">Global Ayarlar</h2>
-          <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-            {settings.length}
-          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-            Yenile
-          </button>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            <Plus size={12} />
-            Yeni Ayar
-          </button>
-        </div>
+        <button
+          onClick={loadData}
+          disabled={loading}
+          className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          Yenile
+        </button>
       </div>
 
-      {/* Yeni ayar formu */}
-      {showAddForm && (
-        <div className="rounded-xl border border-primary/30 bg-card p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-foreground">Yeni Ayar Ekle</p>
-            <button
-              onClick={() => setShowAddForm(false)}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <X size={14} />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Anahtar</label>
-              <input
-                value={newKey}
-                onChange={(e) => setNewKey(e.target.value)}
-                placeholder="tts_provider"
-                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Değer (JSON veya string)</label>
-              <input
-                value={newValue}
-                onChange={(e) => setNewValue(e.target.value)}
-                placeholder='"edge_tts" veya 30'
-                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Açıklama (opsiyonel)</label>
-            <input
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="Bu ayarın ne işe yaradığını açıklayın"
-              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-              <input
-                type="checkbox"
-                checked={newLocked}
-                onChange={(e) => setNewLocked(e.target.checked)}
-                className="rounded"
-              />
-              Kullanıcı override'ını engelle (kilitli)
-            </label>
-
-            <button
-              onClick={handleAdd}
-              disabled={addLoading || !newKey.trim()}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-            >
-              {addLoading ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-              Kaydet
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Bilgi bandı */}
+      <div className="flex items-start gap-2 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2.5 text-xs text-blue-300">
+        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+        <span>
+          Ayarlar veritabanında saklanır. Değiştirip <strong>Kaydet</strong>'e basın.{" "}
+          <span className="text-blue-300/70">
+            Kilit ikonu, kullanıcıların o ayarı değiştiremeyeceği anlamına gelir. API anahtarları
+            yalnızca <strong>Provider Yönetimi</strong> sayfasından girilir.
+          </span>
+        </span>
+      </div>
 
       {/* Hata */}
       {error && (
@@ -215,156 +529,36 @@ export default function GlobalSettings() {
         </div>
       )}
 
-      {/* Ayar listesi */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
-        {loading && settings.length === 0 ? (
-          <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
-            <Loader2 size={16} className="animate-spin mr-2" />
-            Yükleniyor...
-          </div>
-        ) : settings.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-sm text-muted-foreground gap-2">
-            <Sliders size={28} className="opacity-30" />
-            <p>Henüz ayar tanımlı değil</p>
-            <p className="text-xs">Yukarıdaki "Yeni Ayar" butonu ile ekleyin</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {settings.map((setting) => (
-              <SettingRow
-                key={setting.id}
-                setting={setting}
-                onToggleLock={() => handleToggleLock(setting)}
-                onDelete={() => handleDelete(setting)}
-                onUpdate={updateSetting}
-                addToast={addToast}
+      {/* Yükleniyor */}
+      {loading && settings.length === 0 ? (
+        <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+          <Loader2 size={16} className="animate-spin mr-2" />
+          Yükleniyor...
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {categories.map((cat) => {
+            const defs = SYSTEM_SETTINGS_SCHEMA.filter((d) => d.category === cat);
+            return (
+              <CategoryCard
+                key={cat}
+                category={cat}
+                defs={defs}
+                dbSettings={settings}
+                onSave={handleSave}
               />
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* PIN hatırlatma */}
+      <p className="text-center text-[11px] text-muted-foreground/50">
+        Değişiklikler admin yetkisiyle kaydedilir · PIN:{" "}
+        {localStorage.getItem("cm-admin-pin") ?? "—"}
+      </p>
     </div>
   );
 }
 
-// ─── Ayar Satırı ────────────────────────────────────────────────────────────
-
-function SettingRow({
-  setting,
-  onToggleLock,
-  onDelete,
-  onUpdate,
-  addToast,
-}: {
-  setting: SettingRecord;
-  onToggleLock: () => void;
-  onDelete: () => void;
-  onUpdate: (id: number, payload: { value: unknown; locked?: boolean | null }) => Promise<SettingRecord | null>;
-  addToast: (t: { type: string; title: string; description?: string }) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(
-    typeof setting.value === "string" ? setting.value : JSON.stringify(setting.value)
-  );
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    setSaving(true);
-    let parsedValue: unknown = editValue;
-    try {
-      parsedValue = JSON.parse(editValue);
-    } catch {
-      // String olarak bırak
-    }
-
-    const result = await onUpdate(setting.id, { value: parsedValue });
-    setSaving(false);
-
-    if (result) {
-      addToast({ type: "success", title: "Güncellendi", description: setting.key });
-      setEditing(false);
-    } else {
-      addToast({ type: "error", title: "Güncellenemedi" });
-    }
-  }
-
-  const displayValue =
-    typeof setting.value === "string" ? setting.value : JSON.stringify(setting.value);
-
-  return (
-    <div className="flex items-center gap-3 px-4 py-3 group">
-      {/* Kilit durumu */}
-      <button
-        onClick={onToggleLock}
-        className={cn(
-          "shrink-0 flex h-7 w-7 items-center justify-center rounded-md transition-colors",
-          setting.locked
-            ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"
-            : "bg-muted text-muted-foreground hover:text-foreground hover:bg-accent"
-        )}
-        title={setting.locked ? "Kilidi kaldır" : "Kilitle"}
-      >
-        {setting.locked ? <Lock size={12} /> : <Unlock size={12} />}
-      </button>
-
-      {/* Anahtar + açıklama */}
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground font-mono">{setting.key}</p>
-        {setting.description && (
-          <p className="text-xs text-muted-foreground truncate">{setting.description}</p>
-        )}
-      </div>
-
-      {/* Değer */}
-      <div className="shrink-0 w-48">
-        {editing ? (
-          <div className="flex items-center gap-1.5">
-            <input
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSave();
-                if (e.key === "Escape") setEditing(false);
-              }}
-              autoFocus
-              className="w-full rounded border border-primary/50 bg-input px-2 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-            />
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="shrink-0 text-primary hover:text-primary/80"
-            >
-              {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-            </button>
-            <button
-              onClick={() => setEditing(false)}
-              className="shrink-0 text-muted-foreground hover:text-foreground"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => {
-              setEditValue(displayValue);
-              setEditing(true);
-            }}
-            className="w-full text-left rounded-md bg-muted px-2 py-1 text-xs text-foreground font-mono truncate hover:bg-accent transition-colors"
-            title={displayValue}
-          >
-            {displayValue}
-          </button>
-        )}
-      </div>
-
-      {/* Sil */}
-      <button
-        onClick={onDelete}
-        className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all"
-        title="Ayarı sil"
-      >
-        <Trash2 size={14} />
-      </button>
-    </div>
-  );
-}
+export type { SystemSettingDef };

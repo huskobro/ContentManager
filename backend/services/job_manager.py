@@ -8,12 +8,16 @@ Sorumluluklar:
   • Session dizin oluşturma ve yönetimi
   • Resolved settings snapshot kaydetme
   • SSE event yayınlama (in-memory asyncio.Queue tabanlı)
+  • Global SSE hub — tüm job değişikliklerini yayınlar (list/dashboard için)
+  • Job Worker Loop — QUEUED işleri max_concurrent_jobs limitine göre başlatır
 
 Tasarım kararları:
   • Harici broker yok — SQLite tek kaynak, asyncio in-process
   • Her Job için bir SSE event queue tutulur (subscriber pattern)
+  • Global SSE hub ek olarak tüm job değişikliklerini yayınlar
   • Job durum geçişleri katı kurallara tabidir (invalid transition reddedilir)
   • Session dizinleri sessions/{job_id}/ altında izole edilir
+  • Worker loop POST /api/jobs'dan bağımsız çalışır; iş QUEUED bırakılır, loop başlatır
 """
 
 from __future__ import annotations
@@ -136,6 +140,54 @@ class _SSEHub:
 
 # Tekil hub instance — tüm uygulama bunu kullanır
 sse_hub = _SSEHub()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global SSE Hub — Sistem Geneli Yayın (Dashboard / JobList için)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _GlobalSSEHub:
+    """
+    Sistem genelindeki herhangi bir job değişikliğini tüm subscriber'lara yayınlar.
+
+    Dashboard ve JobList sayfaları bu hub'a abone olur; herhangi bir job
+    durumu değiştiğinde polling yapmadan güncel veriyi alırlar.
+
+    Subscriber'lar asyncio.Queue nesnesidir. Hub, her event'te tüm
+    aktif subscriber'lara veriyi iletir.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: set[asyncio.Queue] = set()
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self) -> asyncio.Queue:
+        """Yeni global subscriber queue oluştur ve kaydet."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+        async with self._lock:
+            self._subscribers.add(queue)
+        return queue
+
+    async def unsubscribe(self, queue: asyncio.Queue) -> None:
+        """Subscriber'ı kaldır."""
+        async with self._lock:
+            self._subscribers.discard(queue)
+
+    async def publish(self, event_type: str, data: dict[str, Any]) -> None:
+        """Tüm global subscriber'lara event gönder."""
+        message = {"event": event_type, "data": data}
+        async with self._lock:
+            subs = self._subscribers.copy()
+        for queue in subs:
+            try:
+                queue.put_nowait(message)
+            except asyncio.QueueFull:
+                # Dolu queue'dan subscriber'ı temizle
+                self._subscribers.discard(queue)
+
+
+# Tekil global hub — sistem geneli yayın
+global_sse_hub = _GlobalSSEHub()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -354,7 +406,7 @@ class JobManager:
             job_id=job_id[:8],
         )
 
-        # SSE event yayınla
+        # SSE event yayınla (tekil job stream)
         event_data = {
             "job_id": job_id,
             "status": new_status,
@@ -366,6 +418,9 @@ class JobManager:
             await sse_hub.publish_and_close(job_id, "job_status", event_data)
         else:
             await sse_hub.publish(job_id, "job_status", event_data)
+
+        # Global SSE hub'a da yayınla (Dashboard / JobList için)
+        await global_sse_hub.publish("job_status", event_data)
 
         return job
 
@@ -470,8 +525,8 @@ class JobManager:
             duration_ms=duration_ms,
         )
 
-        # SSE event yayınla
-        await sse_hub.publish(job_id, "step_update", {
+        # SSE event yayınla (tekil job stream)
+        step_event_data = {
             "job_id": job_id,
             "step_key": step_key,
             "status": status,
@@ -482,7 +537,11 @@ class JobManager:
             "cached": cached,
             "output_artifact": output_artifact,
             "timestamp": now,
-        })
+        }
+        await sse_hub.publish(job_id, "step_update", step_event_data)
+
+        # Global SSE hub'a da yayınla (Dashboard / JobList step_update için)
+        await global_sse_hub.publish("step_update", step_event_data)
 
         return step
 
@@ -583,6 +642,18 @@ class JobManager:
                 f"Aktif iş silinemez (durum: {job.status}). Önce iptal edin."
             )
 
+        # Session dizinini diskten temizle
+        if job.session_dir:
+            import shutil
+            session_path = Path(job.session_dir)
+            if session_path.exists():
+                shutil.rmtree(session_path, ignore_errors=True)
+                log.info(
+                    "Session dizini silindi",
+                    job_id=job_id[:8],
+                    session_dir=str(session_path),
+                )
+
         # Step'leri sil
         self._db.query(JobStep).filter(JobStep.job_id == job_id).delete()
         # Job'u sil
@@ -626,3 +697,128 @@ class JobManager:
             stats["total"] += count
 
         return stats
+
+    # ── ETA Hesaplama ────────────────────────────────────────────────────────
+
+    def compute_eta(self, job: Job) -> int | None:
+        """
+        Kalan tahmini süreyi saniye cinsinden hesaplar.
+
+        Strateji: Tamamlanan adımların ortalama süresini temel alır.
+        Henüz hiç adım tamamlanmamışsa None döner.
+
+        Args:
+            job: Hesaplanacak Job nesnesi.
+
+        Returns:
+            Kalan saniye sayısı veya None (hesaplanamıyorsa).
+        """
+        completed_steps = [
+            s for s in job.steps
+            if s.status == "completed" and s.duration_ms and s.duration_ms > 0
+        ]
+        pending_steps = [
+            s for s in job.steps
+            if s.status in ("pending", "running")
+        ]
+
+        if not completed_steps or not pending_steps:
+            return None
+
+        avg_ms = sum(s.duration_ms for s in completed_steps) / len(completed_steps)  # type: ignore[arg-type]
+        eta_seconds = int((avg_ms / 1000) * len(pending_steps))
+        return eta_seconds
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Worker Loop — Arka Plan Kuyruğu
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def job_worker_loop() -> None:
+    """
+    Arka plan worker döngüsü.
+
+    Sürekli çalışır (while True) ve:
+      1. Şu an RUNNING durumundaki iş sayısını sorgular.
+      2. Eğer running_count < max_concurrent_jobs ise:
+         - En eski QUEUED işi alır.
+         - run_pipeline() ile başlatır.
+      3. Her kontrol döngüsü arasında 2 saniye bekler.
+
+    Hata yönetimi:
+      - Her iterasyon ayrı try/except ile sarılır → döngü asla çökmez.
+      - DB erişim hataları loglanır, döngü devam eder.
+
+    Import notu: run_pipeline burada import edilir (circular import önleme).
+    """
+    # Circular import'u önlemek için lazy import
+    from backend.pipeline.runner import run_pipeline
+    from backend.database import SessionLocal
+
+    log.info("Job worker loop başlatıldı")
+
+    while True:
+        try:
+            with SessionLocal() as db:
+                # Şu an kaç iş çalışıyor?
+                running_count = (
+                    db.query(func.count(Job.id))
+                    .filter(Job.status == "running")
+                    .scalar()
+                ) or 0
+
+                available_slots = app_settings.max_concurrent_jobs - running_count
+
+                if available_slots > 0:
+                    # Slotlar dolana kadar ya da QUEUED iş bitene kadar başlat
+                    started = 0
+                    while started < available_slots:
+                        # En eski QUEUED işi al (FIFO)
+                        next_job = (
+                            db.query(Job)
+                            .filter(Job.status == "queued")
+                            .order_by(Job.created_at.asc())
+                            .first()
+                        )
+                        if not next_job:
+                            break
+
+                        # Status'u running'e al ki başka döngü tekrar almasın
+                        next_job.status = "running"
+                        if not next_job.started_at:
+                            next_job.started_at = _utcnow_iso()
+                        db.commit()
+
+                        # Asyncio task olarak pipeline'ı başlat
+                        asyncio.create_task(
+                            run_pipeline(next_job.id),
+                            name=f"pipeline-worker-{next_job.id[:8]}",
+                        )
+
+                        log.info(
+                            "Worker loop: pipeline başlatıldı",
+                            job_id=next_job.id[:8],
+                            module_key=next_job.module_key,
+                            running_after=running_count + started + 1,
+                        )
+
+                        # Global SSE üzerinden queued→running bildir
+                        asyncio.create_task(
+                            global_sse_hub.publish("job_status", {
+                                "job_id": next_job.id,
+                                "status": "running",
+                                "error_message": None,
+                                "timestamp": _utcnow_iso(),
+                            })
+                        )
+
+                        started += 1
+
+        except Exception as exc:
+            log.error(
+                "Job worker loop hatası (döngü devam ediyor)",
+                error=str(exc),
+            )
+
+        # Her kontrol arasında 2 saniye bekle
+        await asyncio.sleep(2)

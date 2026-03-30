@@ -1,6 +1,6 @@
 # ContentManager -- Ozellik ve Aksiyon Haritasi
 
-> Versiyon: v0.7.0 | Tarih: 2026-03-29
+> Versiyon: v0.8.0 | Tarih: 2026-03-30
 
 Bu dokuman, ContentManager arayuzundeki her bilesenin, her butonun, her form elemaninin arka plandaki API endpoint ve Zustand store metodu ile iliskisini birebir haritalandirir. Hicbir placeholder veya TODO icermez; her satir gercek koda karsilik gelir.
 
@@ -112,13 +112,15 @@ AppShell, tum sayfalari saran ust duzey layout bilesenidir. Sol tarafta Sidebar,
 
 **Dosya:** `pages/user/Dashboard.tsx`
 
-#### Sayfa Yuklenirken Yapilan API Cagirilari
+> **Faz 10.5 degisikligi:** Batch is gonderimi sonrasi Dashboard'daki "Aktif Isler" sayacinin otomatik guncellenmesi icin 5 saniye araliklarla `fetchStats()` cagrisi ekleniyor. Kullanici sayfayi yenilemeden kuyruktaki yeni islerin istatistiklere yansıdigini gorebilir.
 
-| Cagri | API Endpoint | Store Metodu |
-|-------|-------------|--------------|
-| Is listesi | `GET /api/jobs?page=1&page_size=10` | `jobStore.fetchJobs({page:1, page_size:10})` |
-| Istatistikler | `GET /api/jobs/stats` | `jobStore.fetchStats()` |
-| Sistem sagligi | `GET /health` | Dogrudan `fetch("/health")` |
+#### Sayfa Yuklenirken ve Periyodik Yapilan API Cagirilari
+
+| Cagri | API Endpoint | Store Metodu | Canlilik |
+|-------|-------------|--------------|---------|
+| Is listesi | `GET /api/jobs?page=1&page_size=10` | `jobStore.fetchJobs({page:1, page_size:10})` | Sayfa yuklenirken + 5 sn polling (Faz 10.5) |
+| Istatistikler | `GET /api/jobs/stats` | `jobStore.fetchStats()` | Sayfa yuklenirken + 5 sn polling (Faz 10.5) |
+| Sistem sagligi | `GET /health` | Dogrudan `fetch("/health")` | Yalnizca sayfa yuklenirken |
 
 #### UI Elemanlari
 
@@ -144,25 +146,56 @@ AppShell, tum sayfalari saran ust duzey layout bilesenidir. Sol tarafta Sidebar,
 
 **Dosya:** `pages/user/CreateVideo.tsx`
 
+> **Faz 10.5 degisiklikleri:** Tek satir metin girisi cok satirli `<textarea>`'ya donusturuldu (batch uretim). Video Formati secimi eklendi. Gonderim mantigi tek istek gondermek yerine satirlari parcalayan bir dongüye donusturuldu.
+
 #### Form Elemanlari
 
-| Eleman | Tipi | Secenekler | Backend Eslesmesi |
-|--------|------|-----------|-------------------|
+| Eleman | Tipi | Secenekler / Aciklama | Backend Eslesmesi |
+|--------|------|-----------------------|-------------------|
 | Modul secimi | 3 kart | `standard_video`, `news_bulletin`, `product_review` | `POST /api/jobs` -> `module_key` alani |
-| Baslik girisi | text input | Serbest metin | `POST /api/jobs` -> `title` alani |
+| Konu textarea | `<textarea>` (5 satir, yeniden boyutlanabilir) | Her satir = bagimsiz bir video konusu. Bos satirlar filtrelenir. Birden fazla satir varsa sag ustte "X video" rozeti gosterilir. | Her gecerli satir icin ayri `POST /api/jobs` -> `title` alani |
+| Video Formati | 2 buton kart | `long` (Uzun Video, 16:9, MonitorPlay ikonu) / `shorts` (Shorts/Dikey, 9:16, Smartphone ikonu). Varsayilan deger `settingsStore.userDefaults.videoFormat`'tan gelir; sayfa ilk yuklendiginde backend'in admin ayarindan okur. | `POST /api/jobs` -> `settings_overrides.video_format` + `settings_overrides.video_resolution` |
 | Dil secimi | dropdown | `tr`, `en`, `de`, `fr`, `es` | `POST /api/jobs` -> `language` alani |
 | TTS Provider | select (gelismis ayar) | `edge_tts`, `elevenlabs`, `openai_tts` | `POST /api/jobs` -> `settings_overrides.tts_provider` |
 | Altyazi Stili | select (gelismis ayar) | `standard`, `neon_blue`, `gold`, `minimal`, `hormozi` | `POST /api/jobs` -> `settings_overrides.subtitle_style` |
-| Olustur butonu | submit | -- | `POST /api/jobs` cagirilir, ardindan `navigate(/jobs/{id})` |
+| Gonder butonu | submit | Tek satir: "Isi Baslat". Cok satir: "X Video Isini Baslat". Gonderim sirasinda "Olusturuluyor... (N/M)" ilerleme metni gosterilir. | Tek is -> `navigate(/jobs/{id})`. Batch -> `navigate(/jobs)` |
 
-#### POST /api/jobs Istek Govdesi
+#### Video Formati -> Cozunurluk Eslesmesi
+
+| Format degeri | Gonderilen `video_resolution` | Aciklama |
+|--------------|-------------------------------|----------|
+| `long` | `1920x1080` | YouTube yatay (16:9) |
+| `shorts` | `1080x1920` | YouTube Shorts / Reels (9:16) |
+
+Cozunurluk, `settings_overrides` icine otomatik eklenir. Kullanici ayrıca elle girmez.
+
+#### Batch Gonderim Akisi
+
+```
+textarea.split("\n")
+  -> filter(line => line.trim().length > 0)
+  -> topics[]  // Gecerli satir listesi
+
+for (let i = 0; i < topics.length; i++) {
+  await createJob({ title: topics[i], ..., settings_overrides: { video_format, video_resolution, ... } })
+  setSubmitProgress({ done: i+1, total: topics.length })
+  if (i < topics.length - 1) await sleep(150ms)  // SQLite kilit onleme
+}
+
+if (successCount === 1) -> navigate(/jobs/{lastJobId})
+else                    -> navigate(/jobs)
+```
+
+#### POST /api/jobs Istek Govdesi (Guncellenmis)
 
 ```json
 {
   "module_key": "standard_video",
-  "title": "kullanici girisi",
+  "title": "Yapay Zekanin Gelecegi",
   "language": "tr",
   "settings_overrides": {
+    "video_format": "long",
+    "video_resolution": "1920x1080",
     "tts_provider": "edge_tts",
     "subtitle_style": "standard"
   }
@@ -174,6 +207,16 @@ AppShell, tum sayfalari saran ust duzey layout bilesenidir. Sol tarafta Sidebar,
 ### 2.3 JobList
 
 **Dosya:** `pages/user/JobList.tsx`
+
+> **Faz 10.5 degisikligi:** Batch is gonderimi sonrasi kullanici bu sayfaya yonlendirilir. Yeni worker loop mimarisinde isler once QUEUED gorunur, ardından siralarinı bekler. Sayfa, manuel yenileme gerektirmeden kuyruktaki islerin durumu degistikce otomatik guncellenir (5 saniye araliklarla `fetchJobs()` cagrisi -- ADR-016).
+
+#### Otomatik Canli Guncelleme (Faz 10.5)
+
+| Mekanizma | Aciklama |
+|-----------|----------|
+| `useInterval(fetchJobs, 5000)` | Sayfa acikken her 5 saniyede bir `GET /api/jobs` cagrisi yapar. Kullanici sayfayi yenilemek zorunda kalmaz. |
+| Tetikleyici kosul | Aktif is varsa (`queued` veya `running` sayisi > 0) polling devrede kalir. Tum isler terminal durumda ise polling duraklatilabilir. |
+| Manuel yenile | Mevcut "Yenile" butonu hala calisir; polling'e ek olarak anlik guncelleme saglar. |
 
 #### Filtre ve Sayfalama
 
@@ -309,7 +352,16 @@ Eger bir ayar anahtari `resolvedSettings.lockedKeys` icinde yer aliyorsa, o alan
 
 **Dosya:** `pages/admin/GlobalSettings.tsx`
 
-#### Aksiyonlar
+> **Faz 10.5 degisiklikleri:** Sayfanin ustune iki yeni sabit yonetim karti eklendi: "Varsayilan Video Formati" ve (Faz 10.5 kodlama asamasinda eklenecek) "Esmanli Is Limiti". Bu kartlar genel ayar listesinin uzerinde, her zaman gorunur sekilde konumlandirildi.
+
+#### Yeni Sabit Yonetim Kartlari (Faz 10.5)
+
+| Kart | UI Elemani | Kaydetme Islemi | Backend |
+|------|-----------|-----------------|---------|
+| **Varsayilan Video Formati** | 2 radyo buton kart: "Uzun Video (16:9) / 1920x1080" ve "Shorts/Dikey (9:16) / 1080x1920". Sayfa acildiginda `GET /api/settings/resolved` ile mevcut `video_format` degeri okunarak secili hale getirilir. | "Kaydet" butonu -> `POST /api/settings` ile `scope="admin", key="video_format"` olarak yazar. Kullanicinin bu tercihe sahip olmasi icin kilitli (locked=false) bırakılır; kullanici iş bazında geçersiz kılabilir. | `POST /api/settings` -> `{scope:"admin", scope_id:"", key:"video_format", value:"long"\|"shorts"}` |
+| **Esmanli Is Limiti** *(Kodlama asamasinda)* | 1-10 arasi sayisal giris. `max_concurrent_jobs` ayarini gosterir. Degistirmek icin "Uygula" butonu. | `POST /api/settings` ile `scope="admin", key="max_concurrent_jobs"` olarak yazar ve runtime `app_settings.max_concurrent_jobs`'i gunceller. | `POST /api/settings` -> `{scope:"admin", key:"max_concurrent_jobs", value:N, locked:true}` |
+
+#### Genel Ayar Listesi Aksiyonlari
 
 | Aksiyon | API Endpoint | Store Metodu | Yetkilendirme |
 |---------|-------------|--------------|---------------|
@@ -319,7 +371,7 @@ Eger bir ayar anahtari `resolvedSettings.lockedKeys` icinde yer aliyorsa, o alan
 | Kilit ac/kapat | `PUT /api/settings/{id}` | `adminStore.updateSetting(id, {locked})` | `X-Admin-Pin` header |
 | Ayar sil | `DELETE /api/settings/{id}` | `adminStore.deleteSetting(id)` | `X-Admin-Pin` header |
 
-#### Form Alanlari
+#### Form Alanlari (Yeni Ayar Ekleme)
 
 | Alan | Tipi | Aciklama |
 |------|------|----------|
@@ -438,16 +490,29 @@ Eger bir ayar anahtari `resolvedSettings.lockedKeys` icinde yer aliyorsa, o alan
 
 ## 5. SSE Event Tipleri
 
+### 5.1 Tekil Is SSE Kanali
+
 **Endpoint:** `GET /api/jobs/{job_id}/events`
 
-| Event | Veri Formati | Isleyici |
-|-------|-------------|----------|
-| `job_status` | `{job_id, status, error_message?}` | `jobStore.updateJobStatus()` |
-| `step_update` | `{job_id, key, status, message?, provider?, duration_ms?, cost_estimate_usd?, cached?}` | `jobStore.updateStep()` |
-| `log` | `{job_id, level, message, step?, timestamp}` | `jobStore.appendLog()` |
-| `heartbeat` | `{}` | Islem yok (keepalive) |
-| `complete` | `{job_id}` | SSE aboneligini sonlandirir |
+| Event | Veri Formati | Isleyici | Gorsel Etki |
+|-------|-------------|----------|-------------|
+| `job_status` | `{job_id, status, error_message?}` | `jobStore.updateJobStatus()` | Durum rozeti, ilerleme cubugu |
+| `step_update` | `{job_id, key, status, message?, provider?, duration_ms?, cost_estimate_usd?, cached?}` | `jobStore.updateStep()` | Adim ikonu, sure, provider bilgisi |
+| `log` | `{job_id, level, message, step?, timestamp}` | `jobStore.appendLog()` | Canli Log Viewer satiri |
+| `render_progress` | `{phase, bundling_pct?, rendered_frames, total_frames, encoded_frames?, overall_pct, eta}` | `jobStore.updateRenderProgress()` | Composition adimi altinda `RenderProgressWidget` (yuzde + ETA cubugu) |
+| `heartbeat` | `{}` | Islem yok | -- (keepalive) |
+| `complete` | `{job_id}` | `jobStore.fetchJobById()` + SSE aboneligi sona erdirilir | -- |
+
+### 5.2 Liste Ekranlari Canli Guncelleme (Faz 10.5)
+
+Batch is senaryosunda JobList ve Dashboard, worker loop tarafından isletilen islerin durumunu yenileme yapılmadan gosterir.
+
+| Sayfa | Mekanizma | Araliği | Tetiklenen Store Metotlari |
+|-------|-----------|---------|--------------------------|
+| Dashboard | `useInterval` polling | 5 sn | `jobStore.fetchStats()` + `jobStore.fetchJobs({page:1, page_size:10})` |
+| JobList | `useInterval` polling | 5 sn | `jobStore.fetchJobs(mevcutFiltreler)` |
+| JobDetail | SSE (`/api/jobs/{id}/events`) | Gercek zamanli | `updateJobStatus`, `updateStep`, `appendLog`, `updateRenderProgress` |
 
 ---
 
-> Bu dokuman, ContentManager v0.7.0 kod tabani ile birebir eslesecek sekilde yazilmistir. Her UI elemani, ilgili API endpoint'i ve Zustand store metodu ile haritalandirilmistir.
+> Bu dokuman, ContentManager v0.8.0 kod tabani ile birebir eslesecek sekilde yazilmistir. Her UI elemani, ilgili API endpoint'i ve Zustand store metodu ile haritalandirilmistir. Faz 10.5 kapsaminda guncellenmistir.

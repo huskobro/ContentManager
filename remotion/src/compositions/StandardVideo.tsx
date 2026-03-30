@@ -12,12 +12,11 @@ import {
   AbsoluteFill,
   Sequence,
   Audio,
-  Video,
+  OffthreadVideo,
   Img,
   useVideoConfig,
   useCurrentFrame,
   interpolate,
-  spring,
 } from "remotion";
 import { Subtitles } from "../components/Subtitles";
 import type { StandardVideoProps, SceneData, SubtitleChunk } from "../types";
@@ -97,7 +96,7 @@ const SceneVisual: React.FC<{
     <div style={containerStyle}>
       <div style={transformStyle}>
         {scene.visualType === "video" ? (
-          <Video src={scene.visualSrc} style={visualStyle} />
+          <OffthreadVideo src={scene.visualSrc} style={visualStyle} />
         ) : (
           <Img src={scene.visualSrc} style={visualStyle} />
         )}

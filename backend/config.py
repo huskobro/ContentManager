@@ -60,9 +60,10 @@ class Settings(BaseSettings):
 
     # CORS: virgülle ayrılmış origin listesi, .env'de
     #   CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-    cors_origins: list[str] = Field(
-        default=["http://localhost:5173", "http://127.0.0.1:5173"],
-        description="İzin verilen CORS origin'leri",
+    # str olarak tutulur, _parse_cors validator liste döndürür
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        description="Virgülle ayrılmış CORS origin listesi",
     )
 
     # Admin PIN — localhost-first basit yetkilendirme
@@ -80,6 +81,10 @@ class Settings(BaseSettings):
     sessions_dir: Path = Field(
         default=BASE_DIR / "sessions",
         description="Her job'ın çıktı dosyalarının tutulduğu kök dizin",
+    )
+    output_dir: Path = Field(
+        default=BASE_DIR / "output",
+        description="Tamamlanan videoların kaydedileceği klasör",
     )
     tmp_dir: Path = Field(
         default=BASE_DIR / ".tmp",
@@ -137,8 +142,8 @@ class Settings(BaseSettings):
         description="Varsayılan TTS provider adı",
     )
     default_llm_provider: str = Field(
-        default="gemini",
-        description="Varsayılan LLM provider adı",
+        default="kieai",
+        description="Varsayılan LLM provider adı (kieai birincil, gemini yedek)",
     )
     default_visuals_provider: str = Field(
         default="pexels",
@@ -153,19 +158,12 @@ class Settings(BaseSettings):
         default="standard",
         description="Varsayılan altyazı stili",
     )
+    default_video_format: str = Field(
+        default="long",
+        description="Varsayılan video formatı: 'long' (16:9 yatay) veya 'shorts' (9:16 dikey)",
+    )
 
     # ── Validators ─────────────────────────────────────────────────────────
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _parse_cors(cls, v: str | list[str]) -> list[str]:
-        """
-        .env'de CORS_ORIGINS değeri virgülle ayrılmış string olarak
-        gelebilir; onu listeye dönüştürür.
-        """
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
 
     @field_validator("database_path", "sessions_dir", "tmp_dir", "logs_dir", mode="after")
     @classmethod
@@ -188,6 +186,11 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """SQLAlchemy bağlantı dizesi."""
         return f"sqlite:///{self.database_path}"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """cors_origins string'ini liste olarak döndürür."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 # Tek örnek — tüm uygulama bu nesneyi import eder.

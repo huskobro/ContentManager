@@ -1106,7 +1106,69 @@ Faz 9: Stabilizasyon ve Sağlamlaştırma
 
 ---
 
-## Genel Proje Özeti — v1.0.0
+## REQ-011: Faz 10.5 — Global Worker Loop, Batch Üretim ve SSE Kuyruk
+
+### Genel Durum: Tamamlandı
+
+**Tamamlanma:** %100
+**Tarih:** 2026-03-30
+
+| Bileşen | Durum | Dosyalar |
+|---------|:-----:|----------|
+| Worker Loop (Kuyruk Yönetimi) | ✅ Tam | `backend/services/job_manager.py` |
+| Global SSE Endpoint | ✅ Tam | `backend/api/jobs.py`, `backend/services/job_manager.py` |
+| Worker Loop Startup | ✅ Tam | `backend/main.py` |
+| Batch Video Üretim | ✅ Tam | `frontend/src/pages/user/CreateVideo.tsx` |
+| Video Format (Long/Shorts) | ✅ Tam | `backend/config.py`, `frontend/src/stores/settingsStore.ts` |
+| Global SSE Frontend | ✅ Tam | `frontend/src/stores/jobStore.ts`, tüm sayfalar |
+| Crash Recovery | ✅ Tam | `backend/main.py` (`recover_interrupted_jobs`) |
+
+---
+
+## REQ-012: Faz 10.6–10.9 — Prompt Engine, Cost Tracker, State Sync, Enterprise UI/UX
+
+### Genel Durum: Tamamlandı
+
+**Tamamlanma:** %100
+**Tarih:** 2026-03-30
+
+#### Faz 10.6 — Prompt Yönetim Motoru
+
+| Bileşen | Durum | Dosyalar |
+|---------|:-----:|----------|
+| PromptManager Sayfası | ✅ Tam | `frontend/src/pages/admin/PromptManager.tsx` |
+| Admin Menü + Route | ✅ Tam | `frontend/src/components/layout/Sidebar.tsx`, `App.tsx` |
+| Prompt Override Backend | ✅ Tam | `backend/pipeline/steps/script.py` |
+
+#### Faz 10.7 — Maliyet Takibi ve Kilitleme
+
+| Bileşen | Durum | Dosyalar |
+|---------|:-----:|----------|
+| CostTracker Sayfası | ✅ Tam | `frontend/src/pages/admin/CostTracker.tsx` |
+| Admin Menü + Route | ✅ Tam | `Sidebar.tsx`, `App.tsx` |
+| lockedKeys Mekanizması | ✅ Tam | `settingsStore.ts`, `UserSettings.tsx`, `CreateVideo.tsx` |
+
+#### Faz 10.8 — Veri Tutarlılığı
+
+| Bileşen | Durum | Dosyalar |
+|---------|:-----:|----------|
+| API Key Single Source of Truth | ✅ Tam | `constants.ts`, `GlobalSettings.tsx`, `ProviderManager.tsx` |
+| Boş Değer = Sil Semantiği | ✅ Tam | `GlobalSettings.tsx`, `ProviderManager.tsx`, `PromptManager.tsx` |
+| State Senkronizasyonu | ✅ Tam | `GlobalSettings.tsx`, `PromptManager.tsx`, `FallbackOrderEditor` |
+
+#### Faz 10.9 — UI/UX Cilası + Critical Bug Fix
+
+| Bileşen | Durum | Dosyalar |
+|---------|:-----:|----------|
+| Fallback Badge Fix | ✅ Tam | `ProviderManager.tsx` |
+| Segmented Module Filter | ✅ Tam | `JobList.tsx`, `AdminJobs.tsx` |
+| "Özel Ayar Ekle" Kaldırma | ✅ Tam | `ProviderManager.tsx`, `ModuleManager.tsx` |
+| Pipeline Race Condition Fix | ✅ Tam | `backend/pipeline/runner.py` |
+| Output Path Fix | ✅ Tam | `backend/pipeline/runner.py` |
+
+---
+
+## Genel Proje Özeti — v1.5.0
 
 ### 10 Faz Tamamlanma Durumu
 
@@ -1122,27 +1184,32 @@ Faz 9: Stabilizasyon ve Sağlamlaştırma
 | 8 | Referans Proje Özellik Entegrasyonu | ✅ %100 | 2026-03-29 |
 | 9 | Remotion Video Entegrasyonu + Stabilizasyon | ✅ %100 | 2026-03-29 |
 | 10 | Son Kalite, Temizlik, v1.0.0 | ✅ %100 | 2026-03-29 |
+| 10.5 | Global Worker Loop, Batch Üretim, SSE Kuyruk | ✅ %100 | 2026-03-30 |
+| 10.6 | Prompt Yönetim Motoru (Prompt Engine) | ✅ %100 | 2026-03-30 |
+| 10.7 | Maliyet Takibi (Cost Tracker) + Kilitleme | ✅ %100 | 2026-03-30 |
+| 10.8 | Veri Tutarlılığı (Data Consistency) | ✅ %100 | 2026-03-30 |
+| 10.9 | UI/UX Cilası + Pipeline Race Condition Fix | ✅ %100 | 2026-03-30 |
 
 ### Sayısal Özet
 
 | Metrik | Değer |
 |--------|-------|
-| Toplam backend Python dosyası | ~35 |
-| Toplam frontend TSX/TS dosyası | ~25 |
+| Toplam backend Python dosyası | ~40 |
+| Toplam frontend TSX/TS dosyası | ~30 |
 | Remotion composition/component dosyası | 5 |
 | İçerik modülü | 3 (standard_video, news_bulletin, product_review) |
-| Provider implementasyonu | 3 (Gemini, Edge TTS, Pexels) |
+| Provider implementasyonu | 4 (KieAI, Gemini, Edge TTS, Pexels) |
 | Pipeline step | 6 (script, metadata, tts, visuals, subtitles, composition) |
 | User sayfası | 5 (Dashboard, CreateVideo, JobList, JobDetail, UserSettings) |
-| Admin sayfası | 5 (AdminDashboard, GlobalSettings, ModuleManager, ProviderManager, AdminJobs) |
+| Admin sayfası | 7 (AdminDashboard, GlobalSettings, ModuleManager, ProviderManager, AdminJobs, PromptManager, CostTracker) |
 | Zustand store | 4 (job, settings, admin, ui) |
 | Doküman | 8 (7 docs/ + README.md) |
 | Mimari karar kaydı (ADR) | 15 |
-| Talep kaydı (REQ) | 10 |
+| Talep kaydı (REQ) | 12 |
 | Altyazı stili | 5 (standard, neon_blue, gold, minimal, hormozi) |
 | Kategori promptu | 6 (general, true_crime, science, history, motivation, religion) |
 | Açılış hook'u | 8 (shocking_fact, question, story, contradiction, future_peek, comparison, personal_address, countdown) |
 
 ---
 
-*Proje v1.0.0 Production Release olarak tamamlanmıştır. Gelecek geliştirmeler CHANGELOG.md [Yayınlanmadı] bölümünde planlanmaktadır.*
+*Proje v1.5.0 Enterprise SaaS Release olarak tamamlanmıştır. Sonraki hedef: Faz 11 — Channel Hub (YouTube entegrasyonu). Gelecek geliştirmeler CHANGELOG.md [Yayınlanmadı] bölümünde planlanmaktadır.*

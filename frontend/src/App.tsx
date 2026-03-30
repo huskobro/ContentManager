@@ -16,6 +16,8 @@ import GlobalSettings from "@/pages/admin/GlobalSettings";
 import ModuleManager from "@/pages/admin/ModuleManager";
 import ProviderManager from "@/pages/admin/ProviderManager";
 import AdminJobs from "@/pages/admin/AdminJobs";
+import CostTracker from "@/pages/admin/CostTracker";
+import PromptManager from "@/pages/admin/PromptManager";
 
 export default function App() {
   return (
@@ -38,6 +40,8 @@ export default function App() {
         <Route path="/admin/modules" element={<ModuleManager />} />
         <Route path="/admin/providers" element={<ProviderManager />} />
         <Route path="/admin/jobs" element={<AdminJobs />} />
+        <Route path="/admin/cost-tracker" element={<CostTracker />} />
+        <Route path="/admin/prompts" element={<PromptManager />} />
       </Route>
 
       {/* Bilinmeyen route'ları dashboard'a yönlendir */}

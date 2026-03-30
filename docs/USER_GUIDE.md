@@ -1,6 +1,6 @@
 # ContentManager -- Kullanici Rehberi
 
-> **Versiyon:** v0.7.0 | **Son guncelleme:** 2026-03-29
+> **Versiyon:** v0.8.0 | **Son guncelleme:** 2026-03-30
 
 ContentManager, YouTube icin otomatik video uretim sistemidir. Bu rehber, sistemi kurmak, video olusturmak, isleri takip etmek ve yonetim panelini kullanmak icin ihtiyaciniz olan her seyi kapsar.
 
@@ -24,10 +24,11 @@ ContentManager, YouTube icin otomatik video uretim sistemidir. Bu rehber, sistem
   - [Hizli Eylemler](#hizli-eylemler)
 - [Video Olusturma](#video-olusturma)
   - [Adim 1: Modul Secimi](#adim-1-modul-secimi)
-  - [Adim 2: Baslik ve Konu](#adim-2-baslik-ve-konu)
-  - [Adim 3: Dil Secimi](#adim-3-dil-secimi)
-  - [Adim 4: Gelismis Ayarlar](#adim-4-gelismis-ayarlar)
-  - [Gonderim](#gonderim)
+  - [Adim 2: Konu Girisi ve Toplu Uretim](#adim-2-konu-girisi-ve-toplu-uretim)
+  - [Adim 3: Video Formati Secimi](#adim-3-video-formati-secimi)
+  - [Adim 4: Dil Secimi](#adim-4-dil-secimi)
+  - [Adim 5: Gelismis Ayarlar](#adim-5-gelismis-ayarlar)
+  - [Gonderim ve Kuyruk](#gonderim-ve-kuyruk)
 - [Is Listesi](#is-listesi)
   - [Filtreleme](#filtreleme)
   - [Tablo Sutunlari](#tablo-sutunlari)
@@ -242,7 +243,7 @@ Bu kartlara tiklamak sizi dogrudan Video Olustur sayfasina ilgili modul secili o
 
 ## Video Olusturma
 
-Video Olustur sayfasi (`/create`), yeni bir video uretim islemi baslatmak icin kullanilir. Form 4 adimdan olusur.
+Video Olustur sayfasi (`/create`), yeni bir video uretim islemi baslatmak icin kullanilir. Form 5 adimdan olusur. **Faz 10.5 ile birlikte tek bir form gonderimiyle birden fazla video islemi sirasalayabilirsiniz.**
 
 ### Adim 1: Modul Secimi
 
@@ -254,16 +255,50 @@ Videonuzun turune gore bir modul secin. Uc secenekten birini tiklayin:
 | `news_bulletin`  | Haber Bulteni   | Haber formati video                      |
 | `product_review` | Urun Inceleme   | Urun degerlendirme videosu               |
 
-### Adim 2: Baslik ve Konu
+### Adim 2: Konu Girisi ve Toplu Uretim
 
-Videonuzun konusunu veya basligini metin alanina girin. Bu metin, senaryo uretimi icin yapay zekaya girdi olarak gonderilir.
+Videonuzun konusunu veya basligini cok satirli metin alanina girin.
+
+**Tek video:** Alanin ilk satirina konuyu yazin.
+
+**Toplu uretim (batch):** Her satira farkli bir konu yazin. Her satir bagimsiz bir video islemi olarak siraya alinacaktir.
+
+```
+Yapay Zekanin Gelecegi
+Kuantum Bilgisayarlar Nasil Calisir
+2025 Yilinin En Iyi Akilli Saatleri
+```
+
+Bu ornekte 3 ayri video uretim islemi olusturulur. Bos satirlar otomatik olarak yok sayilir.
+
+Birden fazla satir girdiginizdeyse formun sag ustunde **"X video"** rozeti belirir ve ne kadar is olusturulacagini gosterir.
 
 **Ornekler:**
-- "Turkiye'de en cok ziyaret edilen 5 sehir"
-- "iPhone 16 Pro Max detayli inceleme"
-- "Son dakika: Avrupa Birligi yeni enerji politikasini acikladi"
 
-### Adim 3: Dil Secimi
+Tek konu:
+- "Turkiye'de en cok ziyaret edilen 5 sehir"
+
+Toplu konu (3 satir = 3 video):
+- "iPhone 16 Pro Max detayli inceleme"
+- "Samsung Galaxy S25 Ultra vs iPhone 16 Pro Max"
+- "2025 Yilinin En Iyi Akilli Telefonlari"
+
+### Adim 3: Video Formati Secimi
+
+Videonuzun ekran yonunu secin. Iki secenek sunulur:
+
+| Kart | Format | Cozunurluk | Kullanim Alani |
+|------|--------|-----------|----------------|
+| **Uzun Video** | 16:9 Yatay | 1920x1080 | YouTube standart video |
+| **Shorts / Dikey** | 9:16 Dikey | 1080x1920 | YouTube Shorts, Instagram Reels, TikTok |
+
+Secilenin cercevesi mavi (uzun) veya mor (shorts) renkte vurgulanir.
+
+**Varsayilan format neden farkli gorunuyor olabilir?** Admin panelinde belirlenen varsayilan format otomatik olarak secili gelir. Bu ayari Admin Paneli > Global Ayarlar'dan degistirebilirsiniz. Kullanici olarak her is icin bu secimi degistirebilirsiniz.
+
+Seciminize gore cozunurluk otomatik olarak belirlenir ve is ayarlariniza eklenir -- ayri girmek gerekmez.
+
+### Adim 4: Dil Secimi
 
 Videonun uretilecegi dili secin:
 
@@ -277,7 +312,7 @@ Videonun uretilecegi dili secin:
 
 Dil secimi senaryo metnini, seslendirmeyi ve altyazilari etkiler.
 
-### Adim 4: Gelismis Ayarlar
+### Adim 5: Gelismis Ayarlar
 
 Bu bolum varsayilan olarak kapalidir. Acmak icin "Gelismis Ayarlar" basligina tiklayin.
 
@@ -299,9 +334,21 @@ Bu bolum varsayilan olarak kapalidir. Acmak icin "Gelismis Ayarlar" basligina ti
 | `minimal`    | Sade ve minimal gorunum            |
 | `hormozi`    | Alex Hormozi tarzi buyuk ve vurgulu |
 
-### Gonderim
+### Gonderim ve Kuyruk
 
-Tum adimlari tamamladiktan sonra "Olustur" butonuna tiklayin. Sistem `POST /api/jobs` istegi gondererek yeni bir is olusturur ve sizi otomatik olarak o isin detay sayfasina (`/jobs/{jobId}`) yonlendirir.
+Tum adimlari tamamladiktan sonra "Isi Baslat" butonuna tiklayin. Birden fazla konu girdiyseniz buton "X Video Isini Baslat" olarak gorunur.
+
+**Gonderim sirasinda ne olur?**
+
+1. Her konu icin ayri bir `POST /api/jobs` istegi gonderilir (istekler arasinda kisa bir ara verilir, bu sunucu kilitlenimasini onler).
+2. Butonda "Olusturuluyor... (2/5)" gibi canli ilerleme gosterilir.
+3. Tum istekler tamamlandiginda:
+   - Tek video -> o isin detay sayfasina yonlendirilirsiniz.
+   - Birden fazla video -> Is Listesi (`/jobs`) sayfasina yonlendirilirsiniz ve basarili olusturulan is sayisi toast mesajiyla bildirilir ("5 adet video uretim isi basariyla siraya alindi!").
+
+**Isler hemen baslamaz mi?**
+
+Isler once **Kuyrukta (Queued)** durumunda olusturulur. Sistem, o anda calisan is sayisina gore en fazla `max_concurrent_jobs` kadar isi esasmanlı calistirir (varsayilan: 2). Diger isler, birer onceki tamamlandikca otomatik olarak baslar. Is Listesi sayfasinda isler "Kuyrukta" etiketiyle gosterilir ve baslayan islerin durumu siz sayfayi yenilemeden otomatik guncellenir.
 
 ---
 

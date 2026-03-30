@@ -6,6 +6,11 @@
  *   • Sistem sağlık durumu (/health endpoint)
  *   • Son işler listesi (GET /api/jobs ile beslenir)
  *   • Hızlı eylem kısayolları
+ *
+ * Gerçek Zamanlı Güncelleme:
+ *   Global SSE stream'e (GET /api/jobs/stream) bağlanır.
+ *   Herhangi bir job değiştiğinde store reaktif olarak güncellenir.
+ *   Polling (setInterval) kullanılmaz.
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -24,27 +29,10 @@ import {
   Newspaper,
   ShoppingBag,
 } from "lucide-react";
-import { useJobStore, type Job, type JobStatus } from "@/stores/jobStore";
+import { useJobStore, type Job } from "@/stores/jobStore";
 import { useUIStore } from "@/stores/uiStore";
+import { STATUS_CONFIG, MODULE_INFO, getModuleIcon } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-
-// ─── Modül bilgileri ─────────────────────────────────────────────────────────
-
-const MODULE_INFO: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  standard_video: { label: "Standart Video", icon: <Video size={14} />, color: "text-blue-400" },
-  news_bulletin: { label: "Haber Bülteni", icon: <Newspaper size={14} />, color: "text-amber-400" },
-  product_review: { label: "Ürün İnceleme", icon: <ShoppingBag size={14} />, color: "text-emerald-400" },
-};
-
-// ─── Durum renkleri ──────────────────────────────────────────────────────────
-
-const STATUS_CONFIG: Record<JobStatus, { label: string; color: string; bg: string }> = {
-  queued: { label: "Kuyrukta", color: "text-slate-400", bg: "bg-slate-400/15" },
-  running: { label: "Çalışıyor", color: "text-blue-400", bg: "bg-blue-400/15" },
-  completed: { label: "Tamamlandı", color: "text-emerald-400", bg: "bg-emerald-400/15" },
-  failed: { label: "Başarısız", color: "text-red-400", bg: "bg-red-400/15" },
-  cancelled: { label: "İptal", color: "text-slate-500", bg: "bg-slate-500/15" },
-};
 
 // ─── Sağlık tipi ─────────────────────────────────────────────────────────────
 
@@ -58,7 +46,7 @@ interface HealthResponse {
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { stats, jobs, loading, error, fetchJobs, fetchStats } = useJobStore();
+  const { stats, jobs, loading, error, fetchJobs, fetchStats, connectGlobalStream } = useJobStore();
   const addToast = useUIStore((s) => s.addToast);
   const navigate = useNavigate();
 
@@ -71,14 +59,25 @@ export default function Dashboard() {
   }, [fetchJobs, fetchStats]);
 
   useEffect(() => {
+    // İlk veri yüklemesi
     loadData();
 
+    // Health check
     fetch("/health")
       .then((r) => r.json())
       .then((data: HealthResponse) => setHealth(data))
       .catch(() => addToast({ type: "error", title: "Backend'e bağlanılamadı" }))
       .finally(() => setHealthLoading(false));
-  }, [loadData, addToast]);
+
+    // Global SSE stream'e bağlan — polling yok, push-based gerçek zamanlı güncelleme
+    // Herhangi bir job değiştiğinde store otomatik güncellenir
+    const closeStream = connectGlobalStream();
+
+    return () => {
+      closeStream();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Son 5 işi al (tarih sırasına göre)
   const recentJobs = [...jobs]
@@ -310,10 +309,11 @@ function QuickAction({
 
 function RecentJobRow({ job, onClick }: { job: Job; onClick: () => void }) {
   const config = STATUS_CONFIG[job.status];
-  const moduleInfo = MODULE_INFO[job.module_key] ?? {
-    label: job.module_key,
-    icon: <Video size={14} />,
-    color: "text-muted-foreground",
+  const modMeta = MODULE_INFO[job.module_key];
+  const moduleInfo = {
+    label: modMeta?.label ?? job.module_key,
+    color: modMeta?.color ?? "text-muted-foreground",
+    icon: getModuleIcon(job.module_key, 14),
   };
 
   const completedSteps = job.steps.filter((s) => s.status === "completed").length;

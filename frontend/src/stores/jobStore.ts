@@ -5,12 +5,18 @@
  * SSE (Server-Sent Events) stream'den gelen güncellemeler bu store'a yazılır.
  *
  * API Entegrasyonu:
- *   fetchJobs()      → GET /api/jobs (sayfalanmış liste)
- *   fetchJobById()   → GET /api/jobs/{id} (tekil detay)
- *   fetchStats()     → GET /api/jobs/stats (istatistikler)
- *   createJob()      → POST /api/jobs (yeni iş)
- *   cancelJob()      → PATCH /api/jobs/{id} (iptal)
- *   subscribeToJob() → GET /api/jobs/{id}/events (SSE stream)
+ *   fetchJobs()           → GET /api/jobs (sayfalanmış liste)
+ *   fetchJobById()        → GET /api/jobs/{id} (tekil detay)
+ *   fetchStats()          → GET /api/jobs/stats (istatistikler)
+ *   createJob()           → POST /api/jobs (yeni iş)
+ *   cancelJob()           → PATCH /api/jobs/{id} (iptal)
+ *   subscribeToJob()      → GET /api/jobs/{id}/events (tekil SSE stream)
+ *   connectGlobalStream() → GET /api/jobs/stream (global SSE — tüm job değişiklikleri)
+ *
+ * Global SSE Notu:
+ *   connectGlobalStream() Dashboard ve JobList tarafından çağrılır.
+ *   Herhangi bir job'ın durumu veya adımı değiştiğinde store reaktif olarak güncellenir.
+ *   Polling (setInterval) kullanılmaz — tamamen push-based.
  */
 
 import { create } from "zustand";
@@ -52,6 +58,17 @@ export interface LogEntry {
   message: string;
 }
 
+export interface RenderProgress {
+  phase: "bundling" | "rendering" | "encoding" | "done";
+  bundling_pct?: number;
+  rendered_frames: number;
+  total_frames: number;
+  encoded_frames?: number;
+  overall_pct: number | null;
+  eta: string | null;
+  updated_at: string;
+}
+
 export interface Job {
   id: string;
   module_key: string;
@@ -69,6 +86,8 @@ export interface Job {
   steps: PipelineStep[];
   /** Frontend-only: canlı loglar (SSE'den beslenir, DB'de saklanmaz) */
   logs: LogEntry[];
+  /** Frontend-only: render ilerleme durumu (SSE'den beslenir) */
+  renderProgress?: RenderProgress | null;
 }
 
 export interface JobStats {
@@ -119,6 +138,13 @@ interface JobState {
 
   // ── SSE Abonelik ─────────────────────────────────────────────────────────
   subscribeToJob: (jobId: string) => () => void;
+  /**
+   * Global SSE stream'e bağlanır — tüm job değişikliklerini dinler.
+   * Dashboard ve JobList bu fonksiyonu mount'ta çağırır.
+   * Dönen fonksiyon bağlantıyı kapatır (cleanup için).
+   * Polling (setInterval) kullanmaz.
+   */
+  connectGlobalStream: () => () => void;
 
   // ── Lokal State ──────────────────────────────────────────────────────────
   selectJob: (id: string | null) => void;
@@ -126,6 +152,7 @@ interface JobState {
   updateJobStatus: (id: string, status: JobStatus, errorMessage?: string) => void;
   updateStep: (jobId: string, stepKey: string, update: Partial<PipelineStep>) => void;
   appendLog: (jobId: string, entry: LogEntry) => void;
+  updateRenderProgress: (jobId: string, progress: RenderProgress) => void;
 
   // ── Filtre yardımcıları ───────────────────────────────────────────────────
   getJobById: (id: string) => Job | undefined;
@@ -266,6 +293,19 @@ export const useJobStore = create<JobState>()((set, get) => ({
         });
       },
 
+      onRenderProgress: (data) => {
+        get().updateRenderProgress(jobId, {
+          phase: (data.phase as RenderProgress["phase"]) ?? "rendering",
+          bundling_pct: data.bundling_pct as number | undefined,
+          rendered_frames: (data.rendered_frames as number) ?? 0,
+          total_frames: (data.total_frames as number) ?? 0,
+          encoded_frames: data.encoded_frames as number | undefined,
+          overall_pct: data.overall_pct as number | null,
+          eta: data.eta as string | null,
+          updated_at: new Date().toISOString(),
+        });
+      },
+
       onComplete: () => {
         // Stream tamamlandı — gerekirse final state'i backend'den al
         get().fetchJobById(jobId);
@@ -278,6 +318,66 @@ export const useJobStore = create<JobState>()((set, get) => ({
           level: "ERROR",
           message: "SSE bağlantısı kesildi",
         });
+      },
+    });
+
+    return close;
+  },
+
+  // ── Global SSE Stream ────────────────────────────────────────────────────
+
+  connectGlobalStream: () => {
+    /**
+     * Global SSE stream'e bağlanır: GET /api/jobs/stream
+     *
+     * Gelen event tipleri:
+     *   job_status  → store'da ilgili job'un status'unu güncelle
+     *   step_update → store'da ilgili job'un step'ini güncelle
+     *   heartbeat   → sessizce yoksay
+     *
+     * Bağlantı kesilirse EventSource otomatik yeniden bağlanır.
+     * Polling kullanılmaz.
+     */
+    const close = openSSE("/jobs/stream", {
+      onJobStatus: (data) => {
+        const jobId = data.job_id as string;
+        const status = data.status as JobStatus;
+        const errorMessage = data.error_message as string | undefined;
+
+        // Store'da job varsa güncelle
+        const existing = get().jobs.find((j) => j.id === jobId);
+        if (existing) {
+          get().updateJobStatus(jobId, status, errorMessage);
+        } else {
+          // Store'da yoksa backend'den al (yeni iş oluşturulmuş olabilir)
+          get().fetchJobById(jobId);
+        }
+
+        // Stats'ı da güncel tut — terminal durum değişikliği stats'ı etkiler
+        if (["completed", "failed", "cancelled", "running", "queued"].includes(status)) {
+          get().fetchStats();
+        }
+      },
+
+      onStepUpdate: (data) => {
+        const jobId = data.job_id as string;
+        const existing = get().jobs.find((j) => j.id === jobId);
+        if (existing) {
+          get().updateStep(jobId, data.step_key as string, {
+            status: data.status as StepStatus,
+            message: data.message as string | null,
+            provider: data.provider as string | null,
+            duration_ms: data.duration_ms as number | null,
+            cost_estimate_usd: (data.cost_estimate_usd as number) ?? 0,
+            cached: (data.cached as boolean) ?? false,
+            output_artifact: data.output_artifact as string | null,
+          });
+        }
+      },
+
+      onConnectionError: () => {
+        // Global stream bağlantı hatası — sessizce logla, EventSource yeniden bağlanır
+        console.warn("[GlobalSSE] Bağlantı hatası, yeniden bağlanıyor...");
       },
     });
 
@@ -343,6 +443,13 @@ export const useJobStore = create<JobState>()((set, get) => ({
       ),
     }));
   },
+
+  updateRenderProgress: (jobId, progress) =>
+    set((s) => ({
+      jobs: s.jobs.map((j) =>
+        j.id === jobId ? { ...j, renderProgress: progress } : j
+      ),
+    })),
 
   // ── Filtreler ─────────────────────────────────────────────────────────────
 

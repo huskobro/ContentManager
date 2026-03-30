@@ -23,6 +23,7 @@ export interface UserVideoDefaults {
   subtitleEnabled: boolean;
   videoResolution: string;    // "1920x1080" | "1080x1920"
   videoFps: number;           // 30 | 60
+  videoFormat: string;        // "long" (16:9) | "shorts" (9:16)
   metadataEnabled: boolean;   // SEO metadata üretimi
   thumbnailEnabled: boolean;
   publishToYoutube: boolean;
@@ -75,6 +76,7 @@ const DEFAULT_USER_SETTINGS: UserVideoDefaults = {
   subtitleEnabled: true,
   videoResolution: "1920x1080",
   videoFps: 30,
+  videoFormat: "long",
   metadataEnabled: true,
   thumbnailEnabled: false,
   publishToYoutube: false,
@@ -95,6 +97,7 @@ function mapResolvedToDefaults(
   if (typeof resolved.subtitle_style === "string") mapped.subtitleStyle = resolved.subtitle_style;
   if (typeof resolved.video_resolution === "string") mapped.videoResolution = resolved.video_resolution;
   if (typeof resolved.video_fps === "number") mapped.videoFps = resolved.video_fps;
+  if (typeof resolved.video_format === "string") mapped.videoFormat = resolved.video_format;
 
   return mapped;
 }

@@ -210,4 +210,44 @@
 
 ---
 
+---
+
+### REQ-011: Faz 10.5 — Format (Uzun/Shorts) Ayrımı, Toplu Üretim (Batch) ve Global SSE Kuyruk Mimarisi
+
+| Alan | Değer |
+|------|-------|
+| **Kimlik** | REQ-011 |
+| **Tarih** | 2026-03-30 |
+| **Talep Eden** | Huseyin |
+| **Açıklama** | Sistemi bir "İçerik Fabrikasına" dönüştürmek için üç birbirini tamamlayan özellik: (1) Video formatı ayrımı — yatay (16:9, 1920×1080) ve dikey Shorts/Reels (9:16, 1080×1920) — hem admin tarafından default olarak yapılandırılabilir hem de kullanıcı tarafından iş bazında geçersiz kılınabilir; (2) Toplu üretim (batch) — CreateVideo formundaki tek satır metin girişinin çok satırlı textarea'ya dönüştürülmesi ile her satırın bağımsız bir video işi olarak sıraya alınması; (3) Global İş Kuyruğu ve SSE Yayınlama — mevcut "oluştur ve hemen çalıştır" modelinin yerine işlerin önce QUEUED olarak kaydedilip bir arka plan worker loop tarafından `max_concurrent_jobs` limitine saygı gösterilerek seçilmesi ve frontend'in yenileme yapmadan iş listesi ile Dashboard'daki kartları otomatik güncelleyebilmesi. |
+| **Kapsam** | Backend: `backend/config.py` (`default_video_format` alanı), `backend/services/job_manager.py` (worker loop ve global kuyruk mantığı), `backend/main.py` (worker loop başlatma). Frontend: `frontend/src/stores/settingsStore.ts` (`videoFormat` alanı), `frontend/src/pages/user/CreateVideo.tsx` (textarea + format seçimi + batch gönderim döngüsü), `frontend/src/pages/admin/GlobalSettings.tsx` (Varsayılan Video Formatı kartı + Eşzamanlı İşlem Limiti), `frontend/src/pages/user/JobList.tsx` (SSE'siz canlı güncelleme için polling veya global SSE kanalı), `frontend/src/pages/user/Dashboard.tsx` (aktif iş sayacı canlı güncelleme). |
+| **Öncelik** | Yüksek |
+| **Durum** | Tamamlandı |
+| **İlgili Modüller** | backend/config, backend/services/job_manager, backend/main, frontend/stores/settingsStore, frontend/pages/user/CreateVideo, frontend/pages/admin/GlobalSettings, frontend/pages/user/JobList, frontend/pages/user/Dashboard |
+| **İlgili Dosyalar** | `backend/config.py`, `backend/services/job_manager.py`, `backend/main.py`, `frontend/src/stores/settingsStore.ts`, `frontend/src/pages/user/CreateVideo.tsx`, `frontend/src/pages/admin/GlobalSettings.tsx` |
+| **Uygulanma Notları** | **Tamamlandı:** `config.py`'ye `default_video_format: str = "long"` eklendi. `settingsStore.ts`'ye `videoFormat` alanı ve `mapResolvedToDefaults()` eşlemesi eklendi. `CreateVideo.tsx` textarea'ya dönüştürüldü, format seçimi (MonitorPlay/Smartphone ikonu) eklendi, batch gönderim döngüsü (`for...of` + 150ms ara gecikme) uygulandı. Worker loop (`job_worker_loop`) ile `max_concurrent_jobs` limiti backend'de uygulanıyor. Global SSE kanalı (`GET /api/events`) ile tüm sayfalar polling-free anlık güncelleme alıyor. |
+| **Riskler** | Toplu iş gönderiminde SQLite WAL kilitlerini önlemek için ardışık POST istekleri arasında 150ms gecikme uygulanıyor. |
+| **Açık Kalan Noktalar** | Kuyruktaki sıra bilgisini gösterecek "Sıra: #N" UI bileşeni ileride eklenebilir. |
+
+---
+
+### REQ-012: Faz 10.6–10.9 — Prompt Engine, Cost Tracker, State Sync ve Enterprise UI/UX
+
+| Alan | Değer |
+|------|-------|
+| **Kimlik** | REQ-012 |
+| **Tarih** | 2026-03-30 |
+| **Talep Eden** | Huseyin |
+| **Açıklama** | Sistemi "Enterprise SaaS İçerik Fabrikası" seviyesine çıkaran 4 alt faz: (1) Prompt Yönetim Motoru — tüm pipeline prompt'larının admin panelden CRUD ile yönetilmesi; (2) Maliyet Takibi (Cost Tracker) — provider bazlı maliyet dashboard'u + job granülaritesinde maliyet raporlama; (3) Veri Tutarlılığı — API key enkapsülasyonu (Single Source of Truth), boş değer = sil semantiği, kayıt sonrası state senkronizasyonu; (4) UI/UX Cilası — fallback badge düzeltmesi, modül filtresi segmented control, pipeline race condition kritik bug fix. |
+| **Kapsam** | Backend: `pipeline/runner.py` (race condition fix + output path fix), `pipeline/steps/script.py` (prompt override). Frontend: `PromptManager.tsx` (yeni sayfa), `CostTracker.tsx` (yeni sayfa), `GlobalSettings.tsx` (state sync + API key kaldırma), `ProviderManager.tsx` (fallback badge fix + API key enkapsülasyon + "Özel Ayar Ekle" kaldırma), `ModuleManager.tsx` ("Ayar Ekle" kaldırma), `CreateVideo.tsx` (lock mekanizması + video_format fix), `UserSettings.tsx` (lock mekanizması), `JobList.tsx` + `AdminJobs.tsx` (segmented filter), `constants.ts` (yeni dosya, SYSTEM_SETTINGS_SCHEMA + STATUS_CONFIG + MODULE_INFO), `Sidebar.tsx` + `App.tsx` (yeni route'lar) |
+| **Öncelik** | Yüksek |
+| **Durum** | Tamamlandı |
+| **İlgili Modüller** | frontend/src/pages/admin, frontend/src/pages/user, frontend/src/lib, frontend/src/stores, backend/pipeline |
+| **İlgili Dosyalar** | `frontend/src/pages/admin/PromptManager.tsx`, `frontend/src/pages/admin/CostTracker.tsx`, `frontend/src/pages/admin/GlobalSettings.tsx`, `frontend/src/pages/admin/ProviderManager.tsx`, `frontend/src/pages/admin/ModuleManager.tsx`, `frontend/src/pages/admin/AdminJobs.tsx`, `frontend/src/pages/user/CreateVideo.tsx`, `frontend/src/pages/user/UserSettings.tsx`, `frontend/src/pages/user/JobList.tsx`, `frontend/src/lib/constants.ts`, `frontend/src/stores/settingsStore.ts`, `frontend/src/components/layout/Sidebar.tsx`, `frontend/src/App.tsx`, `backend/pipeline/runner.py`, `backend/pipeline/steps/script.py` |
+| **Uygulanma Notları** | **Prompt Engine:** PromptManager.tsx admin panelden tüm prompt'ları (script system instruction, metadata, kategori, hook) scope bazlı düzenleme, isDirty + savedValue ile doğru state senkronizasyonu, boş kayıt = silme. **Cost Tracker:** CostTracker.tsx provider bazlı maliyet kartları, iş başına ortalama, toplam maliyet, zaman filtresi. **Data Consistency:** API key alanları SYSTEM_SETTINGS_SCHEMA'dan ve GlobalSettings'ten kaldırıldı — artık yalnızca ProviderManager'da (Single Source of Truth). GlobalSettings'te `isEmpty()` helper + `deleteSetting()` entegrasyonu. ProviderManager'da API key hem provider hem admin scope'a senkron yazılıyor. **State Sync:** GlobalSettings/PromptManager'da her kayıt sonrası `loadData()` çağrısı. FallbackOrderEditor DB'den `useEffect([adminSettings])` ile senkronize, `isDirty` karşılaştırması. CreateVideo'da `fetchResolvedSettings` her modül değişikliğinde çağrılır. **UI/UX:** Fallback badge 1/2/3 doğru sıralama. Modül filtresi segmented button group. "Özel Ayar Ekle" formları kaldırıldı. lockedKeys ile kilitli alanlar disabled + Lock ikonu. **Pipeline Fix:** Runner'da `status not in ("queued", "running")` kontrolü — race condition çözüldü. Output path artık `output/` klasöründeki final videoyu işaret ediyor. |
+| **Riskler** | Yok — stabilizasyon ve polish fazı |
+| **Açık Kalan Noktalar** | Yok — tüm alt fazlar tam olarak tamamlandı |
+
+---
+
 *Her yeni kullanıcı talebi bu dokümana eklenir. Karşılama durumu `IMPLEMENTATION_REPORT.md`'de raporlanır.*

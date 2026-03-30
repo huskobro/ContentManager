@@ -18,14 +18,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
+import threading
 from datetime import datetime
+from functools import partial
+from http.server import SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from http.server import HTTPServer
 from pathlib import Path
 from typing import Any
 
 from backend.config import settings as app_settings
 from backend.pipeline.cache import CacheManager
 from backend.utils.logger import get_logger
+from backend.services.job_manager import sse_hub
 
 log = get_logger(__name__)
 
@@ -72,12 +79,50 @@ def _resolve_visual_type(file_type: str | None, filename: str | None) -> str:
     return "video"
 
 
-def _safe_path(path: Path) -> str:
-    """Dosya mevcutsa mutlak yolunu, yoksa boş string döndürür."""
-    if path.exists():
-        return str(path.resolve())
-    log.warning("Dosya bulunamadı, boş yol kullanılıyor", path=str(path))
-    return ""
+class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Her request'i ayrı thread'de handle eden HTTP server."""
+    daemon_threads = True
+
+
+class _SilentHandler(SimpleHTTPRequestHandler):
+    """Log yazdırmayan HTTP handler."""
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        pass  # Sessiz — ana log'a karışmasın
+
+
+def _start_media_server(directory: Path) -> tuple[_ThreadingHTTPServer, int]:
+    """
+    Verilen dizini serve eden geçici bir threaded HTTP file server başlatır.
+
+    Boş bir port seçer, background thread'de çalıştırır.
+    Returns: (server_instance, port)
+    """
+    handler = partial(_SilentHandler, directory=str(directory.resolve()))
+    server = _ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, port
+
+
+def _safe_path(path: Path, base_url: str | None = None, public_dir: Path | None = None) -> str:
+    """
+    Dosya mevcutsa URL veya absolute path döndürür.
+
+    base_url + public_dir verilmişse dosyayı HTTP URL olarak döndürür
+    (ör. "http://127.0.0.1:9876/step_tts/scene_01.mp3").
+    """
+    if not path.exists():
+        log.warning("Dosya bulunamadı, boş yol kullanılıyor", path=str(path))
+        return ""
+    if base_url and public_dir:
+        try:
+            rel = str(path.resolve().relative_to(public_dir.resolve()))
+            return f"{base_url}/{rel}"
+        except ValueError:
+            pass
+    return str(path.resolve())
 
 
 def _safe_duration(value: float | int | None) -> float:
@@ -139,6 +184,8 @@ def _build_standard_video_props(
     visuals_data: dict[str, Any],
     subtitles_data: dict[str, Any],
     cache: CacheManager,
+    base_url: str | None = None,
+    public_dir: Path | None = None,
 ) -> dict[str, Any]:
     """StandardVideo composition için props dict'i oluşturur."""
     scenes_raw = script_data.get("scenes", [])
@@ -179,9 +226,9 @@ def _build_standard_video_props(
         scenes.append({
             "index": scene_num,
             "narration": narration,
-            "audioSrc": _safe_path(tts_path),
+            "audioSrc": _safe_path(tts_path, base_url, public_dir),
             "durationInSeconds": duration,
-            "visualSrc": _safe_path(vis_path),
+            "visualSrc": _safe_path(vis_path, base_url, public_dir),
             "visualType": visual_type,
         })
 
@@ -212,6 +259,8 @@ def _build_news_bulletin_props(
     visuals_data: dict[str, Any],
     subtitles_data: dict[str, Any],
     cache: CacheManager,
+    base_url: str | None = None,
+    public_dir: Path | None = None,
 ) -> dict[str, Any]:
     """NewsBulletin composition için props dict'i oluşturur."""
     scenes_raw = script_data.get("scenes", [])
@@ -248,8 +297,8 @@ def _build_news_bulletin_props(
         items.append({
             "headline": scene.get("visual_keyword", f"Haber {scene_num}"),
             "narration": scene.get("narration", ""),
-            "audioSrc": _safe_path(tts_path),
-            "visualSrc": _safe_path(vis_path),
+            "audioSrc": _safe_path(tts_path, base_url, public_dir),
+            "visualSrc": _safe_path(vis_path, base_url, public_dir),
             "visualType": visual_type,
             "durationInSeconds": duration,
             "category": scene.get("category", ""),
@@ -281,6 +330,8 @@ def _build_product_review_props(
     visuals_data: dict[str, Any],
     subtitles_data: dict[str, Any],
     cache: CacheManager,
+    base_url: str | None = None,
+    public_dir: Path | None = None,
 ) -> dict[str, Any]:
     """ProductReview composition için props dict'i oluşturur."""
     scenes_raw = script_data.get("scenes", [])
@@ -327,8 +378,8 @@ def _build_product_review_props(
             "type": section_type,
             "heading": scene.get("visual_keyword", f"Bölüm {scene_num}"),
             "narration": scene.get("narration", ""),
-            "audioSrc": _safe_path(tts_path),
-            "visualSrc": _safe_path(vis_path),
+            "audioSrc": _safe_path(tts_path, base_url, public_dir),
+            "visualSrc": _safe_path(vis_path, base_url, public_dir),
             "visualType": visual_type,
             "durationInSeconds": duration,
         })
@@ -437,7 +488,23 @@ async def step_composition_remotion(
         composition_id=composition_id,
     )
 
-    # ── 3. Props oluştur ───────────────────────────────────────────────────
+    # ── 3. Medya dosyaları için HTTP file server başlat ──────────────────
+
+    # Remotion render sırasında headless browser medya dosyalarını HTTP ile yükler.
+    # Session dizinini serve eden geçici bir HTTP server başlatıyoruz.
+    session_dir = cache.base_dir
+
+    media_server, media_port = _start_media_server(session_dir)
+    base_url = f"http://127.0.0.1:{media_port}"
+
+    log.info(
+        "Medya dosya sunucusu başlatıldı",
+        job_id=job_id[:8],
+        base_url=base_url,
+        serve_dir=str(session_dir),
+    )
+
+    # ── 4. Props oluştur ───────────────────────────────────────────────────
 
     builder = _PROPS_BUILDERS.get(module_name, _build_standard_video_props)
     props = builder(
@@ -447,6 +514,8 @@ async def step_composition_remotion(
         visuals_data=visuals_data,
         subtitles_data=subtitles_data,
         cache=cache,
+        base_url=base_url,
+        public_dir=session_dir,
     )
 
     # ── 4. props.json yaz ──────────────────────────────────────────────────
@@ -514,12 +583,13 @@ async def step_composition_remotion(
         f"--width={width}",
         f"--height={height}",
         f"--fps={fps}",
+        "--timeout=120000",
     ]
 
-    # Ek Remotion CLI argümanları (opsiyonel)
-    concurrency = config.get("render_concurrency")
-    if concurrency:
-        cmd.append(f"--concurrency={concurrency}")
+    # Concurrency: medya dosyaları lokal HTTP server'dan yükleniyor,
+    # çok fazla paralel tab server'ı boğabilir
+    concurrency = config.get("render_concurrency", 2)
+    cmd.append(f"--concurrency={concurrency}")
 
     codec = config.get("codec", "h264")
     cmd.append(f"--codec={codec}")
@@ -539,54 +609,183 @@ async def step_composition_remotion(
     render_start = datetime.now()
 
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(remotion_root),
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(remotion_root),
+            )
 
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
 
-        # stdout'u oku ve logla
-        async def _read_stream(
-            stream: asyncio.StreamReader,
-            target: list[str],
-            level: str,
-        ) -> None:
-            while True:
-                line_bytes = await stream.readline()
-                if not line_bytes:
-                    break
-                line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                target.append(line)
-                if level == "stdout":
-                    log.debug("Remotion stdout", line=line[:200])
-                else:
-                    log.debug("Remotion stderr", line=line[:200])
+            # Render progress state (shared between coroutines)
+            render_progress_state: dict[str, Any] = {
+                "rendered_frames": 0,
+                "total_frames": 0,
+                "encoded_frames": 0,
+                "phase": "bundling",   # bundling | rendering | encoding | done
+                "last_pct": -1,
+            }
 
-        await asyncio.gather(
-            _read_stream(process.stdout, stdout_lines, "stdout"),
-            _read_stream(process.stderr, stderr_lines, "stderr"),
-        )
+            # Remotion stdout formatları:
+            #   "Bundling 65%"
+            #   "Rendering frame 120 (10 frames rendered)"
+            #   "Rendering frame 1200/1500 (80%)"
+            #   "Encoded 300 frames"
+            #   "Time remaining: 1 min 23 sec"
+            _RE_BUNDLING   = re.compile(r"Bundling\s+(\d+)%", re.IGNORECASE)
+            _RE_RENDERING  = re.compile(r"Rendering.*?(\d+)/(\d+)", re.IGNORECASE)
+            _RE_RENDERING2 = re.compile(r"Rendering\s+frame\s+(\d+)\s+\((\d+)\s+frames", re.IGNORECASE)
+            _RE_ENCODED    = re.compile(r"Encoded\s+(\d+)\s+frames?", re.IGNORECASE)
+            _RE_REMAINING  = re.compile(r"Time remaining[:\s]+(.+)", re.IGNORECASE)
+            _RE_STITCHING  = re.compile(r"(Stitching|Muxing|Encoding video)", re.IGNORECASE)
 
-        return_code = await process.wait()
+            async def _read_stream(
+                stream: asyncio.StreamReader,
+                target: list[str],
+                level: str,
+            ) -> None:
+                while True:
+                    line_bytes = await stream.readline()
+                    if not line_bytes:
+                        break
+                    line = line_bytes.decode("utf-8", errors="replace").rstrip()
+                    target.append(line)
+                    if level == "stdout":
+                        log.debug("Remotion stdout", line=line[:200])
+                    else:
+                        log.debug("Remotion stderr", line=line[:200])
 
-    except FileNotFoundError:
-        log.error(
-            "Remotion CLI çalıştırılamadı",
-            job_id=job_id[:8],
-            cmd=cmd[0],
-        )
-        return {
-            "provider": "remotion",
-            "error": "Remotion CLI çalıştırılamadı — npx veya remotion paketi bulunamadı",
-            "output_path": "",
-            "total_duration": 0,
-            "composition_id": composition_id,
-            "cost_estimate_usd": 0.0,
-        }
+                    # ── Progress parsing ──────────────────────────────────
+                    progress_event: dict[str, Any] | None = None
+
+                    m = _RE_BUNDLING.search(line)
+                    if m:
+                        pct = int(m.group(1))
+                        if pct != render_progress_state["last_pct"]:
+                            render_progress_state["phase"] = "bundling"
+                            render_progress_state["last_pct"] = pct
+                            progress_event = {
+                                "phase": "bundling",
+                                "bundling_pct": pct,
+                                "rendered_frames": 0,
+                                "total_frames": 0,
+                                "overall_pct": round(pct * 0.1, 1),  # bundling = 0-10%
+                                "eta": None,
+                            }
+
+                    m = _RE_RENDERING.search(line)
+                    if m:
+                        cur = int(m.group(1))
+                        total = int(m.group(2))
+                        render_progress_state["rendered_frames"] = cur
+                        render_progress_state["total_frames"] = total
+                        render_progress_state["phase"] = "rendering"
+                        overall = round(10 + (cur / total * 70), 1) if total else 0
+                        progress_event = {
+                            "phase": "rendering",
+                            "rendered_frames": cur,
+                            "total_frames": total,
+                            "overall_pct": overall,
+                            "eta": None,
+                        }
+
+                    m = _RE_RENDERING2.search(line)
+                    if m and not _RE_RENDERING.search(line):
+                        cur = int(m.group(1))
+                        total_so_far = int(m.group(2))
+                        render_progress_state["rendered_frames"] = cur
+                        render_progress_state["phase"] = "rendering"
+                        progress_event = {
+                            "phase": "rendering",
+                            "rendered_frames": cur,
+                            "total_frames": render_progress_state["total_frames"],
+                            "overall_pct": None,
+                            "eta": None,
+                        }
+
+                    m = _RE_ENCODED.search(line)
+                    if m:
+                        enc = int(m.group(1))
+                        render_progress_state["encoded_frames"] = enc
+                        render_progress_state["phase"] = "encoding"
+                        total = render_progress_state["total_frames"]
+                        overall = round(80 + (enc / total * 18), 1) if total else 80
+                        progress_event = {
+                            "phase": "encoding",
+                            "encoded_frames": enc,
+                            "total_frames": total,
+                            "overall_pct": overall,
+                            "eta": None,
+                        }
+
+                    m = _RE_STITCHING.search(line)
+                    if m:
+                        render_progress_state["phase"] = "encoding"
+                        progress_event = {
+                            "phase": "encoding",
+                            "encoded_frames": render_progress_state["encoded_frames"],
+                            "total_frames": render_progress_state["total_frames"],
+                            "overall_pct": 90,
+                            "eta": None,
+                        }
+
+                    # ETA satırını mevcut progress_event'e ekle
+                    m = _RE_REMAINING.search(line)
+                    if m:
+                        eta_str = m.group(1).strip()
+                        if progress_event is None:
+                            progress_event = {
+                                "phase": render_progress_state["phase"],
+                                "rendered_frames": render_progress_state["rendered_frames"],
+                                "total_frames": render_progress_state["total_frames"],
+                                "overall_pct": None,
+                                "eta": eta_str,
+                            }
+                        else:
+                            progress_event["eta"] = eta_str
+
+                    # SSE'ye yayınla (değişiklik varsa)
+                    if progress_event is not None:
+                        await sse_hub.publish(job_id, "render_progress", progress_event)
+
+            await asyncio.gather(
+                _read_stream(process.stdout, stdout_lines, "stdout"),
+                _read_stream(process.stderr, stderr_lines, "stderr"),
+            )
+
+            # Render tamamlandı — %100 sinyali gönder
+            await sse_hub.publish(job_id, "render_progress", {
+                "phase": "done",
+                "rendered_frames": render_progress_state["total_frames"],
+                "total_frames": render_progress_state["total_frames"],
+                "overall_pct": 100,
+                "eta": None,
+            })
+
+            return_code = await process.wait()
+
+        except FileNotFoundError:
+            log.error(
+                "Remotion CLI çalıştırılamadı",
+                job_id=job_id[:8],
+                cmd=cmd[0],
+            )
+            return {
+                "provider": "remotion",
+                "error": "Remotion CLI çalıştırılamadı — npx veya remotion paketi bulunamadı",
+                "output_path": "",
+                "total_duration": 0,
+                "composition_id": composition_id,
+                "cost_estimate_usd": 0.0,
+            }
+
+    finally:
+        # Medya dosya sunucusunu kapat
+        media_server.shutdown()
+        log.debug("Medya dosya sunucusu kapatıldı", job_id=job_id[:8])
 
     render_elapsed = (datetime.now() - render_start).total_seconds()
 
@@ -631,9 +830,47 @@ async def step_composition_remotion(
         render_elapsed_sec=round(render_elapsed, 2),
     )
 
+    # ── 10. Videoyu output klasörüne kopyala ───────────────────────────────
+
+    final_output_path = output_path  # Varsayılan: sessions içinde
+    try:
+        output_folder = app_settings.output_dir
+        output_folder.mkdir(parents=True, exist_ok=True)
+
+        # Çıktı dosyası adı: {job_id[:8]}.mp4
+        output_filename = f"{job_id[:8]}.mp4"
+        output_file_path = output_folder / output_filename
+
+        # Eğer dosya zaten varsa (job rerun) → uyarı loguyla
+        if output_file_path.exists():
+            log.warning(
+                "Video output dosyası üzerine yazılıyor (job rerun)",
+                job_id=job_id[:8],
+                output_file=str(output_file_path),
+                previous_size_mb=round(output_file_path.stat().st_size / (1024 * 1024), 2),
+            )
+
+        # Dosyayı kopyala
+        shutil.copy2(str(output_path), str(output_file_path))
+        final_output_path = output_file_path
+
+        log.info(
+            "Video output klasörüne kopyalandı",
+            job_id=job_id[:8],
+            output_file=str(output_file_path),
+            output_size_mb=round(output_file_path.stat().st_size / (1024 * 1024), 2),
+        )
+    except Exception as e:
+        log.warning(
+            "Video output klasörüne kopyalanırken hata oluştu (session klasöründe kalacak)",
+            job_id=job_id[:8],
+            error=str(e),
+        )
+        # Hata olsa bile render başarılı sayılır, final_output_path session'da kalır
+
     return {
         "provider": "remotion",
-        "output_path": str(output_path.resolve()),
+        "output_path": str(final_output_path.resolve()),
         "total_duration": round(total_duration, 3),
         "composition_id": composition_id,
         "render_elapsed_sec": round(render_elapsed, 2),

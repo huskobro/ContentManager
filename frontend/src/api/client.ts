@@ -108,6 +108,7 @@ export interface SSEHandlers {
   onJobStatus?: (data: Record<string, unknown>) => void;
   onStepUpdate?: (data: Record<string, unknown>) => void;
   onLog?: (data: Record<string, unknown>) => void;
+  onRenderProgress?: (data: Record<string, unknown>) => void;
   onComplete?: (data: Record<string, unknown>) => void;
   onError?: (data: Record<string, unknown>) => void;
   onHeartbeat?: () => void;
@@ -154,6 +155,7 @@ export function openSSE(path: string, handlers: SSEHandlers): () => void {
   es.addEventListener("job_status", (e) => parseAndCall(handlers.onJobStatus, e as MessageEvent));
   es.addEventListener("step_update", (e) => parseAndCall(handlers.onStepUpdate, e as MessageEvent));
   es.addEventListener("log", (e) => parseAndCall(handlers.onLog, e as MessageEvent));
+  es.addEventListener("render_progress", (e) => parseAndCall(handlers.onRenderProgress, e as MessageEvent));
   es.addEventListener("heartbeat", () => handlers.onHeartbeat?.());
   es.addEventListener("complete", (e) => {
     parseAndCall(handlers.onComplete, e as MessageEvent);

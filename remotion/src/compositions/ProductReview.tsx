@@ -3,7 +3,7 @@ import {
   AbsoluteFill,
   Sequence,
   Audio,
-  Video,
+  OffthreadVideo,
   Img,
   useVideoConfig,
   useCurrentFrame,
@@ -200,7 +200,7 @@ const BackgroundVisual: React.FC<{
 
   if (visualType === "video") {
     return (
-      <Video
+      <OffthreadVideo
         src={visualSrc}
         style={{ width: "100%", height: "100%", objectFit: "cover" }}
       />

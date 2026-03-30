@@ -1,10 +1,10 @@
 /**
  * ModuleManager — Modül yönetimi sayfası.
  *
- * scope="module" olan ayarların yönetimi.
- * Her modül (standard_video, news_bulletin, product_review) için:
- *   • Aktif/pasif toggle
- *   • Modüle özgü default ayarları (dil, TTS provider, altyazı stili vb.)
+ * Faz 10.7 değişiklikleri:
+ *   • Trash2 / delete butonları TAMAMEN kaldırıldı
+ *   • Modüller sadece aktif/pasif yapılabilir
+ *   • Ayarlar sadece güncellenebilir, silinemez
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -13,8 +13,6 @@ import {
   Video,
   Newspaper,
   ShoppingBag,
-  Plus,
-  Trash2,
   Loader2,
   AlertCircle,
   RefreshCw,
@@ -24,6 +22,7 @@ import {
   ChevronUp,
   Power,
   PowerOff,
+  CheckCircle2,
 } from "lucide-react";
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -64,17 +63,15 @@ const MODULES = [
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function ModuleManager() {
-  const { settings, loading, error, fetchSettings, createSetting, updateSetting, deleteSetting, clearSettings } =
+  const { settings, loading, error, fetchSettings, createSetting, updateSetting, clearSettings } =
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
   const [selectedModule, setSelectedModule] = useState<string>("standard_video");
   const [expandedModule, setExpandedModule] = useState<string | null>("standard_video");
 
-  // Tüm modüller için ayarları tutacak map
   const [moduleSettingsMap, setModuleSettingsMap] = useState<Record<string, SettingRecord[]>>({});
 
-  // Seçili modül değiştiğinde fetch
   const loadModuleSettings = useCallback(
     async (moduleKey: string) => {
       await fetchSettings("module", moduleKey);
@@ -86,7 +83,6 @@ export default function ModuleManager() {
     loadModuleSettings(selectedModule);
   }, [selectedModule, loadModuleSettings]);
 
-  // Store'daki settings değiştiğinde map'e yaz
   useEffect(() => {
     setModuleSettingsMap((prev) => ({
       ...prev,
@@ -114,7 +110,6 @@ export default function ModuleManager() {
         loadModuleSettings(moduleKey);
       }
     } else {
-      // enabled ayarı yok, oluştur (default: true → false)
       const result = await createSetting({
         scope: "module",
         scope_id: moduleKey,
@@ -132,7 +127,7 @@ export default function ModuleManager() {
   function isModuleEnabled(moduleKey: string): boolean {
     const moduleSettings = moduleSettingsMap[moduleKey] ?? [];
     const enabledSetting = moduleSettings.find((s) => s.key === "enabled");
-    if (!enabledSetting) return true; // Varsayılan: aktif
+    if (!enabledSetting) return true;
     return enabledSetting.value === true;
   }
 
@@ -189,7 +184,6 @@ export default function ModuleManager() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    // Önce settings'i yükle, sonra toggle et
                     if (!moduleSettingsMap[mod.key]) {
                       fetchSettings("module", mod.key).then(() => {
                         handleToggleEnabled(mod.key, useAdminStore.getState().settings);
@@ -218,7 +212,7 @@ export default function ModuleManager() {
                 </button>
               </div>
 
-              {/* Modül ayarları (genişletilmiş) */}
+              {/* Modül ayarları */}
               {isExpanded && (
                 <ModuleSettingsPanel
                   moduleKey={mod.key}
@@ -235,7 +229,7 @@ export default function ModuleManager() {
   );
 }
 
-// ─── Modül Ayarları Paneli ────────────────────────────────────────────────────
+// ─── Modül Ayarları Paneli (delete kaldırıldı) ────────────────────────────────
 
 function ModuleSettingsPanel({
   moduleKey,
@@ -248,48 +242,11 @@ function ModuleSettingsPanel({
   loading: boolean;
   onReload: () => void;
 }) {
-  const { createSetting, updateSetting, deleteSetting } = useAdminStore();
+  const { updateSetting } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
-
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newKey, setNewKey] = useState("");
-  const [newValue, setNewValue] = useState("");
-  const [addLoading, setAddLoading] = useState(false);
 
   // "enabled" dışındaki ayarlar
   const visibleSettings = moduleSettings.filter((s) => s.key !== "enabled");
-
-  async function handleAdd() {
-    if (!newKey.trim()) return;
-    setAddLoading(true);
-
-    let parsedValue: unknown = newValue;
-    try {
-      parsedValue = JSON.parse(newValue);
-    } catch {
-      // String olarak bırak
-    }
-
-    const result = await createSetting({
-      scope: "module",
-      scope_id: moduleKey,
-      key: newKey.trim(),
-      value: parsedValue,
-      description: `${moduleKey} modülü için ${newKey} ayarı`,
-    });
-
-    setAddLoading(false);
-
-    if (result) {
-      addToast({ type: "success", title: "Ayar eklendi" });
-      setNewKey("");
-      setNewValue("");
-      setShowAddForm(false);
-      onReload();
-    } else {
-      addToast({ type: "error", title: "Ayar eklenemedi" });
-    }
-  }
 
   async function handleUpdate(setting: SettingRecord, newVal: string) {
     let parsedValue: unknown = newVal;
@@ -301,16 +258,9 @@ function ModuleSettingsPanel({
     const result = await updateSetting(setting.id, { value: parsedValue });
     if (result) {
       addToast({ type: "success", title: "Güncellendi", description: setting.key });
+      onReload();
     } else {
       addToast({ type: "error", title: "Güncellenemedi" });
-    }
-  }
-
-  async function handleDelete(setting: SettingRecord) {
-    const ok = await deleteSetting(setting.id);
-    if (ok) {
-      addToast({ type: "success", title: "Silindi", description: setting.key });
-      onReload();
     }
   }
 
@@ -320,46 +270,7 @@ function ModuleSettingsPanel({
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           Modül Ayarları
         </p>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-        >
-          <Plus size={12} />
-          Ayar Ekle
-        </button>
       </div>
-
-      {/* Yeni ayar mini formu */}
-      {showAddForm && (
-        <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/50">
-          <input
-            value={newKey}
-            onChange={(e) => setNewKey(e.target.value)}
-            placeholder="Anahtar"
-            className="flex-1 rounded border border-border bg-input px-2 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-          />
-          <input
-            value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
-            placeholder="Değer"
-            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-            className="flex-1 rounded border border-border bg-input px-2 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-          />
-          <button
-            onClick={handleAdd}
-            disabled={addLoading || !newKey.trim()}
-            className="shrink-0 flex items-center gap-1 rounded bg-primary px-2.5 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
-          >
-            {addLoading ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
-          </button>
-          <button
-            onClick={() => setShowAddForm(false)}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
@@ -377,7 +288,6 @@ function ModuleSettingsPanel({
               key={s.id}
               setting={s}
               onUpdate={(val) => handleUpdate(s, val)}
-              onDelete={() => handleDelete(s)}
             />
           ))}
         </div>
@@ -386,21 +296,27 @@ function ModuleSettingsPanel({
   );
 }
 
-// ─── Inline Ayar Satırı ──────────────────────────────────────────────────────
+// ─── Inline Ayar Satırı (delete kaldırıldı) ─────────────────────────────────
 
 function InlineSettingRow({
   setting,
   onUpdate,
-  onDelete,
 }: {
   setting: SettingRecord;
   onUpdate: (newVal: string) => void;
-  onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const displayValue =
     typeof setting.value === "string" ? setting.value : JSON.stringify(setting.value);
   const [editValue, setEditValue] = useState(displayValue);
+  const [saved, setSaved] = useState(false);
+
+  function handleSave() {
+    onUpdate(editValue);
+    setEditing(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
 
   return (
     <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/30 group">
@@ -414,22 +330,13 @@ function InlineSettingRow({
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                onUpdate(editValue);
-                setEditing(false);
-              }
+              if (e.key === "Enter") handleSave();
               if (e.key === "Escape") setEditing(false);
             }}
             autoFocus
             className="flex-1 rounded border border-primary/50 bg-input px-2 py-1 text-xs text-foreground outline-none"
           />
-          <button
-            onClick={() => {
-              onUpdate(editValue);
-              setEditing(false);
-            }}
-            className="text-primary"
-          >
+          <button onClick={handleSave} className="text-primary">
             <Save size={10} />
           </button>
           <button onClick={() => setEditing(false)} className="text-muted-foreground">
@@ -449,12 +356,9 @@ function InlineSettingRow({
         </button>
       )}
 
-      <button
-        onClick={onDelete}
-        className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all"
-      >
-        <Trash2 size={12} />
-      </button>
+      {saved && !editing && (
+        <CheckCircle2 size={11} className="shrink-0 text-emerald-400" />
+      )}
     </div>
   );
 }

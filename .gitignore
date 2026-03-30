@@ -29,6 +29,7 @@ remotion/out/
 .tmp/
 logs/
 sessions/
+output/
 
 # Veritabanı (geliştirme)
 *.db

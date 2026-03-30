@@ -17,13 +17,16 @@ Yetkilendirme:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.config import settings as app_settings
 from backend.database import get_db
+from backend.utils.path_utils import validate_output_path
 from backend.models.schemas import (
     ResolvedSettingsResponse,
     SettingBulkCreate,
@@ -267,6 +270,62 @@ def update_setting(
 # DELETE /api/settings/{setting_id} — Ayar sil (admin)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/settings/user — Kullanıcı ayarlarını kaydet (PIN gerektirmez)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/settings/user",
+    response_model=list[SettingResponse],
+    status_code=201,
+    summary="Kullanıcı override ayarlarını kaydet",
+    description=(
+        "Kullanıcı tercihlerini scope='user' olarak toplu kaydeder. "
+        "Admin PIN gerektirmez — sadece user scope'a yazılabilir."
+    ),
+)
+def save_user_settings(
+    payload: SettingBulkCreate,
+    db: Session = Depends(get_db),
+) -> list[SettingResponse]:
+    """
+    Kullanıcı tercihlerini backend'e kaydeder (PIN gerektirmez).
+    Güvenlik: Sadece scope='user' kabul edilir; diğer scope'lar reddedilir.
+    """
+    # Güvenlik: Sadece user scope kabul et
+    for s in payload.settings:
+        if s.scope != "user":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Bu endpoint sadece scope='user' kabul eder, gelen: '{s.scope}'",
+            )
+
+    resolver = SettingsResolver(db)
+    items = [
+        {
+            "scope": s.scope,
+            "scope_id": s.scope_id,
+            "key": s.key,
+            "value": s.value,
+            "locked": False,  # User ayarları kilitli olamaz
+            "description": s.description,
+        }
+        for s in payload.settings
+    ]
+    results = resolver.bulk_upsert(items)
+    db.commit()
+
+    for setting in results:
+        db.refresh(setting)
+
+    log.info(
+        "Kullanıcı ayarları kaydedildi",
+        count=len(results),
+    )
+
+    return [SettingResponse.model_validate(s) for s in results]
+
+
 @router.delete(
     "/settings/{setting_id}",
     status_code=204,
@@ -301,4 +360,100 @@ def delete_setting(
         setting_id=setting_id,
         scope=scope_info,
         key=key,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/settings/admin/output-folder — Output klasörünü ayarla (admin)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OutputFolderRequest(BaseModel):
+    """Output folder ayarı için request body."""
+    path: str
+
+
+class OutputFolderResponse(BaseModel):
+    """Output folder ayarı için response."""
+    path: str
+    absolute_path: str
+    exists: bool
+    message: str
+
+
+@router.get(
+    "/settings/admin/output-folder",
+    response_model=OutputFolderResponse,
+    summary="Mevcut output klasörünü getir",
+    description=(
+        "Şu an yapılandırılmış output klasörünün path'ini ve detaylarını döndürür. "
+        "Admin PIN gereklidir (X-Admin-Pin header)."
+    ),
+)
+def get_output_folder(
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> OutputFolderResponse:
+    """
+    Mevcut output klasörü bilgisini döndürür.
+    """
+    output_path = app_settings.output_dir
+
+    return OutputFolderResponse(
+        path=str(output_path),
+        absolute_path=str(output_path.resolve()),
+        exists=output_path.exists(),
+        message=f"Mevcut output klasörü: {output_path}",
+    )
+
+
+@router.post(
+    "/settings/admin/output-folder",
+    response_model=OutputFolderResponse,
+    summary="Output klasörünü ayarla",
+    description=(
+        "Tamamlanan videoların kaydedileceği output klasörünü ayarlar. "
+        "Sağlanan path otomatik olarak oluşturulur. "
+        "Admin PIN gereklidir (X-Admin-Pin header)."
+    ),
+)
+def set_output_folder(
+    payload: OutputFolderRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> OutputFolderResponse:
+    """
+    Output klasörünü ayarlar ve path'i config'e kaydeder.
+
+    - Path validasyonu: Güvenlik, yazılabilirlik
+    - Klasör otomatik oluşturulur
+    - Admin PIN zorunludur
+    """
+    # Centralized utility ile path validation
+    output_path = validate_output_path(payload.path)
+
+    # Config'i güncelle (runtime'da etkili olması için)
+    app_settings.output_dir = output_path
+
+    # SQLite'a kaydet
+    resolver = SettingsResolver(db)
+    resolver.upsert(
+        scope="admin",
+        scope_id="",
+        key="output_dir",
+        value=str(output_path),
+        description="Tamamlanan videoların kaydedileceği klasör",
+    )
+    db.commit()
+
+    log.info(
+        "Output klasörü ayarlandı",
+        path=str(output_path),
+        absolute=output_path.is_absolute(),
+    )
+
+    return OutputFolderResponse(
+        path=payload.path,
+        absolute_path=str(output_path),
+        exists=output_path.exists(),
+        message=f"Output klasörü ayarlandı: {output_path}",
     )

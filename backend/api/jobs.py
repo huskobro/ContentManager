@@ -2,28 +2,35 @@
 Jobs API — Pipeline iş yönetimi endpoint'leri.
 
 Endpoint'ler:
-  POST   /api/jobs              → Yeni iş oluştur
+  POST   /api/jobs              → Yeni iş oluştur (QUEUED — worker başlatır)
   GET    /api/jobs              → İş listesi (sayfalanmış, filtrelenebilir)
+  GET    /api/jobs/stream       → Global SSE stream (tüm job değişiklikleri)
   GET    /api/jobs/{job_id}     → Tekil iş detayı
   PATCH  /api/jobs/{job_id}     → İş durumu güncelle (iptal)
   GET    /api/jobs/{job_id}/events → SSE event stream (canlı ilerleme + log)
   GET    /api/jobs/stats        → Genel istatistikler
 
-SSE Event Tipleri:
+SSE Event Tipleri (tekil job):
   job_status  → Job durumu değişti
   step_update → Pipeline adımı güncellendi
   log         → Canlı log mesajı
   heartbeat   → Bağlantı canlılık sinyali (her 15s)
+
+SSE Event Tipleri (global stream - /api/jobs/stream):
+  job_status  → Herhangi bir job'un durumu değişti
+  step_update → Herhangi bir job'un adımı güncellendi
+  heartbeat   → Bağlantı canlılık sinyali (her 20s)
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from backend.config import settings as app_settings
@@ -35,7 +42,7 @@ from backend.models.schemas import (
     JobStatusUpdate,
 )
 from backend.pipeline.runner import run_pipeline
-from backend.services.job_manager import JobManager, sse_hub
+from backend.services.job_manager import JobManager, sse_hub, global_sse_hub
 from backend.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -75,19 +82,102 @@ async def create_job(
     manager = JobManager(db)
     job = manager.create_job(payload)
 
-    # Pipeline'ı arka planda başlat (kendi DB session'ını kullanır)
-    asyncio.create_task(
-        run_pipeline(job.id),
-        name=f"pipeline-{job.id[:8]}",
-    )
+    # Pipeline'ı ARTIK burada başlatmıyoruz — iş QUEUED olarak bırakılır.
+    # Arka plandaki job_worker_loop (main.py lifespan'de başlatılır) işi alır
+    # ve max_concurrent_jobs limitine göre pipeline'ı başlatır.
 
     log.info(
-        "Pipeline background task başlatıldı",
+        "İş QUEUED olarak oluşturuldu — worker loop başlatacak",
         job_id=job.id[:8],
         module_key=payload.module_key,
     )
 
+    # Global SSE üzerinden yeni iş bildir
+    asyncio.create_task(
+        global_sse_hub.publish("job_status", {
+            "job_id": job.id,
+            "status": "queued",
+            "error_message": None,
+            "timestamp": job.created_at,
+        })
+    )
+
     return JobResponse.model_validate(job)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/jobs/stream — Global SSE Stream (Dashboard / JobList için)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _global_sse_generator() -> AsyncGenerator[str, None]:
+    """
+    Sistem geneli SSE event stream üreteci.
+
+    Sistemdeki HERHANGİ bir job'ın durumu veya adımı değiştiğinde
+    frontend'e event gönderir. Dashboard ve JobList bu endpoint'i kullanır.
+
+    Event tipleri:
+      job_status  → Herhangi bir job'un durumu değişti
+      step_update → Herhangi bir job'un pipeline adımı güncellendi
+      heartbeat   → Her 20 saniyede bir bağlantı canlılık sinyali
+
+    Polling kullanmaz — tamamen push-based, gerçek zamanlı.
+    """
+    queue = await global_sse_hub.subscribe()
+
+    try:
+        while True:
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=20.0)
+
+                if message is None:
+                    # Kapanış sinyali
+                    break
+
+                event_type = message.get("event", "unknown")
+                event_data = message.get("data", {})
+                yield _format_sse(event_type, event_data)
+
+            except asyncio.TimeoutError:
+                # Heartbeat — bağlantı canlı mı?
+                yield _format_sse("heartbeat", {"status": "alive"})
+
+    finally:
+        await global_sse_hub.unsubscribe(queue)
+
+
+@router.get(
+    "/jobs/stream",
+    summary="Global SSE stream (tüm job değişiklikleri)",
+    description=(
+        "Sistemdeki herhangi bir job'ın durumu veya pipeline adımı değiştiğinde "
+        "gerçek zamanlı event gönderir. Dashboard ve JobList bu endpoint'e abone olur. "
+        "Polling yoktur — tamamen push-based SSE."
+    ),
+    responses={
+        200: {"description": "Global SSE event stream", "content": {"text/event-stream": {}}},
+    },
+)
+async def stream_global_events() -> StreamingResponse:
+    """
+    Global job değişiklik stream'i.
+
+    Frontend bu endpoint'e EventSource ile bağlanır:
+    ```javascript
+    const es = new EventSource("/api/jobs/stream");
+    es.addEventListener("job_status", (e) => { ... });
+    es.addEventListener("step_update", (e) => { ... });
+    ```
+    """
+    return StreamingResponse(
+        _global_sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +308,132 @@ async def update_job_status(
         raise HTTPException(status_code=409, detail=str(exc))
 
     return JobResponse.model_validate(job)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/jobs/{job_id}/retry — Başarısız işi yeniden dene
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/jobs/{job_id}/retry",
+    response_model=JobResponse,
+    summary="Başarısız işi yeniden dene",
+    description=(
+        "Başarısız (failed) veya iptal edilmiş (cancelled) bir işi kaldığı yerden devam ettirir. "
+        "Tamamlanan adımlar atlanır, başarısız adımdan itibaren pipeline yeniden başlatılır."
+    ),
+)
+async def retry_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+) -> JobResponse:
+    """
+    Başarısız işi yeniden başlatır.
+
+    Sadece 'failed' veya 'cancelled' durumundaki işler retry edilebilir.
+    Tamamlanan adımlar korunur (cache kullanılır).
+    """
+    manager = JobManager(db)
+    job = manager.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"İş bulunamadı: {job_id}")
+
+    if job.status not in ("failed", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Yalnızca 'failed' veya 'cancelled' işler retry edilebilir. Mevcut durum: {job.status}",
+        )
+
+    # Başarısız adımları ve sonraki adımları sıfırla
+    from backend.models.job import JobStep
+    steps = db.query(JobStep).filter(
+        JobStep.job_id == job_id,
+        JobStep.status.in_(["failed", "pending"]),
+    ).all()
+    for step in steps:
+        step.status = "pending"
+        step.message = None
+        step.started_at = None
+        step.completed_at = None
+        step.duration_ms = None
+
+    job.status = "queued"
+    job.error_message = None
+    db.commit()
+    db.refresh(job)
+
+    # Pipeline başlatmayı worker loop'a bırak — iş QUEUED olarak kuyruğa alındı.
+    # worker loop 2 saniye içinde alıp başlatacak.
+
+    # Global SSE üzerinden retry bildir
+    asyncio.create_task(
+        global_sse_hub.publish("job_status", {
+            "job_id": job.id,
+            "status": "queued",
+            "error_message": None,
+            "timestamp": job.created_at,
+        })
+    )
+
+    log.info("Job retry kuyruğa alındı — worker loop başlatacak", job_id=job_id[:8])
+    return JobResponse.model_validate(job)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/jobs/{job_id}/output — Final video dosyasını indir
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/jobs/{job_id}/output",
+    summary="Video çıktısını indir",
+    description=(
+        "Tamamlanan işin final video dosyasını (final.mp4) indirir. "
+        "İş 'completed' durumunda olmalı ve output_path geçerli olmalıdır."
+    ),
+)
+def download_job_output(
+    job_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Tamamlanan işin final video dosyasını indirir.
+
+    404 döner: İş bulunamazsa veya output dosyası bulunamazsa.
+    409 döner: İş tamamlanmamışsa.
+    """
+    manager = JobManager(db)
+    job = manager.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"İş bulunamadı: {job_id}")
+
+    if job.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"İş tamamlanmamış. Mevcut durum: {job.status}",
+        )
+
+    if not job.output_path:
+        raise HTTPException(
+            status_code=404,
+            detail="Çıktı dosyası bulunamadı. output_path boş.",
+        )
+
+    output_file = Path(job.output_path)
+    if not output_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dosya disk üzerinde bulunamadı: {job.output_path}",
+        )
+
+    log.info("Video indiriliyor", job_id=job_id[:8], file_size=output_file.stat().st_size)
+
+    return FileResponse(
+        path=output_file,
+        filename=f"video_{job_id[:8]}.mp4",
+        media_type="video/mp4",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

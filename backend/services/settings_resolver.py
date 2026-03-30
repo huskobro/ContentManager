@@ -60,6 +60,13 @@ _GLOBAL_DEFAULTS: dict[str, Any] = {
     "subtitle_style": app_settings.default_subtitle_style,
     "max_concurrent_jobs": app_settings.max_concurrent_jobs,
     "job_timeout_seconds": app_settings.job_timeout_seconds,
+    # Provider API anahtarları (.env'den okunur, admin panelden override edilebilir)
+    "gemini_api_key": app_settings.gemini_api_key,
+    "kieai_api_key": app_settings.kieai_api_key,
+    "openai_api_key": app_settings.openai_api_key,
+    "elevenlabs_api_key": app_settings.elevenlabs_api_key,
+    "pexels_api_key": app_settings.pexels_api_key,
+    "pixabay_api_key": app_settings.pixabay_api_key,
 }
 
 

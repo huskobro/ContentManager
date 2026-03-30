@@ -8,6 +8,11 @@
  *   • Renk kodlu durum badge'leri
  *   • Progress bar (aktif işler için)
  *   • Tıklama → JobDetail sayfasına yönlendirme
+ *
+ * Gerçek Zamanlı Güncelleme:
+ *   Global SSE stream'e (GET /api/jobs/stream) bağlanır.
+ *   Herhangi bir job değiştiğinde liste sayfayı yenilemeden güncellenir.
+ *   Polling (setInterval) kullanılmaz.
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -19,57 +24,20 @@ import {
   ChevronRight,
   Loader2,
   AlertCircle,
-  Video,
-  Newspaper,
-  ShoppingBag,
-  XCircle,
-  Clock,
-  CheckCircle2,
-  Play,
-  Ban,
 } from "lucide-react";
-import { useJobStore, type Job, type JobStatus } from "@/stores/jobStore";
+import { useJobStore, type Job } from "@/stores/jobStore";
+import { STATUS_CONFIG, MODULE_INFO, STATUS_FILTERS, MODULE_FILTERS, getModuleIcon } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 15;
 
-const STATUS_CONFIG: Record<JobStatus, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-  queued: { label: "Kuyrukta", color: "text-slate-400", bg: "bg-slate-400/15", icon: <Clock size={12} /> },
-  running: { label: "Çalışıyor", color: "text-blue-400", bg: "bg-blue-400/15", icon: <Play size={12} /> },
-  completed: { label: "Tamamlandı", color: "text-emerald-400", bg: "bg-emerald-400/15", icon: <CheckCircle2 size={12} /> },
-  failed: { label: "Başarısız", color: "text-red-400", bg: "bg-red-400/15", icon: <XCircle size={12} /> },
-  cancelled: { label: "İptal", color: "text-slate-500", bg: "bg-slate-500/15", icon: <Ban size={12} /> },
-};
-
-const MODULE_INFO: Record<string, { label: string; icon: React.ReactNode }> = {
-  standard_video: { label: "Standart Video", icon: <Video size={14} /> },
-  news_bulletin: { label: "Haber Bülteni", icon: <Newspaper size={14} /> },
-  product_review: { label: "Ürün İnceleme", icon: <ShoppingBag size={14} /> },
-};
-
-const STATUS_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "Tümü" },
-  { value: "queued", label: "Kuyrukta" },
-  { value: "running", label: "Çalışıyor" },
-  { value: "completed", label: "Tamamlandı" },
-  { value: "failed", label: "Başarısız" },
-  { value: "cancelled", label: "İptal" },
-];
-
-const MODULE_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "Tüm Modüller" },
-  { value: "standard_video", label: "Standart Video" },
-  { value: "news_bulletin", label: "Haber Bülteni" },
-  { value: "product_review", label: "Ürün İnceleme" },
-];
-
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function JobList() {
   const navigate = useNavigate();
-  const { jobs, totalJobs, loading, error, fetchJobs } = useJobStore();
+  const { jobs, totalJobs, loading, error, fetchJobs, connectGlobalStream } = useJobStore();
 
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
@@ -87,6 +55,16 @@ export default function JobList() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Global SSE stream — mount'ta bağlan, unmount'ta kapat
+  // Polling yok: herhangi bir job değiştiğinde store güncellenir → liste reaktif yenilenir
+  useEffect(() => {
+    const closeStream = connectGlobalStream();
+    return () => {
+      closeStream();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Filtre değiştiğinde sayfayı sıfırla
   function handleFilterChange(type: "status" | "module", value: string) {
@@ -139,15 +117,22 @@ export default function JobList() {
         </div>
 
         {/* Modül filtresi */}
-        <select
-          value={moduleFilter}
-          onChange={(e) => handleFilterChange("module", e.target.value)}
-          className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-        >
+        <div className="flex rounded-lg border border-border overflow-hidden">
           {MODULE_FILTERS.map((f) => (
-            <option key={f.value} value={f.value}>{f.label}</option>
+            <button
+              key={f.value}
+              onClick={() => handleFilterChange("module", f.value)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium transition-colors",
+                moduleFilter === f.value
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
+              )}
+            >
+              {f.label}
+            </button>
           ))}
-        </select>
+        </div>
       </div>
 
       {/* İçerik */}
@@ -223,7 +208,8 @@ export default function JobList() {
 
 function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
   const statusCfg = STATUS_CONFIG[job.status];
-  const modInfo = MODULE_INFO[job.module_key] ?? { label: job.module_key, icon: <Video size={14} /> };
+  const modMeta = MODULE_INFO[job.module_key];
+  const modLabel = modMeta?.label ?? job.module_key;
 
   const completedSteps = job.steps.filter((s) => s.status === "completed").length;
   const totalSteps = job.steps.length;
@@ -239,13 +225,13 @@ function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
       {/* Başlık */}
       <div className="min-w-0 flex-1 sm:flex-none">
         <p className="truncate text-sm font-medium text-foreground">{job.title}</p>
-        <p className="truncate text-xs text-muted-foreground sm:hidden">{modInfo.label}</p>
+        <p className="truncate text-xs text-muted-foreground sm:hidden">{modLabel}</p>
       </div>
 
       {/* Modül (masaüstü) */}
       <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-        {modInfo.icon}
-        <span className="truncate">{modInfo.label}</span>
+        {getModuleIcon(job.module_key, 14)}
+        <span className="truncate">{modLabel}</span>
       </div>
 
       {/* İlerleme (masaüstü) */}
@@ -265,7 +251,6 @@ function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
 
       {/* Durum */}
       <span className={cn("shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium", statusCfg.color, statusCfg.bg)}>
-        {statusCfg.icon}
         <span className="hidden sm:inline">{statusCfg.label}</span>
       </span>
 

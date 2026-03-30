@@ -64,9 +64,11 @@ async def run_pipeline(job_id: str) -> None:
             log.error("Pipeline başlatılamadı: Job bulunamadı", job_id=job_id[:8])
             return
 
-        if job.status != "queued":
+        # Worker loop job'u "queued"dan "running"a çekip sonra run_pipeline'ı
+        # başlatır — bu yüzden "running" da geçerli başlangıç durumudur.
+        if job.status not in ("queued", "running"):
             log.warning(
-                "Pipeline atlandı: Job queued durumda değil",
+                "Pipeline atlandı: Job başlatılabilir durumda değil",
                 job_id=job_id[:8],
                 current_status=job.status,
             )
@@ -87,7 +89,10 @@ async def run_pipeline(job_id: str) -> None:
             return
 
         # ── Job'u RUNNING'e geçir ──────────────────────────────────────────
-        await manager.update_job_status(job_id, "running")
+        # Worker loop zaten "running" set etmiş olabilir — sadece "queued"
+        # durumundaysa geçiş yap, zaten "running"sa doğrudan devam et.
+        if job.status == "queued":
+            await manager.update_job_status(job_id, "running")
         await manager.emit_log(
             job_id, "INFO",
             f"Pipeline başlatıldı: {module.display_name}",
@@ -95,6 +100,23 @@ async def run_pipeline(job_id: str) -> None:
 
         # ── Resolved settings'i oku ────────────────────────────────────────
         config = _load_resolved_settings(job)
+
+        # ── Modül aktiflik kontrolü ────────────────────────────────────────
+        if config.get("enabled") is False:
+            await manager.update_job_status(
+                job_id, "failed",
+                error_message="Bu modül sistem yöneticisi tarafından devre dışı bırakılmıştır.",
+            )
+            await manager.emit_log(
+                job_id, "ERROR",
+                f"Pipeline durduruldu: '{module.display_name}' modülü devre dışı.",
+            )
+            log.warning(
+                "Devre dışı modül için pipeline reddedildi",
+                job_id=job_id[:8],
+                module_key=job.module_key,
+            )
+            return
 
         # Job title'ı config'e ekle (step fonksiyonlarının erişebilmesi için)
         config["_job_title"] = job.title
@@ -153,10 +175,17 @@ async def run_pipeline(job_id: str) -> None:
         # ── Pipeline tamamlandı ────────────────────────────────────────────
         if all_successful:
             # Output path'i güncelle
-            composition_output = cache.get_output_path("composition", "final.mp4")
+            # Önce output/ klasöründeki kopyalanmış dosyaya bak (tercih edilen)
+            # Yoksa session dizinindeki render çıktısına düş
+            output_dir_file = app_settings.output_dir / f"{job_id[:8]}.mp4"
+            composition_session = cache.get_output_path("composition", "final.mp4")
+
             job = manager.get_job(job_id)
-            if job and composition_output.exists():
-                job.output_path = str(composition_output)
+            if job:
+                if output_dir_file.exists():
+                    job.output_path = str(output_dir_file)
+                elif composition_session.exists():
+                    job.output_path = str(composition_session)
                 db.commit()
 
             await manager.update_job_status(job_id, "completed")

@@ -18,25 +18,28 @@
 
 | | | |
 |:--|:--|:--|
-| 🎯 **6 Adımlı Pipeline** | 🔄 **Provider Fallback** | 📡 **SSE Canlı İzleme** |
-| Script → Metadata → TTS → Visuals → Subtitles → Composition | LLM, TTS, Görsel provider'lar arası otomatik geçiş | Adım adım ilerleme ve log streaming |
+| 🎯 **6 Adımlı Pipeline** | 🔄 **Provider Fallback** | 📡 **Global SSE Gerçek Zamanlı** |
+| Script → Metadata → TTS → Visuals → Subtitles → Composition | LLM, TTS, Görsel provider'lar arası otomatik geçiş | Tüm sayfalar anlık güncellenir — polling yok, push-based |
 | 🎨 **5 Altyazı Stili** | 🎬 **Remotion Video** | 📦 **3 İçerik Modülü** |
 | Standard, Neon Blue, Gold, Minimal, Hormozi | Ken Burns, crossfade, vignette, lower-third | Standart Video, Haber Bülteni, Ürün İnceleme |
-| 🧠 **6 Kategori Promptu** | 🎣 **8 Açılış Hook'u** | 🔐 **Dual UI** |
-| True Crime, Bilim, Tarih, Motivasyon, Din, Genel | Şok edici gerçek, soru, hikaye, çelişki + tekrar önleme | Kullanıcı + Admin paneli (PIN korumalı) |
-| 💾 **Crash-Safe** | 💰 **Maliyet Takibi** | 🌙 **Dark Mode** |
-| SQLite WAL + session cache ile kaldığın yerden devam | Provider bazlı tahmini API maliyeti | Glassmorphism UI tasarım |
+| 🧠 **Prompt Yönetim Motoru** | 🎣 **8 Açılış Hook'u** | 🔐 **SaaS Kalitesinde Admin Paneli** |
+| Admin panelden tüm prompt'lar düzenlenebilir, kategorize | Şok edici gerçek, soru, hikaye, çelişki + tekrar önleme | Modül, provider, prompt, maliyet, ayar — tek yerden yönet |
+| 💾 **Global Worker Loop** | 💰 **Maliyet Takibi (Cost Tracker)** | 🌙 **Dark Mode** |
+| Kuyruk sistemi + `max_concurrent_jobs` limiti + otomatik dispatch | Provider bazlı tahmini API maliyeti, job ve adım granülaritesinde | Glassmorphism UI tasarım |
+| 📊 **Toplu Video Üretimi (Batch)** | 🔒 **5 Katmanlı Ayar Sistemi** | 🎥 **Long + Shorts Format** |
+| Bir formda 50+ konu gir, hepsi sırayla üretilsin | Global → Admin → Modül → Provider → Kullanıcı override zinciri | 16:9 yatay video veya 9:16 dikey Shorts/Reels desteği |
 
 ---
 
 ## 🏗️ Mimari
 
 ```
-React UI → FastAPI → Pipeline Runner → Providers (Gemini, Edge TTS, Pexels)
-                ↓                          ↓
-            SQLite WAL              Remotion CLI → MP4
-                ↓
-            SSE Stream → UI Live Progress
+React UI → FastAPI → Worker Loop (Kuyruk) → Pipeline Runner → Providers
+                ↓           ↓                       ↓
+            SQLite WAL   Global SSE          Remotion CLI → MP4
+            (Single       (Tüm sayfalar        (Gemini, Edge TTS,
+             Source        anlık güncellenir)    Pexels + fallback)
+             of Truth)
 ```
 
 ---
@@ -46,7 +49,7 @@ React UI → FastAPI → Pipeline Runner → Providers (Gemini, Edge TTS, Pexels
 | Katman | Teknoloji |
 |:-------|:----------|
 | **Backend** | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2 |
-| **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, Shadcn UI, Zustand |
+| **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, Radix UI, Zustand |
 | **Video** | Remotion 4.0, ffmpeg (codec) |
 | **Veritabanı** | SQLite WAL mode |
 | **Gerçek Zamanlı** | Server-Sent Events (SSE) |
@@ -153,7 +156,7 @@ ContentManager/
 │   └── services/        # Settings resolver, job manager, cost tracker
 ├── frontend/            # React + Vite + Tailwind + Shadcn
 │   └── src/
-│       ├── pages/       # user/ (5 sayfa) + admin/ (5 sayfa)
+│       ├── pages/       # user/ (5 sayfa) + admin/ (7 sayfa)
 │       ├── stores/      # Zustand (job, settings, admin, ui)
 │       └── components/  # Layout, progress, forms
 ├── remotion/            # Video composition engine

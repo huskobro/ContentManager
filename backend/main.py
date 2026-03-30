@@ -12,6 +12,7 @@ Sorumluluklar:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -51,15 +52,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     create_tables()
 
     # Çalışma dizinlerini doğrula
-    for path_attr in ("sessions_dir", "tmp_dir", "logs_dir"):
+    for path_attr in ("sessions_dir", "output_dir", "tmp_dir", "logs_dir"):
         directory = getattr(settings, path_attr)
         directory.mkdir(parents=True, exist_ok=True)
 
-    # Interrupted job'ları kurtarma (sistem yeniden başlatıldığında)
+    # Admin panel'de ayarlanan output_dir'i yükle + interrupted jobs kurtarma
+    # (İki işlemi de aynı DB session'da yap — startup time optimizasyonu)
+    from pathlib import Path
     from backend.database import SessionLocal
     from backend.services.job_manager import JobManager
 
     with SessionLocal() as db:
+        # 1. Output_dir'i yükle (admin ayarından) — DB'ye direkt sorgula
+        from backend.models.settings import Setting
+        import json as _json
+        try:
+            row = (
+                db.query(Setting)
+                .filter(Setting.scope == "admin", Setting.key == "output_dir")
+                .first()
+            )
+            if row:
+                saved_output_dir = _json.loads(row.value)
+                settings.output_dir = Path(saved_output_dir)
+                settings.output_dir.mkdir(parents=True, exist_ok=True)
+                log.info(
+                    "Admin panel'den output_dir yüklendi",
+                    path=str(settings.output_dir),
+                )
+        except Exception as e:
+            log.warning("output_dir yüklenirken hata (default kullanılacak)", error=str(e))
+
+        # 2. Interrupted job'ları kurtarma (sistem yeniden başlatıldığında)
         manager = JobManager(db)
         recovered = manager.recover_interrupted_jobs()
         if recovered:
@@ -67,9 +91,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 f"{len(recovered)} interrupted job kuyruğa alındı",
             )
 
-    log.info("Başlangıç tamamlandı — API hazır")
+    # 3. Job worker loop'u arka planda başlat
+    # Bu döngü QUEUED işleri max_concurrent_jobs limitine göre işlemeye alır.
+    # POST /api/jobs artık pipeline'ı doğrudan başlatmaz — işi QUEUED bırakır.
+    from backend.services.job_manager import job_worker_loop
+    worker_task = asyncio.create_task(job_worker_loop(), name="job-worker-loop")
+
+    log.info("Başlangıç tamamlandı — API ve worker loop hazır")
 
     yield  # ← uygulama burada çalışır
+
+    # ── Kapanış öncesi worker loop'u iptal et ──
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
     # ── Kapanış ──
     log.info("ContentManager kapatılıyor")
@@ -95,7 +132,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

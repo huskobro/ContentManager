@@ -289,6 +289,10 @@ def _register_all_providers() -> None:
       3. Buraya import + register satırı ekle
     """
     # ── LLM Providers ───────────────────────────────────────────────────────
+    # kie.ai birincil (önce kayıt = öncelikli fallback)
+    from backend.providers.llm.kie_ai import KieAIProvider
+    provider_registry.register(KieAIProvider())
+
     from backend.providers.llm.gemini import GeminiProvider
     provider_registry.register(GeminiProvider())
 

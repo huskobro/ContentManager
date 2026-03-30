@@ -1,11 +1,10 @@
 /**
  * UserSettings — Kullanıcı video üretim tercihlerini yönetme sayfası.
  *
- * Özellikler:
- *   • Backend'den çözümlenmiş ayarları gösterir (5-katmanlı sistem)
- *   • Kilitli ayarlar readonly gösterilir (admin tarafından kilitli)
- *   • Kullanıcının override edebileceği ayarlar: dil, TTS, altyazı stili, çözünürlük vb.
- *   • Değişiklikler localStorage'da saklanır (Zustand persist)
+ * Faz 10.7 değişiklikleri:
+ *   • "Genel Ayarlar" ve "Görsel & Yayın Tercihleri" kategorize edilmiş kartlar
+ *   • Daha temiz, tutarlı tasarım
+ *   • Kilitli ayarlar readonly + lock ikonu gösterir
  */
 
 import { useEffect, useState } from "react";
@@ -21,9 +20,13 @@ import {
   AlertCircle,
   Save,
   CheckCircle2,
+  Youtube,
+  Palette,
+  Zap,
 } from "lucide-react";
 import { useSettingsStore, type UserVideoDefaults } from "@/stores/settingsStore";
 import { useUIStore } from "@/stores/uiStore";
+import { api } from "@/api/client";
 import { cn } from "@/lib/utils";
 
 // ─── Seçenekler ──────────────────────────────────────────────────────────────
@@ -51,18 +54,18 @@ const SUBTITLE_STYLES = [
 ];
 
 const VISUALS_PROVIDERS = [
-  { value: "pexels", label: "Pexels" },
+  { value: "pexels", label: "Pexels (Stok Video)" },
   { value: "pixabay", label: "Pixabay" },
 ];
 
 const RESOLUTIONS = [
-  { value: "1920x1080", label: "1920×1080 (Yatay)" },
-  { value: "1080x1920", label: "1080×1920 (Dikey / Shorts)" },
+  { value: "1920x1080", label: "1920×1080 — Yatay (16:9)" },
+  { value: "1080x1920", label: "1080×1920 — Dikey / Shorts (9:16)" },
 ];
 
 const FPS_OPTIONS = [
-  { value: 30, label: "30 FPS" },
-  { value: 60, label: "60 FPS" },
+  { value: 30, label: "30 FPS — Standart" },
+  { value: 60, label: "60 FPS — Yüksek Kalite" },
 ];
 
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
@@ -75,13 +78,10 @@ export default function UserSettings() {
     error,
     fetchResolvedSettings,
     setUserDefaults,
-    patchUserDefault,
   } = useSettingsStore();
 
   const addToast = useUIStore((s) => s.addToast);
   const [saving, setSaving] = useState(false);
-
-  // Form state (local copy for editing)
   const [form, setForm] = useState<UserVideoDefaults>({ ...userDefaults });
 
   useEffect(() => {
@@ -90,7 +90,6 @@ export default function UserSettings() {
     }
   }, [loaded, fetchResolvedSettings]);
 
-  // Store değiştiğinde form'u senkronla
   useEffect(() => {
     setForm({ ...userDefaults });
   }, [userDefaults]);
@@ -107,14 +106,33 @@ export default function UserSettings() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function handleSave() {
+  async function handleSave() {
     setSaving(true);
-    // Zustand persist → localStorage
-    setUserDefaults(form);
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      const settingsPayload = {
+        settings: [
+          { scope: "user" as const, scope_id: "", key: "language", value: form.language },
+          { scope: "user" as const, scope_id: "", key: "tts_provider", value: form.ttsProvider },
+          { scope: "user" as const, scope_id: "", key: "visuals_provider", value: form.visualsProvider },
+          { scope: "user" as const, scope_id: "", key: "subtitle_style", value: form.subtitleStyle },
+          { scope: "user" as const, scope_id: "", key: "subtitle_enabled", value: form.subtitleEnabled },
+          { scope: "user" as const, scope_id: "", key: "video_resolution", value: form.videoResolution },
+          { scope: "user" as const, scope_id: "", key: "video_fps", value: form.videoFps },
+          { scope: "user" as const, scope_id: "", key: "metadata_enabled", value: form.metadataEnabled },
+          { scope: "user" as const, scope_id: "", key: "thumbnail_enabled", value: form.thumbnailEnabled },
+          { scope: "user" as const, scope_id: "", key: "publish_to_youtube", value: form.publishToYoutube },
+          { scope: "user" as const, scope_id: "", key: "youtube_privacy", value: form.youtubePrivacy },
+        ],
+      };
+      await api.post("/settings/user", settingsPayload);
+      setUserDefaults(form);
       addToast({ type: "success", title: "Ayarlar kaydedildi" });
-    }, 300);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Ayarlar kaydedilemedi";
+      addToast({ type: "error", title: "Kayıt başarısız", description: message });
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleReset() {
@@ -171,7 +189,7 @@ export default function UserSettings() {
         </div>
       </div>
 
-      {/* Hata mesajı */}
+      {/* Hata */}
       {error && (
         <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-xs text-red-400">
           <AlertCircle size={14} />
@@ -179,95 +197,113 @@ export default function UserSettings() {
         </div>
       )}
 
-      {/* İçerik Dili */}
-      <SettingsSection
-        icon={<Globe size={16} />}
-        title="İçerik Dili"
-        description="Video içeriklerinin varsayılan dili"
-      >
-        <SelectField
-          value={form.language}
-          onChange={(v) => handleChange("language", v)}
-          options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
-          locked={isLocked("language")}
-        />
-      </SettingsSection>
+      {/* ── Bölüm 1: Genel Ayarlar ── */}
+      <div className="space-y-3">
+        <SectionLabel icon={<Zap size={13} />} label="Genel Ayarlar" />
 
-      {/* TTS Ayarları */}
-      <SettingsSection
-        icon={<Mic size={16} />}
-        title="Ses Sentezi (TTS)"
-        description="Varsayılan konuşma sentezi sağlayıcısı"
-      >
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1.5 block text-xs text-muted-foreground">TTS Provider</label>
+        <div className="rounded-xl border border-border bg-card divide-y divide-border">
+          {/* Dil */}
+          <SettingRow
+            icon={<Globe size={14} />}
+            label="İçerik Dili"
+            description="Video içeriklerinin varsayılan dili"
+            locked={isLocked("language")}
+          >
+            <SelectField
+              value={form.language}
+              onChange={(v) => handleChange("language", v)}
+              options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+              locked={isLocked("language")}
+            />
+          </SettingRow>
+
+          {/* TTS */}
+          <SettingRow
+            icon={<Mic size={14} />}
+            label="Ses Sentezi (TTS)"
+            description="Varsayılan konuşma sentezi sağlayıcısı"
+            locked={isLocked("tts_provider")}
+          >
             <SelectField
               value={form.ttsProvider}
               onChange={(v) => handleChange("ttsProvider", v)}
               options={TTS_PROVIDERS}
               locked={isLocked("tts_provider")}
             />
-          </div>
-        </div>
-      </SettingsSection>
+          </SettingRow>
 
-      {/* Altyazı Ayarları */}
-      <SettingsSection
-        icon={<Subtitles size={16} />}
-        title="Altyazı"
-        description="Altyazı stili ve etkinleştirme"
-      >
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-muted-foreground">Altyazı Aktif</label>
-            <ToggleSwitch
-              checked={form.subtitleEnabled}
-              onChange={(v) => handleChange("subtitleEnabled", v)}
-              locked={isLocked("subtitle_enabled")}
-            />
-          </div>
-          {form.subtitleEnabled && (
-            <div>
-              <label className="mb-1.5 block text-xs text-muted-foreground">Altyazı Stili</label>
-              <SelectField
-                value={form.subtitleStyle}
-                onChange={(v) => handleChange("subtitleStyle", v)}
-                options={SUBTITLE_STYLES}
-                locked={isLocked("subtitle_style")}
-              />
+          {/* Altyazı etkin */}
+          <SettingRow
+            icon={<Subtitles size={14} />}
+            label="Altyazı"
+            description="Altyazı aktif ve stil seçimi"
+            locked={isLocked("subtitle_enabled")}
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Altyazı Aktif</span>
+                <ToggleSwitch
+                  checked={form.subtitleEnabled}
+                  onChange={(v) => handleChange("subtitleEnabled", v)}
+                  locked={isLocked("subtitle_enabled")}
+                />
+              </div>
+              {form.subtitleEnabled && (
+                <SelectField
+                  value={form.subtitleStyle}
+                  onChange={(v) => handleChange("subtitleStyle", v)}
+                  options={SUBTITLE_STYLES}
+                  locked={isLocked("subtitle_style")}
+                  placeholder="Altyazı Stili"
+                />
+              )}
             </div>
-          )}
+          </SettingRow>
         </div>
-      </SettingsSection>
+      </div>
 
-      {/* Görsel Ayarları */}
-      <SettingsSection
-        icon={<Monitor size={16} />}
-        title="Video & Görsel"
-        description="Çözünürlük, FPS ve görsel sağlayıcı tercihleri"
-      >
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1.5 block text-xs text-muted-foreground">Görsel Kaynağı</label>
+      {/* ── Bölüm 2: Görsel & Video Tercihleri ── */}
+      <div className="space-y-3">
+        <SectionLabel icon={<Palette size={13} />} label="Görsel & Video Tercihleri" />
+
+        <div className="rounded-xl border border-border bg-card divide-y divide-border">
+          {/* Görsel kaynağı */}
+          <SettingRow
+            icon={<Monitor size={14} />}
+            label="Görsel Kaynağı"
+            description="Sahneler için kullanılacak stok medya sağlayıcısı"
+            locked={isLocked("visuals_provider")}
+          >
             <SelectField
               value={form.visualsProvider}
               onChange={(v) => handleChange("visualsProvider", v)}
               options={VISUALS_PROVIDERS}
               locked={isLocked("visuals_provider")}
             />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs text-muted-foreground">Video Çözünürlüğü</label>
+          </SettingRow>
+
+          {/* Çözünürlük */}
+          <SettingRow
+            icon={<Monitor size={14} />}
+            label="Video Çözünürlüğü"
+            description="Çıktı video boyutu ve yönü"
+            locked={isLocked("video_resolution")}
+          >
             <SelectField
               value={form.videoResolution}
               onChange={(v) => handleChange("videoResolution", v)}
               options={RESOLUTIONS}
               locked={isLocked("video_resolution")}
             />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs text-muted-foreground">Kare Hızı</label>
+          </SettingRow>
+
+          {/* FPS */}
+          <SettingRow
+            icon={<Zap size={14} />}
+            label="Kare Hızı"
+            description="Video akıcılığı için FPS seçimi"
+            locked={isLocked("video_fps")}
+          >
             <SelectField
               value={String(form.videoFps)}
               onChange={(v) => handleChange("videoFps", Number(v))}
@@ -277,89 +313,150 @@ export default function UserSettings() {
               }))}
               locked={isLocked("video_fps")}
             />
-          </div>
+          </SettingRow>
         </div>
-      </SettingsSection>
+      </div>
 
-      {/* Yayın Ayarları */}
-      <SettingsSection
-        icon={<Settings size={16} />}
-        title="Yayın & Ek Özellikler"
-        description="Metadata, thumbnail ve YouTube yayın tercihleri"
-      >
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-muted-foreground">SEO Metadata Üretimi</label>
-            <ToggleSwitch
-              checked={form.metadataEnabled}
-              onChange={(v) => handleChange("metadataEnabled", v)}
-              locked={isLocked("metadata_enabled")}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-muted-foreground">Thumbnail Üretimi</label>
-            <ToggleSwitch
-              checked={form.thumbnailEnabled}
-              onChange={(v) => handleChange("thumbnailEnabled", v)}
-              locked={isLocked("thumbnail_enabled")}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-muted-foreground">YouTube'a Yayınla</label>
-            <ToggleSwitch
-              checked={form.publishToYoutube}
-              onChange={(v) => handleChange("publishToYoutube", v)}
-              locked={isLocked("publish_to_youtube")}
-            />
-          </div>
-          {form.publishToYoutube && (
-            <div>
-              <label className="mb-1.5 block text-xs text-muted-foreground">
-                YouTube Gizlilik
-              </label>
-              <SelectField
-                value={form.youtubePrivacy}
-                onChange={(v) =>
-                  handleChange("youtubePrivacy", v as "private" | "unlisted" | "public")
-                }
-                options={[
-                  { value: "private", label: "Özel (Private)" },
-                  { value: "unlisted", label: "Liste Dışı (Unlisted)" },
-                  { value: "public", label: "Herkese Açık (Public)" },
-                ]}
-                locked={isLocked("youtube_privacy")}
+      {/* ── Bölüm 3: Yayın & Ek Özellikler ── */}
+      <div className="space-y-3">
+        <SectionLabel icon={<Youtube size={13} />} label="Yayın & Ek Özellikler" />
+
+        <div className="rounded-xl border border-border bg-card divide-y divide-border">
+          {/* SEO Metadata */}
+          <SettingRow
+            icon={<Settings size={14} />}
+            label="SEO Metadata"
+            description="Başlık, açıklama ve etiket otomatik üretimi"
+            locked={isLocked("metadata_enabled")}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Metadata Üretimi Aktif</span>
+              <ToggleSwitch
+                checked={form.metadataEnabled}
+                onChange={(v) => handleChange("metadataEnabled", v)}
+                locked={isLocked("metadata_enabled")}
               />
             </div>
-          )}
+          </SettingRow>
+
+          {/* Thumbnail */}
+          <SettingRow
+            icon={<Monitor size={14} />}
+            label="Thumbnail"
+            description="Video kapak resmi otomatik üretimi"
+            locked={isLocked("thumbnail_enabled")}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Thumbnail Üretimi Aktif</span>
+              <ToggleSwitch
+                checked={form.thumbnailEnabled}
+                onChange={(v) => handleChange("thumbnailEnabled", v)}
+                locked={isLocked("thumbnail_enabled")}
+              />
+            </div>
+          </SettingRow>
+
+          {/* YouTube yayını */}
+          <SettingRow
+            icon={<Youtube size={14} />}
+            label="YouTube Yayını"
+            description="Tamamlanan videoları YouTube'a otomatik yükle"
+            locked={isLocked("publish_to_youtube")}
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">YouTube'a Yayınla</span>
+                <ToggleSwitch
+                  checked={form.publishToYoutube}
+                  onChange={(v) => handleChange("publishToYoutube", v)}
+                  locked={isLocked("publish_to_youtube")}
+                />
+              </div>
+              {form.publishToYoutube && (
+                <SelectField
+                  value={form.youtubePrivacy}
+                  onChange={(v) =>
+                    handleChange("youtubePrivacy", v as "private" | "unlisted" | "public")
+                  }
+                  options={[
+                    { value: "private", label: "Özel (Private)" },
+                    { value: "unlisted", label: "Liste Dışı (Unlisted)" },
+                    { value: "public", label: "Herkese Açık (Public)" },
+                  ]}
+                  locked={isLocked("youtube_privacy")}
+                  placeholder="Gizlilik Ayarı"
+                />
+              )}
+            </div>
+          </SettingRow>
         </div>
-      </SettingsSection>
+      </div>
+
+      {/* Kaydet butonu (bottom) — değişiklik varsa belirgin */}
+      {hasChanges && (
+        <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+          <p className="text-xs text-muted-foreground">Kaydedilmemiş değişiklik var</p>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          >
+            {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+            {saving ? "Kaydediliyor..." : "Değişiklikleri Kaydet"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Yardımcı Bileşenler ─────────────────────────────────────────────────────
 
-function SettingsSection({
+function SectionLabel({
   icon,
-  title,
+  label,
+}: {
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 px-1">
+      <span className="text-muted-foreground">{icon}</span>
+      <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function SettingRow({
+  icon,
+  label,
   description,
+  locked,
   children,
 }: {
   icon: React.ReactNode;
-  title: string;
+  label: string;
   description: string;
+  locked: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground">{icon}</span>
+    <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
+      {/* Sol */}
+      <div className="flex items-start gap-2 sm:w-48 shrink-0">
+        <span className="mt-0.5 text-muted-foreground shrink-0">{icon}</span>
         <div>
-          <h3 className="text-sm font-medium text-foreground">{title}</h3>
-          <p className="text-xs text-muted-foreground">{description}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-medium text-foreground">{label}</p>
+            {locked && <Lock size={10} className="text-amber-400" />}
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{description}</p>
         </div>
       </div>
-      <div>{children}</div>
+      {/* Sağ */}
+      <div className="flex-1">{children}</div>
     </div>
   );
 }
@@ -369,11 +466,13 @@ function SelectField({
   onChange,
   options,
   locked,
+  placeholder,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
   locked: boolean;
+  placeholder?: string;
 }) {
   return (
     <div className="relative">
@@ -382,12 +481,17 @@ function SelectField({
         onChange={(e) => onChange(e.target.value)}
         disabled={locked}
         className={cn(
-          "w-full rounded-lg border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors",
+          "w-full rounded-lg border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors appearance-none",
           locked
             ? "border-border opacity-60 cursor-not-allowed"
             : "border-border"
         )}
       >
+        {placeholder && (
+          <option value="" disabled>
+            {placeholder}
+          </option>
+        )}
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>
             {opt.label}
@@ -397,7 +501,7 @@ function SelectField({
       {locked && (
         <Lock
           size={12}
-          className="absolute right-8 top-1/2 -translate-y-1/2 text-muted-foreground"
+          className="absolute right-8 top-1/2 -translate-y-1/2 text-amber-400 pointer-events-none"
         />
       )}
     </div>
@@ -432,9 +536,6 @@ function ToggleSwitch({
           checked ? "translate-x-4" : "translate-x-0.5"
         )}
       />
-      {locked && (
-        <Lock size={8} className="absolute -right-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
-      )}
     </button>
   );
 }

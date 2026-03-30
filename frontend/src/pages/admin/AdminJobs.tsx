@@ -5,6 +5,9 @@
  *   • Tüm işleri gösterir (admin yetkisi ile)
  *   • İptal ve silme yetkisi vardır
  *   • Toplu temizlik (tamamlanan/başarısız işleri sil)
+ *
+ * Gerçek Zamanlı Güncelleme:
+ *   Global SSE stream'e bağlanır — polling yok, push-based.
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -17,81 +20,25 @@ import {
   Loader2,
   AlertCircle,
   Video,
-  Newspaper,
-  ShoppingBag,
-  XCircle,
-  Clock,
-  CheckCircle2,
-  Play,
   Ban,
   Trash2,
   Eraser,
 } from "lucide-react";
-import { useJobStore, type Job, type JobStatus } from "@/stores/jobStore";
+import { useJobStore, type Job } from "@/stores/jobStore";
 import { useAdminStore } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
+import { STATUS_CONFIG, MODULE_INFO, STATUS_FILTERS, getModuleIcon } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
 
-const STATUS_CONFIG: Record<
-  JobStatus,
-  { label: string; color: string; bg: string; icon: React.ReactNode }
-> = {
-  queued: {
-    label: "Kuyrukta",
-    color: "text-slate-400",
-    bg: "bg-slate-400/15",
-    icon: <Clock size={12} />,
-  },
-  running: {
-    label: "Çalışıyor",
-    color: "text-blue-400",
-    bg: "bg-blue-400/15",
-    icon: <Play size={12} />,
-  },
-  completed: {
-    label: "Tamamlandı",
-    color: "text-emerald-400",
-    bg: "bg-emerald-400/15",
-    icon: <CheckCircle2 size={12} />,
-  },
-  failed: {
-    label: "Başarısız",
-    color: "text-red-400",
-    bg: "bg-red-400/15",
-    icon: <XCircle size={12} />,
-  },
-  cancelled: {
-    label: "İptal",
-    color: "text-slate-500",
-    bg: "bg-slate-500/15",
-    icon: <Ban size={12} />,
-  },
-};
-
-const MODULE_INFO: Record<string, { label: string; icon: React.ReactNode }> = {
-  standard_video: { label: "Standart Video", icon: <Video size={14} /> },
-  news_bulletin: { label: "Haber Bülteni", icon: <Newspaper size={14} /> },
-  product_review: { label: "Ürün İnceleme", icon: <ShoppingBag size={14} /> },
-};
-
-const STATUS_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "Tümü" },
-  { value: "queued", label: "Kuyrukta" },
-  { value: "running", label: "Çalışıyor" },
-  { value: "completed", label: "Tamamlandı" },
-  { value: "failed", label: "Başarısız" },
-  { value: "cancelled", label: "İptal" },
-];
-
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function AdminJobs() {
   const navigate = useNavigate();
-  const { jobs, totalJobs, loading, error, fetchJobs, cancelJob } = useJobStore();
+  const { jobs, totalJobs, loading, error, fetchJobs, cancelJob, connectGlobalStream } = useJobStore();
   const { deleteJob } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
@@ -114,6 +61,16 @@ export default function AdminJobs() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Global SSE stream — mount'ta bağlan, unmount'ta kapat
+  // Polling yok: job değişikliklerinde liste reaktif güncellenir
+  useEffect(() => {
+    const closeStream = connectGlobalStream();
+    return () => {
+      closeStream();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleFilterChange(type: "status" | "module", value: string) {
     setPage(1);
@@ -229,16 +186,27 @@ export default function AdminJobs() {
           ))}
         </div>
 
-        <select
-          value={moduleFilter}
-          onChange={(e) => handleFilterChange("module", e.target.value)}
-          className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
-        >
-          <option value="">Tüm Modüller</option>
-          <option value="standard_video">Standart Video</option>
-          <option value="news_bulletin">Haber Bülteni</option>
-          <option value="product_review">Ürün İnceleme</option>
-        </select>
+        <div className="flex rounded-lg border border-border overflow-hidden">
+          {[
+            { value: "", label: "Tüm Modüller" },
+            { value: "standard_video", label: "Standart Video" },
+            { value: "news_bulletin", label: "Haber Bülteni" },
+            { value: "product_review", label: "Ürün İnceleme" },
+          ].map((f) => (
+            <button
+              key={f.value}
+              onClick={() => handleFilterChange("module", f.value)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium transition-colors",
+                moduleFilter === f.value
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Tablo */}
@@ -337,9 +305,10 @@ function AdminJobRow({
   isCancelling: boolean;
 }) {
   const statusCfg = STATUS_CONFIG[job.status];
-  const modInfo = MODULE_INFO[job.module_key] ?? {
-    label: job.module_key,
-    icon: <Video size={14} />,
+  const modMeta = MODULE_INFO[job.module_key];
+  const modInfo = {
+    label: modMeta?.label ?? job.module_key,
+    icon: getModuleIcon(job.module_key, 14),
   };
 
   const isActive = job.status === "queued" || job.status === "running";
@@ -372,7 +341,6 @@ function AdminJobRow({
           statusCfg.bg
         )}
       >
-        {statusCfg.icon}
         <span className="hidden sm:inline">{statusCfg.label}</span>
       </span>
 

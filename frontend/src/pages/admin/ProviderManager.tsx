@@ -1,11 +1,10 @@
 /**
  * ProviderManager — Provider (sağlayıcı) yönetimi sayfası.
  *
- * scope="provider" olan ayarların yönetimi.
- * LLM, TTS ve Görsel sağlayıcılarının:
- *   • API anahtarlarını (maskeli input)
- *   • Model/voice tercihlerini
- *   • Fallback öncelik sırasını yönetir
+ * Faz 10.7 değişiklikleri:
+ *   • Trash2 / delete butonları TAMAMEN kaldırıldı
+ *   • FallbackOrderEditor: serbest metin yerine checkbox multi-select
+ *   • Kullanıcı provider anahtarlarını ezberlemek zorunda değil
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -13,19 +12,16 @@ import {
   Plug,
   Eye,
   EyeOff,
-  Plus,
-  Trash2,
   Loader2,
   AlertCircle,
   RefreshCw,
   Save,
-  X,
   ChevronDown,
   ChevronUp,
-  GripVertical,
   Cpu,
   Mic,
   ImageIcon,
+  CheckCircle2,
 } from "lucide-react";
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -43,13 +39,22 @@ interface ProviderDef {
 
 const PROVIDERS: ProviderDef[] = [
   {
-    key: "gemini",
-    label: "Google Gemini",
+    key: "kieai",
+    label: "kie.ai (Gemini 2.5 Flash)",
     category: "llm",
-    description: "Script ve metadata üretimi için LLM",
+    description: "Birincil LLM — OpenAI-uyumlu Gemini 2.5 Flash proxy",
+    commonKeys: [
+      { key: "api_key", label: "API Key", sensitive: true, placeholder: "kie-..." },
+    ],
+  },
+  {
+    key: "gemini",
+    label: "Google Gemini (Yedek)",
+    category: "llm",
+    description: "Google Gemini API — kie.ai başarısız olursa yedek",
     commonKeys: [
       { key: "api_key", label: "API Key", sensitive: true, placeholder: "AIza..." },
-      { key: "model", label: "Model", placeholder: "gemini-2.5-flash" },
+      { key: "model", label: "Model", placeholder: "gemini-2.0-flash" },
     ],
   },
   {
@@ -119,20 +124,36 @@ const CATEGORY_CONFIG: Record<string, { label: string; icon: React.ReactNode; co
   visuals: { label: "Görseller", icon: <ImageIcon size={16} />, color: "text-emerald-400" },
 };
 
+// Fallback seçenekleri — kullanıcı dostu isimlerle
+const FALLBACK_OPTIONS = {
+  tts: [
+    { value: "edge_tts", label: "Edge TTS (Ücretsiz)" },
+    { value: "elevenlabs", label: "ElevenLabs (Premium)" },
+    { value: "openai_tts", label: "OpenAI TTS" },
+  ],
+  llm: [
+    { value: "kieai", label: "kie.ai (Gemini Proxy)" },
+    { value: "gemini", label: "Google Gemini (Native)" },
+    { value: "openai_llm", label: "OpenAI LLM" },
+  ],
+  visuals: [
+    { value: "pexels", label: "Pexels (Stok Video)" },
+    { value: "pixabay", label: "Pixabay" },
+  ],
+};
+
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function ProviderManager() {
-  const { settings, loading, error, fetchSettings, createSetting, updateSetting, deleteSetting } =
+  const { settings, loading, error, fetchSettings, createSetting, updateSetting } =
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
   const [selectedProvider, setSelectedProvider] = useState<string>("gemini");
   const [expandedProvider, setExpandedProvider] = useState<string | null>("gemini");
 
-  // Provider ayarları cache
-  const [providerSettingsMap, setProviderSettingsMap] = useState<Record<string, SettingRecord[]>>(
-    {}
-  );
+  const [providerSettingsMap, setProviderSettingsMap] = useState<Record<string, SettingRecord[]>>({});
+  const [adminSettings, setAdminSettings] = useState<SettingRecord[]>([]);
 
   const loadProviderSettings = useCallback(
     async (providerKey: string) => {
@@ -140,6 +161,24 @@ export default function ProviderManager() {
     },
     [fetchSettings]
   );
+
+  // Mount'ta admin ayarlarını çek (FallbackOrderEditor için)
+  useEffect(() => {
+    (async () => {
+      const pin = localStorage.getItem("cm-admin-pin") ?? "0000";
+      const query = new URLSearchParams({ scope: "admin", scope_id: "" });
+      try {
+        const { api: apiClient } = await import("@/api/client");
+        const data = await apiClient.get<SettingRecord[]>(
+          `/settings?${query.toString()}`,
+          { adminPin: pin }
+        );
+        setAdminSettings(data);
+      } catch {
+        // sessizce devam
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     loadProviderSettings(selectedProvider);
@@ -161,7 +200,6 @@ export default function ProviderManager() {
     }
   }
 
-  // Kategorilere göre grupla
   const categories = ["llm", "tts", "visuals"] as const;
 
   return (
@@ -182,9 +220,9 @@ export default function ProviderManager() {
         </button>
       </div>
 
-      {/* Fallback sırası bilgisi */}
+      {/* Fallback sırası — multi-select */}
       <div className="rounded-xl border border-border bg-card p-4">
-        <FallbackOrderEditor addToast={addToast} />
+        <FallbackOrderEditor adminSettings={adminSettings} addToast={addToast} />
       </div>
 
       {/* Hata */}
@@ -219,7 +257,6 @@ export default function ProviderManager() {
                     key={provider.key}
                     className="rounded-xl border border-border bg-card overflow-hidden"
                   >
-                    {/* Provider başlık */}
                     <button
                       onClick={() => handleToggleExpand(provider.key)}
                       className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-accent/30 transition-colors"
@@ -229,7 +266,6 @@ export default function ProviderManager() {
                         <p className="text-xs text-muted-foreground">{provider.description}</p>
                       </div>
 
-                      {/* Ayar sayısı */}
                       {provSettings.length > 0 && (
                         <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
                           {provSettings.length} ayar
@@ -243,7 +279,6 @@ export default function ProviderManager() {
                       )}
                     </button>
 
-                    {/* Provider ayarları */}
                     {isExpanded && (
                       <ProviderSettingsPanel
                         provider={provider}
@@ -279,15 +314,41 @@ function ProviderSettingsPanel({
   const { createSetting, updateSetting, deleteSetting } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
-  const [showCustomAdd, setShowCustomAdd] = useState(false);
-  const [customKey, setCustomKey] = useState("");
-  const [customValue, setCustomValue] = useState("");
-  const [customAddLoading, setCustomAddLoading] = useState(false);
-
   async function handleSaveKey(key: string, value: string) {
     const existingSetting = providerSettings.find((s) => s.key === key);
+    const trimmed = value.trim();
+
+    // Boş değer → kaydı sil (unset)
+    if (trimmed === "") {
+      if (existingSetting) {
+        const ok = await deleteSetting(existingSetting.id);
+        if (ok) {
+          addToast({ type: "info", title: "Ayar silindi", description: `${provider.label}: ${key} kaldırıldı.` });
+          onReload();
+        } else {
+          addToast({ type: "error", title: "Silinemedi" });
+        }
+        // API key ise admin scope'daki kopyayı da temizle
+        if (key === "api_key") {
+          // admin scope kopyasını silmeye çalış — hata sessizce görmezden gelinir
+          try {
+            const pin = localStorage.getItem("cm-admin-pin") ?? "0000";
+            const q = new URLSearchParams({ scope: "admin", scope_id: "" });
+            const existing = await fetch(`/api/settings?${q.toString()}`, {
+              headers: { "X-Admin-Pin": pin },
+            }).then((r) => r.json() as Promise<SettingRecord[]>);
+            const adminRecord = existing.find((r) => r.key === `${provider.key}_api_key`);
+            if (adminRecord) {
+              await deleteSetting(adminRecord.id);
+            }
+          } catch { /* sessiz */ }
+        }
+      }
+      return;
+    }
+
     if (existingSetting) {
-      const result = await updateSetting(existingSetting.id, { value });
+      const result = await updateSetting(existingSetting.id, { value: trimmed });
       if (result) {
         addToast({ type: "success", title: "Güncellendi", description: `${provider.label}: ${key}` });
         onReload();
@@ -299,7 +360,7 @@ function ProviderSettingsPanel({
         scope: "provider",
         scope_id: provider.key,
         key,
-        value,
+        value: trimmed,
         locked: key === "api_key",
         description: `${provider.label} ${key}`,
       });
@@ -310,24 +371,19 @@ function ProviderSettingsPanel({
         addToast({ type: "error", title: "Kaydedilemedi" });
       }
     }
-  }
 
-  async function handleDeleteKey(setting: SettingRecord) {
-    const ok = await deleteSetting(setting.id);
-    if (ok) {
-      addToast({ type: "success", title: "Silindi", description: `${provider.label}: ${setting.key}` });
-      onReload();
+    // API key ise: admin scope'a da senkronize et
+    if (key === "api_key") {
+      const globalKey = `${provider.key}_api_key`;
+      await createSetting({
+        scope: "admin",
+        scope_id: "",
+        key: globalKey,
+        value: trimmed,
+        locked: true,
+        description: `${provider.label} API anahtarı (provider panelinden senkronize)`,
+      });
     }
-  }
-
-  async function handleCustomAdd() {
-    if (!customKey.trim()) return;
-    setCustomAddLoading(true);
-    await handleSaveKey(customKey.trim(), customValue);
-    setCustomAddLoading(false);
-    setCustomKey("");
-    setCustomValue("");
-    setShowCustomAdd(false);
   }
 
   return (
@@ -339,7 +395,6 @@ function ProviderSettingsPanel({
         </div>
       ) : (
         <>
-          {/* Bilinen anahtarlar */}
           {provider.commonKeys.map((ck) => {
             const existingSetting = providerSettings.find((s) => s.key === ck.key);
             const currentValue = existingSetting
@@ -357,14 +412,11 @@ function ProviderSettingsPanel({
                 sensitive={ck.sensitive}
                 placeholder={ck.placeholder}
                 onSave={(val) => handleSaveKey(ck.key, val)}
-                onDelete={
-                  existingSetting ? () => handleDeleteKey(existingSetting) : undefined
-                }
               />
             );
           })}
 
-          {/* Veritabanında olan ama commonKeys'te tanımlı olmayan ek ayarlar */}
+          {/* DB'deki ek ayarlar (commonKeys'te olmayanlar) */}
           {providerSettings
             .filter((s) => !provider.commonKeys.some((ck) => ck.key === s.key))
             .map((s) => (
@@ -375,53 +427,16 @@ function ProviderSettingsPanel({
                 value={typeof s.value === "string" ? s.value : JSON.stringify(s.value)}
                 sensitive={s.key.includes("key") || s.key.includes("secret")}
                 onSave={(val) => handleSaveKey(s.key, val)}
-                onDelete={() => handleDeleteKey(s)}
               />
             ))}
 
-          {/* Özel ayar ekle */}
-          {showCustomAdd ? (
-            <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/50">
-              <input
-                value={customKey}
-                onChange={(e) => setCustomKey(e.target.value)}
-                placeholder="Anahtar"
-                className="w-32 rounded border border-border bg-input px-2 py-1.5 text-xs text-foreground outline-none"
-              />
-              <input
-                value={customValue}
-                onChange={(e) => setCustomValue(e.target.value)}
-                placeholder="Değer"
-                onKeyDown={(e) => e.key === "Enter" && handleCustomAdd()}
-                className="flex-1 rounded border border-border bg-input px-2 py-1.5 text-xs text-foreground outline-none"
-              />
-              <button
-                onClick={handleCustomAdd}
-                disabled={customAddLoading || !customKey.trim()}
-                className="shrink-0 rounded bg-primary px-2.5 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
-              >
-                {customAddLoading ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
-              </button>
-              <button onClick={() => setShowCustomAdd(false)} className="text-muted-foreground">
-                <X size={12} />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowCustomAdd(true)}
-              className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-            >
-              <Plus size={12} />
-              Özel Ayar Ekle
-            </button>
-          )}
         </>
       )}
     </div>
   );
 }
 
-// ─── Provider Anahtar Satırı ────────────────────────────────────────────────
+// ─── Provider Anahtar Satırı (Trash2 kaldırıldı) ───────────────────────────
 
 function ProviderKeyRow({
   label,
@@ -430,7 +445,6 @@ function ProviderKeyRow({
   sensitive,
   placeholder,
   onSave,
-  onDelete,
 }: {
   label: string;
   fieldKey: string;
@@ -438,14 +452,13 @@ function ProviderKeyRow({
   sensitive?: boolean;
   placeholder?: string;
   onSave: (value: string) => void;
-  onDelete?: () => void;
 }) {
   const [editValue, setEditValue] = useState(value);
   const [showSensitive, setShowSensitive] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  // value prop değişince senkronla
   useEffect(() => {
     setEditValue(value);
     setDirty(false);
@@ -461,6 +474,8 @@ function ProviderKeyRow({
     onSave(editValue);
     setSaving(false);
     setDirty(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
 
   return (
@@ -489,51 +504,88 @@ function ProviderKeyRow({
         )}
       </div>
 
-      {/* Kaydet butonu (sadece değişiklik varsa) */}
-      {dirty && (
+      {/* Kaydet / Kaydedildi butonu */}
+      {(dirty || saved) && (
         <button
           onClick={handleSave}
-          disabled={saving}
-          className="shrink-0 flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs text-primary-foreground disabled:opacity-50 transition-colors"
+          disabled={saving || (!dirty && !saved)}
+          className={cn(
+            "shrink-0 flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs transition-all",
+            saved && !dirty
+              ? "bg-emerald-500/15 text-emerald-400"
+              : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          )}
         >
-          {saving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
-        </button>
-      )}
-
-      {/* Sil */}
-      {onDelete && (
-        <button
-          onClick={onDelete}
-          className="shrink-0 text-muted-foreground hover:text-red-400 transition-colors"
-        >
-          <Trash2 size={12} />
+          {saving ? (
+            <Loader2 size={10} className="animate-spin" />
+          ) : saved && !dirty ? (
+            <CheckCircle2 size={10} />
+          ) : (
+            <Save size={10} />
+          )}
         </button>
       )}
     </div>
   );
 }
 
-// ─── Fallback Sıra Düzenleyici ──────────────────────────────────────────────
+// ─── Fallback Sıra Düzenleyici (Multi-Select) ──────────────────────────────
 
 function FallbackOrderEditor({
+  adminSettings,
   addToast,
 }: {
+  adminSettings: SettingRecord[];
   addToast: (t: { type: string; title: string; description?: string }) => void;
 }) {
   const { createSetting } = useAdminStore();
 
-  const [ttsOrder, setTtsOrder] = useState("edge_tts,elevenlabs,openai_tts");
-  const [llmOrder, setLlmOrder] = useState("gemini,openai_llm");
-  const [visualsOrder, setVisualsOrder] = useState("pexels,pixabay");
+  // Başlangıç state'leri BOŞ — DB'den gelince doldur
+  const [ttsSelected, setTtsSelected] = useState<string[]>([]);
+  const [llmSelected, setLlmSelected] = useState<string[]>([]);
+  const [visualsSelected, setVisualsSelected] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // DB değerlerini (adminSettings prop'u değişince) sync et
+  useEffect(() => {
+    for (const setting of adminSettings) {
+      const val = Array.isArray(setting.value)
+        ? (setting.value as string[])
+        : typeof setting.value === "string"
+          ? setting.value.split(",").map((s: string) => s.trim()).filter(Boolean)
+          : [];
+      if (setting.key === "tts_fallback_order") setTtsSelected(val);
+      if (setting.key === "llm_fallback_order") setLlmSelected(val);
+      if (setting.key === "visuals_fallback_order") setVisualsSelected(val);
+    }
+  }, [adminSettings]);
+
+  // isDirty: DB'deki değerlerle karşılaştır
+  function getDbVal(key: string): string[] {
+    const setting = adminSettings.find((s) => s.key === key);
+    if (!setting) return [];
+    if (Array.isArray(setting.value)) return setting.value as string[];
+    if (typeof setting.value === "string")
+      return setting.value.split(",").map((s) => s.trim()).filter(Boolean);
+    return [];
+  }
+
+  const arrEq = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((v, i) => v === b[i]);
+
+  const isDirty =
+    !arrEq(ttsSelected, getDbVal("tts_fallback_order")) ||
+    !arrEq(llmSelected, getDbVal("llm_fallback_order")) ||
+    !arrEq(visualsSelected, getDbVal("visuals_fallback_order"));
 
   async function handleSaveFallback() {
     setSaving(true);
 
     const orders = [
-      { key: "tts_fallback_order", value: ttsOrder.split(",").map((s) => s.trim()) },
-      { key: "llm_fallback_order", value: llmOrder.split(",").map((s) => s.trim()) },
-      { key: "visuals_fallback_order", value: visualsOrder.split(",").map((s) => s.trim()) },
+      { key: "tts_fallback_order", value: ttsSelected },
+      { key: "llm_fallback_order", value: llmSelected },
+      { key: "visuals_fallback_order", value: visualsSelected },
     ];
 
     let allOk = true;
@@ -551,56 +603,145 @@ function FallbackOrderEditor({
 
     setSaving(false);
     if (allOk) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
       addToast({ type: "success", title: "Fallback sırası kaydedildi" });
     } else {
       addToast({ type: "error", title: "Kaydedilemedi" });
     }
   }
 
-  return (
-    <div className="space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-        Fallback Sırası
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Provider başarısız olduğunda sıradaki denenir. Virgülle ayrılmış provider anahtarları girin.
-      </p>
+  function toggleOption(
+    current: string[],
+    setter: (v: string[]) => void,
+    value: string
+  ) {
+    if (current.includes(value)) {
+      setter(current.filter((s) => s !== value));
+    } else {
+      setter([...current, value]);
+    }
+  }
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          <label className="w-20 shrink-0 text-xs text-muted-foreground">TTS</label>
-          <input
-            value={ttsOrder}
-            onChange={(e) => setTtsOrder(e.target.value)}
-            className="flex-1 rounded-lg border border-border bg-input px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring font-mono"
-          />
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+            Fallback Sırası
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Provider başarısız olduğunda sıradaki denenir. Aktif olanları seçin.
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <label className="w-20 shrink-0 text-xs text-muted-foreground">LLM</label>
-          <input
-            value={llmOrder}
-            onChange={(e) => setLlmOrder(e.target.value)}
-            className="flex-1 rounded-lg border border-border bg-input px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring font-mono"
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <label className="w-20 shrink-0 text-xs text-muted-foreground">Görseller</label>
-          <input
-            value={visualsOrder}
-            onChange={(e) => setVisualsOrder(e.target.value)}
-            className="flex-1 rounded-lg border border-border bg-input px-3 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring font-mono"
-          />
-        </div>
+        <button
+          onClick={handleSaveFallback}
+          disabled={saving || !isDirty}
+          className={cn(
+            "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
+            saved && !isDirty
+              ? "bg-emerald-500/15 text-emerald-400"
+              : isDirty
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+          )}
+        >
+          {saving ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : saved && !isDirty ? (
+            <CheckCircle2 size={12} />
+          ) : (
+            <Save size={12} />
+          )}
+          {saved && !isDirty ? "Kaydedildi" : "Sırayı Kaydet"}
+        </button>
       </div>
 
-      <button
-        onClick={handleSaveFallback}
-        disabled={saving}
-        className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-      >
-        {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-        Sırayı Kaydet
-      </button>
+      <div className="space-y-3">
+        {/* TTS */}
+        <FallbackGroup
+          label="TTS"
+          icon={<Mic size={12} />}
+          iconColor="text-blue-400"
+          options={FALLBACK_OPTIONS.tts}
+          selected={ttsSelected}
+          onToggle={(v) => toggleOption(ttsSelected, setTtsSelected, v)}
+        />
+
+        {/* LLM */}
+        <FallbackGroup
+          label="LLM"
+          icon={<Cpu size={12} />}
+          iconColor="text-purple-400"
+          options={FALLBACK_OPTIONS.llm}
+          selected={llmSelected}
+          onToggle={(v) => toggleOption(llmSelected, setLlmSelected, v)}
+        />
+
+        {/* Görseller */}
+        <FallbackGroup
+          label="Görseller"
+          icon={<ImageIcon size={12} />}
+          iconColor="text-emerald-400"
+          options={FALLBACK_OPTIONS.visuals}
+          selected={visualsSelected}
+          onToggle={(v) => toggleOption(visualsSelected, setVisualsSelected, v)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FallbackGroup({
+  label,
+  icon,
+  iconColor,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  iconColor: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className={cn("flex items-center gap-1 w-20 shrink-0", iconColor)}>
+        {icon}
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const active = selected.includes(opt.value);
+          const order = selected.indexOf(opt.value) + 1;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onToggle(opt.value)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-all",
+                active
+                  ? "border-primary/50 bg-primary/15 text-primary"
+                  : "border-border bg-input text-muted-foreground hover:border-border/80 hover:text-foreground"
+              )}
+            >
+              {active && (
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
+                  {order}
+                </span>
+              )}
+              {!active && (
+                <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+              )}
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
