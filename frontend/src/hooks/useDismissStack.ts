@@ -34,20 +34,31 @@ interface DismissEntry {
 
 let _entryCounter = 0;
 const _stack: DismissEntry[] = [];
+// Hızlı çift-ESC koruması: callback çalışırken ikinci ESC'yi engeller
+let _firing = false;
 
 function _handleEsc(e: KeyboardEvent) {
   if (e.key !== "Escape" && e.key !== "Esc") return;
   if (_stack.length === 0) return;
 
-  // En yüksek öncelikli (sonradan eklenen) entry'yi çalıştır
-  const sorted = [..._stack].sort((a, b) => b.priority - a.priority);
-  const top = sorted[0];
-
   // Radix Dialog'un kendi ESC'sini işleyip işlemediğini kontrol et
   // Eğer defaultPrevented ise (Radix işledi), bizim handler çalışmaz
   if (e.defaultPrevented) return;
 
-  top.callback();
+  // Hızlı art arda ESC: önceki callback henüz yığını güncellemediyse çift tetikleme engelle
+  if (_firing) return;
+
+  // En yüksek öncelikli entry'yi çalıştır
+  const sorted = [..._stack].sort((a, b) => b.priority - a.priority);
+  const top = sorted[0];
+
+  _firing = true;
+  try {
+    top.callback();
+  } finally {
+    // Mikrotask sonrasında sıfırla — React state güncellemeleri için süre tanı
+    Promise.resolve().then(() => { _firing = false; });
+  }
   // ESC'yi diğer handler'lardan koru
   e.stopPropagation();
 }
@@ -67,6 +78,7 @@ function _ensureListener() {
  */
 export function _clearDismissStackForTesting(): void {
   _stack.splice(0, _stack.length);
+  _firing = false;
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────

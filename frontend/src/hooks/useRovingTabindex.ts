@@ -77,6 +77,8 @@ export function useRovingTabindex({
   //   - autoFocus=true VE son navigasyon klavyeyse → DOM focus()
   //   - autoFocus=false VE son navigasyon klavyeyse → DOM focus() (klavye mod zorunlu)
   //   - son navigasyon fareyle ise → sadece tabIndex güncellenir, focus() yok
+  // DOM focus() çağrıldıktan sonra lastWasKeyboardRef sıfırlanır:
+  //   fare hover'ı focusedIdx'i değiştirdiğinde yanlışlıkla DOM focus() tetiklenmez.
   useEffect(() => {
     if (focusedIdx < 0) return;
     if (!lastWasKeyboardRef.current && !autoFocus) return;
@@ -84,6 +86,8 @@ export function useRovingTabindex({
     if (el && document.activeElement !== el) {
       el.focus({ preventScroll: true }); // scroll-into-view zaten useScopedKeyboardNavigation'da
     }
+    // Klavye flag'ini sıfırla — bir sonraki fare hover'ında focus() tetiklenmesin
+    lastWasKeyboardRef.current = false;
   }, [focusedIdx, autoFocus, getRow]);
 
   const getTabIndex = useCallback(

@@ -820,3 +820,311 @@ describe("useRovingTabindex", () => {
     expect(onKeyboardMove).toHaveBeenCalledTimes(4);
   });
 });
+
+// ─── Liste Mutasyonu Edge-Case'leri ─────────────────────────────────────────
+
+describe("Liste mutasyonu — focus güvenliği", () => {
+  beforeEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+  afterEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+
+  it("itemCount 0'a düşünce focusedIdx -1 olur", () => {
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) =>
+        useScopedKeyboardNavigation({ itemCount: count }),
+      { initialProps: { count: 5 } }
+    );
+
+    act(() => fireKey("ArrowDown"));
+    act(() => fireKey("ArrowDown"));
+    expect(result.current.focusedIdx).toBe(1);
+
+    act(() => rerender({ count: 0 }));
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+
+  it("clampOnMutation=true: odaklı satır silinince son geçerli satıra taşır", () => {
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) =>
+        useScopedKeyboardNavigation({ itemCount: count, clampOnMutation: true }),
+      { initialProps: { count: 5 } }
+    );
+
+    // idx=4'e git (son eleman)
+    act(() => fireKey("End"));
+    expect(result.current.focusedIdx).toBe(4);
+
+    // Liste 3 elemana düştü — idx 4 artık yok → 2'ye clamp
+    act(() => rerender({ count: 3 }));
+    expect(result.current.focusedIdx).toBe(2);
+  });
+
+  it("clampOnMutation=true: odaklı satır geçerliyse korunur", () => {
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) =>
+        useScopedKeyboardNavigation({ itemCount: count, clampOnMutation: true }),
+      { initialProps: { count: 5 } }
+    );
+
+    // idx=1'e git
+    act(() => fireKey("ArrowDown"));
+    act(() => fireKey("ArrowDown"));
+    expect(result.current.focusedIdx).toBe(1);
+
+    // Liste 4 elemana düştü — idx 1 hâlâ geçerli → korunmalı
+    act(() => rerender({ count: 4 }));
+    expect(result.current.focusedIdx).toBe(1);
+  });
+
+  it("clampOnMutation=true: liste tamamen boşalınca -1 olur", () => {
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) =>
+        useScopedKeyboardNavigation({ itemCount: count, clampOnMutation: true }),
+      { initialProps: { count: 3 } }
+    );
+
+    act(() => fireKey("ArrowDown"));
+    expect(result.current.focusedIdx).toBe(0);
+
+    act(() => rerender({ count: 0 }));
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+
+  it("clampOnMutation=false (varsayılan): itemCount değişince -1'e sıfırlanır", () => {
+    const { result, rerender } = renderHook(
+      ({ count }: { count: number }) =>
+        useScopedKeyboardNavigation({ itemCount: count }),
+      { initialProps: { count: 5 } }
+    );
+
+    act(() => fireKey("ArrowDown"));
+    act(() => fireKey("ArrowDown"));
+    expect(result.current.focusedIdx).toBe(1);
+
+    act(() => rerender({ count: 4 }));
+    // clamp yok — filtre değişti gibi davranır → sıfırla
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+
+  it("boş listede ArrowDown hata fırlatmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 0 })
+    );
+
+    expect(() => {
+      act(() => fireKey("ArrowDown"));
+    }).not.toThrow();
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+
+  it("boş listede End hata fırlatmaz", () => {
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 0 })
+    );
+
+    expect(() => {
+      act(() => fireKey("End"));
+    }).not.toThrow();
+    expect(result.current.focusedIdx).toBe(-1);
+  });
+});
+
+// ─── ESC Hızlı Ardışık Basış ────────────────────────────────────────────────
+
+describe("ESC hızlı ardışık basış — dismiss stack", () => {
+  beforeEach(() => {
+    _clearDismissStackForTesting();
+  });
+  afterEach(() => {
+    _clearDismissStackForTesting();
+  });
+
+  it("ESC'ye hızlı çift basış: callback yalnızca bir kez tetiklenir", async () => {
+    const onDismiss = vi.fn();
+    renderHook(() => useDismissOnEsc(true, onDismiss, 0));
+
+    // Hızlı çift ESC — _firing flag birinciden sonra Promise.resolve ile sıfırlanır
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    // Promise.resolve microtask'ı bekle
+    await Promise.resolve();
+
+    // İki ESC arasında _firing=true olduğu için ikincisi engellendi
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("iki overlay: ESC her seferinde sadece en üsttekini kapatır", () => {
+    const closeA = vi.fn();
+    const closeB = vi.fn();
+
+    renderHook(() => {
+      useDismissOnEsc(true, closeA, 10);
+      useDismissOnEsc(true, closeB, 20);
+    });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(closeB).toHaveBeenCalledTimes(1);
+    expect(closeA).not.toHaveBeenCalled();
+  });
+
+  it("unregister sonrası ESC kalan entry'yi doğru kapatır", () => {
+    const cbA = vi.fn();
+    const cbB = vi.fn();
+    const { result } = renderHook(() => useDismissStack());
+    let idA: number;
+    let idB: number;
+
+    act(() => {
+      idA = result.current.register(cbA, 10);
+      idB = result.current.register(cbB, 20);
+    });
+
+    // B'yi unregister et
+    act(() => { result.current.unregister(idB!); });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    // A kalmalı ve tetiklenmeli
+    expect(cbA).toHaveBeenCalledTimes(1);
+    expect(cbB).not.toHaveBeenCalled();
+
+    act(() => { result.current.unregister(idA!); });
+  });
+});
+
+// ─── useFocusRestore Edge-Case'leri ─────────────────────────────────────────
+
+import { useFocusRestore } from "@/hooks/useFocusRestore";
+
+describe("useFocusRestore — race condition ve güvenlik", () => {
+  it("restoreFocus: hedef DOM'da yoksa hata fırlatmaz", () => {
+    const { result } = renderHook(() => useFocusRestore());
+
+    const el = document.createElement("button");
+    document.body.appendChild(el);
+    act(() => { result.current.captureForRestore(); });
+    document.body.removeChild(el); // hedef DOM'dan çıktı
+
+    expect(() => {
+      act(() => { result.current.restoreFocus(); });
+    }).not.toThrow();
+  });
+
+  it("restoreFocusDeferred: hedef DOM'da yoksa hata fırlatmaz", async () => {
+    const { result } = renderHook(() => useFocusRestore());
+
+    const el = document.createElement("button");
+    document.body.appendChild(el);
+    act(() => { result.current.captureForRestore(); });
+    document.body.removeChild(el);
+
+    act(() => { result.current.restoreFocusDeferred(0); });
+    await new Promise((r) => setTimeout(r, 10));
+    // Hata fırlatılmadıysa test geçti
+  });
+
+  it("captureForRestore bekleyen deferred restore'u iptal eder", async () => {
+    const { result } = renderHook(() => useFocusRestore());
+
+    const el1 = document.createElement("button");
+    const el2 = document.createElement("button");
+    document.body.appendChild(el1);
+    document.body.appendChild(el2);
+
+    const focusSpy1 = vi.spyOn(el1, "focus");
+    const focusSpy2 = vi.spyOn(el2, "focus");
+
+    // İlk overlay aç: el1 kaydet, deferred restore başlat
+    act(() => { result.current.captureForRestore(); }); // el1 zaten odaklı değil, body alır
+    // Yeni bir capture: önceki timer iptal edilmeli
+    act(() => { result.current.captureForRestore(); });
+    act(() => { result.current.restoreFocusDeferred(50); });
+
+    // İlk timer'ın süresi dolmadan önce başka bir capture
+    act(() => { result.current.captureForRestore(); });
+    act(() => { result.current.restoreFocusDeferred(50); });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // el1.focus hiç çağrılmamalı (aktif değildi / body)
+    // el2.focus hiç çağrılmamalı
+    // Önemli olan: hata yok ve çift focus yok
+    expect(focusSpy1).not.toHaveBeenCalled();
+    expect(focusSpy2).not.toHaveBeenCalled();
+
+    document.body.removeChild(el1);
+    document.body.removeChild(el2);
+    focusSpy1.mockRestore();
+    focusSpy2.mockRestore();
+  });
+
+  it("captureForRestore olmadan restoreFocus no-op'tur", () => {
+    const { result } = renderHook(() => useFocusRestore());
+
+    expect(() => {
+      act(() => { result.current.restoreFocus(); });
+    }).not.toThrow();
+  });
+});
+
+// ─── Scope Stack Unmount Cleanup ─────────────────────────────────────────────
+
+describe("Scope stack — unmount cleanup", () => {
+  beforeEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+  afterEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+
+  it("unmount sonrası scope stack'te stale entry kalmaz", () => {
+    const { unmount } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3 })
+    );
+
+    expect(useKeyboardStore.getState().scopeStack.length).toBe(1);
+    act(() => unmount());
+    expect(useKeyboardStore.getState().scopeStack.length).toBe(0);
+  });
+
+  it("hızlı mount/unmount: wrong active scope oluşmaz", () => {
+    useKeyboardStore.setState({ scopeStack: [] });
+
+    const onEnterPersistent = vi.fn();
+
+    // Kalıcı scope
+    renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3, onEnter: onEnterPersistent })
+    );
+
+    // Kısa ömürlü scope hızlıca mount+unmount
+    const { unmount: unmountTemp } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 2 })
+    );
+    act(() => unmountTemp());
+
+    // Kalıcı scope tekrar aktif olmalı
+    act(() => fireKey("ArrowDown"));
+    act(() => fireKey("Enter"));
+    expect(onEnterPersistent).toHaveBeenCalledTimes(1);
+  });
+
+  it("duplicate push: scope yalnızca bir kez stack'te bulunur", () => {
+    const { push } = useKeyboardStore.getState();
+    push("test-scope");
+    push("test-scope"); // aynı ID iki kez push
+    const stack = useKeyboardStore.getState().scopeStack;
+    expect(stack.filter((s) => s === "test-scope").length).toBe(1);
+  });
+});

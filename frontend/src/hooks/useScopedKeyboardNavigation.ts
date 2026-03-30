@@ -80,6 +80,13 @@ export interface ScopedKeyboardNavigationOptions {
    * useRovingTabindex().notifyKeyboard ile bağlayarak gerçek DOM focus() sağlayın.
    */
   onKeyboardMove?: () => void;
+  /**
+   * true → itemCount düştüğünde focusedIdx sıfırlanmak yerine clamp edilir.
+   * Kullanım: silme / iptal gibi dataset mutasyonları için uygundur.
+   * Filtre veya sayfalama değişikliklerinde false bırakın (içerik tamamen değişir).
+   * @default false
+   */
+  clampOnMutation?: boolean;
   /** Scroll-into-view için liste container ref'i */
   scrollRef?: React.RefObject<HTMLElement | null>;
 }
@@ -109,6 +116,7 @@ export function useScopedKeyboardNavigation(
     onArrowRight,
     onArrowLeft,
     onKeyboardMove,
+    clampOnMutation = false,
     scrollRef,
   } = opts;
 
@@ -131,9 +139,11 @@ export function useScopedKeyboardNavigation(
   const onArrowRightRef     = useRef(onArrowRight);
   const onArrowLeftRef      = useRef(onArrowLeft);
   const onKeyboardMoveRef   = useRef(onKeyboardMove);
+  const clampOnMutationRef  = useRef(clampOnMutation);
 
   itemCountRef.current        = itemCount;
   focusedIdxRef.current       = focusedIdx;
+  clampOnMutationRef.current  = clampOnMutation;
   disabledRef.current         = disabled;
   loopRef.current             = loop;
   vimKeysRef.current          = vimKeys;
@@ -154,9 +164,21 @@ export function useScopedKeyboardNavigation(
     return () => pop(scopeId);
   }, [disabled, scopeId, push, pop]);
 
-  // itemCount değişince odağı sıfırla
+  // itemCount değişince odağı güncelle
+  // - clampOnMutation=false (varsayılan): -1'e sıfırla (filtre/sayfalama için güvenli)
+  // - clampOnMutation=true: odaklı satır silinmişse en yakın geçerli satıra taşı
   useEffect(() => {
-    setFocusedIdx(-1);
+    setFocusedIdx((prev) => {
+      if (itemCount === 0) return -1;
+      if (clampOnMutationRef.current) {
+        // Odaklı satır hâlâ geçerliyse koru, değilse son satıra clamp et
+        if (prev < 0) return -1;
+        return Math.min(prev, itemCount - 1);
+      }
+      // Filtre/sayfalama: içerik tamamen değişti — sıfırla
+      return -1;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemCount]);
 
   // Scroll-into-view
@@ -168,19 +190,22 @@ export function useScopedKeyboardNavigation(
   }, [focusedIdx, scrollRef]);
 
   // Navigation helpers — ref üzerinden erişir
+  // count, updater içinde de itemCountRef'ten okunur → itemCount mutasyonu ile race yok
   const moveNext = useCallback(() => {
-    const count = itemCountRef.current;
-    if (count === 0) return;
+    if (itemCountRef.current === 0) return;
     setFocusedIdx((prev) => {
+      const count = itemCountRef.current;
+      if (count === 0) return -1;
       if (prev >= count - 1) return loopRef.current ? 0 : count - 1;
       return prev + 1;
     });
   }, []);
 
   const movePrev = useCallback(() => {
-    const count = itemCountRef.current;
-    if (count === 0) return;
+    if (itemCountRef.current === 0) return;
     setFocusedIdx((prev) => {
+      const count = itemCountRef.current;
+      if (count === 0) return -1;
       if (prev <= 0) return loopRef.current ? count - 1 : 0;
       return prev - 1;
     });

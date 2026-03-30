@@ -7,16 +7,12 @@
  * Çözüm: Modal açılmadan önce hangi elemanın odaklı olduğunu sakla.
  * Modal kapandığında o elemana geri dön.
  *
- * Kullanım (JobList'te):
- *   const { captureForRestore, restoreFocus } = useFocusRestore();
- *
- *   // Modal açılmadan önce:
- *   captureForRestore();
- *   setQuickLookJob(job);
- *
- *   // Modal kapandıktan sonra (onClose içinde):
- *   setQuickLookJob(null);
- *   restoreFocus();  // ya da restoreFocusDeferred() animate eden dialoglar için
+ * Race condition güvenliği:
+ * - Bekleyen deferred restore timer'ı, yeni captureForRestore veya yeni
+ *   restoreFocusDeferred çağrısında iptal edilir — iki timer çakışmaz.
+ * - Hedef eleman DOM'dan çıkmışsa (unmount, sayfalama, silme) restore
+ *   sessizce iptal olur, hata fırlatılmaz.
+ * - captureForRestore çağrısı olmadan restoreFocus no-op'tur.
  *
  * Not: Radix Dialog zaten kendi focus restoration'ını yapar (returnFocus prop).
  * Bu hook, Radix kullanılmayan paneller veya Radix'in restore edemediği
@@ -29,47 +25,67 @@ interface UseFocusRestoreReturn {
   /**
    * Şu an odaklı olan elemanı kaydet.
    * Modal açmadan ÖNCE çağrılmalı.
+   * Bekleyen deferred restore varsa iptal eder.
    */
   captureForRestore: () => void;
   /**
    * Kaydedilen elemana odağı geri ver.
-   * Modal kapandıktan SONRA (unmount animasyonu tamamlandıktan sonra) çağrılmalı.
+   * Modal kapandıktan SONRA çağrılmalı.
+   * Hedef DOM'da yoksa sessizce no-op.
    */
   restoreFocus: () => void;
   /**
    * restoreFocus'u belirli bir gecikmeyle çağırır.
    * Animasyonlu kapanış için: restoreFocusDeferred(150)
+   * Daha önce çağrılmış bekleyen timer iptal edilir.
    */
   restoreFocusDeferred: (ms?: number) => void;
 }
 
 export function useFocusRestore(): UseFocusRestoreReturn {
-  const savedRef = useRef<Element | null>(null);
+  const savedRef  = useRef<Element | null>(null);
+  const timerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const captureForRestore = useCallback(() => {
-    savedRef.current = document.activeElement;
+  /** Bekleyen deferred restore'u iptal et */
+  const cancelPending = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
   }, []);
 
+  const captureForRestore = useCallback(() => {
+    // Bekleyen restore timer'ını iptal et — eski hedef artık geçersiz
+    cancelPending();
+    savedRef.current = document.activeElement;
+  }, [cancelPending]);
+
   const restoreFocus = useCallback(() => {
+    cancelPending();
     const el = savedRef.current as HTMLElement | null;
+    savedRef.current = null;
+    // Hedef hâlâ DOM'daysa ve odaklanabilirse geri dön
     if (el && typeof el.focus === "function" && document.contains(el)) {
       el.focus({ preventScroll: true });
     }
-    savedRef.current = null;
-  }, []);
+  }, [cancelPending]);
 
   const restoreFocusDeferred = useCallback(
     (ms = 100) => {
+      // Önceki bekleyen timer'ı iptal et — tek timer garantisi
+      cancelPending();
       const el = savedRef.current;
       savedRef.current = null;
-      setTimeout(() => {
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
         const target = el as HTMLElement | null;
+        // Hedef DOM'da yoksa (unmount, sayfalama, silme) sessizce iptal
         if (target && typeof target.focus === "function" && document.contains(target)) {
           target.focus({ preventScroll: true });
         }
       }, ms);
     },
-    []
+    [cancelPending]
   );
 
   return { captureForRestore, restoreFocus, restoreFocusDeferred };
