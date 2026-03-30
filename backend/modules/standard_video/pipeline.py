@@ -220,11 +220,15 @@ async def step_metadata(
         f"Bu video için YouTube metadata üret."
     )
 
+    # Admin metadata prompt template override — boş değilse hardcoded instruction yerine kullan.
+    # Runner, "{module_key}_metadata_prompt" key'ini "metadata_prompt_template" olarak alias'lar.
+    metadata_instruction = (config.get("metadata_prompt_template") or "").strip() or _METADATA_SYSTEM_INSTRUCTION
+
     result = await provider_registry.execute_with_fallback(
         category="llm",
         input_data={
             "prompt": prompt,
-            "system_instruction": _METADATA_SYSTEM_INSTRUCTION,
+            "system_instruction": metadata_instruction,
             "response_format": "json",
             "temperature": 0.6,
             "max_output_tokens": 2048,

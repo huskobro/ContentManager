@@ -1,11 +1,13 @@
 # Admin Controls Map
-_Last updated: 2026-03-31_
+_Last updated: 2026-03-31 (wiring audit + fixes)_
 
 Maps every admin panel control to its concrete effect on the pipeline.
 Only settings that are actually read somewhere in the codebase are included.
+All wiring claims below were verified by source code audit (2026-03-31).
 Schema source: `frontend/src/lib/constants.ts` (`SYSTEM_SETTINGS_SCHEMA` +
 `PROMPT_SETTINGS_SCHEMA`). Pipeline wiring confirmed in `pipeline.py`,
-`config.py` (all modules), `subtitles.py`, and `settings_resolver.py`.
+`config.py` (all modules), `subtitles.py`, `composition.py`, `runner.py`,
+and `edge_tts_provider.py`.
 
 ---
 
@@ -53,7 +55,7 @@ Schema source: `frontend/src/lib/constants.ts` (`SYSTEM_SETTINGS_SCHEMA` +
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
 | `tts_voice` | select | `tr-TR-AhmetNeural` | Passed directly as `voice` in the TTS provider `input_data`. Available options: `tr-TR-AhmetNeural`, `tr-TR-EmelNeural`, `en-US-AriaNeural`, `en-US-GuyNeural`, `de-DE-ConradNeural`. |
-| `tts_speed` | number (0–3) | 1.0 | TTS speed multiplier. Per-module defaults: standard_video=1.0, news_bulletin=1.05, product_review=1.0. Passed to TTS provider. |
+| `tts_speed` | number (0–3) | 1.0 | TTS speed multiplier. Read by `edge_tts_provider.py:81` as `config.get("tts_speed", 1.0)` and applied as rate offset in Edge TTS synthesis. Other TTS providers (ElevenLabs, OpenAI) receive `config` but may not read this key — effect is guaranteed only for Edge TTS. Per-module defaults: standard_video=1.0, news_bulletin=1.05, product_review=1.0. |
 | `video_resolution` | select | `1920x1080` | Parsed by composition step to set Remotion `width` and `height`. Options: `1920x1080` (Full HD), `1080x1920` (Shorts/Vertical), `1280x720` (HD). |
 | `video_fps` | select | `30` | Passed to Remotion as `fps`. Options: 24, 30, 60. |
 | `subtitle_font_size` | number (24–96) | 48 | Written into the subtitles output JSON as `font_size` and consumed by Remotion for rendering subtitle text size. |
@@ -66,25 +68,22 @@ Schema source: `frontend/src/lib/constants.ts` (`SYSTEM_SETTINGS_SCHEMA` +
 ## Prompt Templates
 
 Admin-editable LLM prompt templates stored per module. When a template is set,
-it **replaces** the hardcoded `_SCRIPT_SYSTEM_INSTRUCTION` in `pipeline.py`.
-Unset (empty) → pipeline falls back to hardcoded instruction.
+it **replaces** the hardcoded system instruction. Unset (empty) → pipeline falls
+back to hardcoded instruction. All keys are aliased by `runner.py` from
+`{module_key}_{type}_prompt` → the config key the pipeline step reads.
 
-Supported placeholder variables are listed below (from `constants.ts` placeholders).
+| Admin Key | Module | Pipeline Config Key | Variables Supported | Wiring Status |
+|-----------|--------|---------------------|---------------------|---------------|
+| `standard_video_script_prompt` | `standard_video` | `script_prompt_template` | `{scene_count}`, `{language_name}` | **WIRED** — `standard_video/pipeline.py:step_script` |
+| `standard_video_metadata_prompt` | `standard_video` | `metadata_prompt_template` | _(free text, no required placeholders)_ | **WIRED** — `standard_video/pipeline.py:step_metadata` |
+| `news_bulletin_script_prompt` | `news_bulletin` | `script_prompt_template` | `{scene_count}`, `{language_name}` | **WIRED** — `news_bulletin/pipeline.py:step_script_bulletin` |
+| `news_bulletin_metadata_prompt` | `news_bulletin` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` from standard_video |
+| `product_review_script_prompt` | `product_review` | `script_prompt_template` | `{scene_count}`, `{pros_count}`, `{cons_count}`, `{score_range}`, `{language_name}` | **WIRED** — `product_review/pipeline.py:step_script_review` |
+| `product_review_metadata_prompt` | `product_review` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` from standard_video |
 
-| Admin Key | Module | Pipeline Config Key | Variables Supported |
-|-----------|--------|---------------------|---------------------|
-| `standard_video_script_prompt` | `standard_video` | `script_prompt_template` | `{scene_count}`, `{language_name}` (substituted in `step_script`); also `{topic}` per UI placeholder |
-| `standard_video_metadata_prompt` | `standard_video` | _(not yet confirmed wired in metadata step)_ | `{topic}`, `{script_summary}` |
-| `news_bulletin_script_prompt` | `news_bulletin` | `script_prompt_template` | `{news_items}` |
-| `news_bulletin_metadata_prompt` | `news_bulletin` | _(not yet confirmed wired in metadata step)_ | `{news_summary}` |
-| `product_review_script_prompt` | `product_review` | `script_prompt_template` | `{product_name}`, `{product_info}` |
-| `product_review_metadata_prompt` | `product_review` | _(not yet confirmed wired in metadata step)_ | `{product_name}` |
-
-> **Note on script prompt wiring:** `step_script()` in `pipeline.py` reads
-> `config.get("script_prompt_template", "")`. It applies `str.format(scene_count=...,
-> language_name=...)` and swallows unknown placeholder `KeyError`s gracefully.
-> The metadata prompt keys are defined in the schema but their wiring into the
-> metadata step was not confirmed in the files reviewed.
+**Fallback behaviour:** If the template field is empty or blank, the hardcoded
+system instruction is used without modification. Unknown `{placeholder}` values
+in custom templates are silently ignored (`KeyError` caught, template used as-is).
 
 ---
 

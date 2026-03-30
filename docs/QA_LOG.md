@@ -874,3 +874,72 @@ Tüm zincir tek canonical kaynaktan besleniyor, divergence noktası yok.
 ---
 
 *Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*
+
+---
+
+## 2026-03-31 — Admin Kontrol Wiring Denetimi ve Düzeltme
+
+### Değişiklik Özeti
+
+Önceki turda eklenen tüm admin panel kontrollerinin gerçek pipeline etkisi statik kod denetimiyle doğrulandı. 4 eksik wiring tespit edildi ve düzeltildi.
+
+#### Denetim Sonuçları
+
+| Kontrol | Durum | Not |
+|---|---|---|
+| `scene_count` | **WIRED** ✅ | 3 modül pipeline.py'de `config.get("scene_count")` ile okunuyor |
+| `category` | **WIRED** ✅ | `script.py:get_category_prompt_enhancement()` ile LLM prompt'a ekleniyor |
+| `use_hook_variety` | **WIRED** ✅ | `script.py:select_opening_hook()` ile hook seçimi |
+| `script_temperature` | **WIRED** ✅ | 3 modülde LLM API parametresi olarak geçiyor |
+| `script_max_tokens` | **WIRED** ✅ | 3 modülde LLM API parametresi olarak geçiyor |
+| `tts_voice` | **WIRED** ✅ | `step_tts()` içinde `config.get("tts_voice")` ile okunuyor |
+| `tts_speed` | **WIRED (Edge TTS)** ✅ | `edge_tts_provider.py:81` — `config.get("tts_speed", 1.0)` |
+| `subtitle_font_size` | **WIRED** ✅ | `subtitles.py:321` okunuyor, subtitle JSON'a yazılıyor, Remotion alıyor |
+| `subtitle_use_whisper` | **WIRED** ✅ | `subtitles.py:324` — Whisper fallback toggle |
+| `ken_burns_enabled` | **WIRED** ✅ | `composition.py:246` — Remotion prop |
+| `ken_burns_intensity` | **WIRED** ✅ | `composition.py:247` — Remotion `kenBurnsZoom` prop |
+| `video_fps` | **WIRED** ✅ | `composition.py` 4 yerde okunuyor, Remotion render param |
+| `video_resolution` | **WIRED** ✅ | `composition.py` 4 yerde okunuyor, width/height parse ediliyor |
+| `standard_video_script_prompt` | **WIRED** ✅ | `standard_video/pipeline.py:step_script` — `script_prompt_template` alias |
+| `news_bulletin_script_prompt` | **WIRED** ✅ | `news_bulletin/pipeline.py:step_script_bulletin` |
+| `product_review_script_prompt` | **DÜZELTİLDİ** 🔧 | Önceki turda unwired'dı — `step_script_review` içine `script_prompt_template` okuma eklendi |
+| `standard_video_metadata_prompt` | **DÜZELTİLDİ** 🔧 | Önceki turda unwired'dı — `step_metadata` içine `metadata_prompt_template` okuma eklendi |
+| `news_bulletin_metadata_prompt` | **DÜZELTİLDİ** 🔧 | `step_metadata` shared olduğu için fix otomatik geçerli |
+| `product_review_metadata_prompt` | **DÜZELTİLDİ** 🔧 | `step_metadata` shared olduğu için fix otomatik geçerli |
+
+#### Düzeltilen Dosyalar
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/modules/product_review/pipeline.py` | `step_script_review`: hardcoded `_REVIEW_SYSTEM_INSTRUCTION` yerine `config.get("script_prompt_template")` okuma; boş ise fallback |
+| `backend/modules/standard_video/pipeline.py` | `step_metadata`: hardcoded `_METADATA_SYSTEM_INSTRUCTION` yerine `config.get("metadata_prompt_template")` okuma; boş ise fallback |
+
+---
+
+### Çalıştırılan Testler
+
+#### Backend (`python3 -m pytest backend/tests/ -q`)
+
+```
+65 passed in 0.58s  ✅
+```
+
+#### `npx tsc --noEmit`
+
+```
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| `tts_speed` ElevenLabs/OpenAI TTS için etkisiz | Düşük | Sadece Edge TTS provider `config.get("tts_speed")` okuyor. Diğer provider'lar bu key'i okumuyorlar. |
+| Metadata prompt template `{placeholder}` desteği yok | Düşük | `step_metadata` custom template'i olduğu gibi LLM'e gönderiyor; format() çağrısı yok. |
+| `product_review` script prompt unknown placeholder silently ignored | Düşük | `KeyError` catch var — bilinmeyen placeholder kullanılırsa template olduğu gibi geçer, hata fırlatılmaz. |
+
+---
+
+*Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*

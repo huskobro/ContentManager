@@ -102,13 +102,28 @@ async def step_script_review(
 
     score_range = "1-10 arası puan ver" if score_enabled else "puan verme"
 
-    system_instruction = _REVIEW_SYSTEM_INSTRUCTION.format(
-        scene_count=actual_scene_count,
-        pros_count=pros_count,
-        cons_count=cons_count,
-        score_range=score_range,
-        language_name=language_name,
-    )
+    # Admin prompt template override — boş değilse hardcoded instruction yerine kullan.
+    # Runner, "{module_key}_script_prompt" key'ini "script_prompt_template" olarak alias'lar.
+    prompt_template = config.get("script_prompt_template", "") or ""
+    if prompt_template.strip():
+        try:
+            system_instruction = prompt_template.format(
+                scene_count=actual_scene_count,
+                pros_count=pros_count,
+                cons_count=cons_count,
+                score_range=score_range,
+                language_name=language_name,
+            )
+        except KeyError:
+            system_instruction = prompt_template
+    else:
+        system_instruction = _REVIEW_SYSTEM_INSTRUCTION.format(
+            scene_count=actual_scene_count,
+            pros_count=pros_count,
+            cons_count=cons_count,
+            score_range=score_range,
+            language_name=language_name,
+        )
 
     specs_text = ""
     if product_specs:
