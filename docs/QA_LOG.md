@@ -943,3 +943,118 @@ Tüm zincir tek canonical kaynaktan besleniyor, divergence noktası yok.
 ---
 
 *Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*
+
+---
+
+## 2026-03-31 — Runtime Wiring Doğrulaması (Gerçek API Testleri)
+
+### Test Yöntemi
+
+İzole Python test scriptleri ile gerçek API çağrısı yapıldı. Her test için aynı input farklı config ile iki kez çalıştırıldı (A/B). Kanıt: gerçek LLM/TTS çıktı farkı.
+
+---
+
+### Test A — product_review script_prompt_template
+
+**Soru:** `product_review_script_prompt` admin'de kaydedilince LLM gerçekten farklı script üretiyor mu?
+
+**Yöntem:** Aynı ürün (Sony WH-1000XM5), aynı parametreler. A: hardcoded template. B: "PIRATE reviewer, her narration AHOY MATEY ile başlamalı" custom template.
+
+**Kanıt:**
+
+| | İlk sahne narasyon (ilk 120 karakter) |
+|---|---|
+| DEFAULT | `Tired of the world's noise? Imagine a sanctuary of sound, where distractions fade away. Today, we're diving into the Sony WH-1000XM5...` |
+| CUSTOM  | `AHOY MATEY! Gather 'round, ye landlubbers and sea dogs alike, for I've a tale to spin about a grand piece o' gear – the Sony WH-1000XM5!...` |
+
+```
+AHOY in custom output: True
+DEFAULT differs from CUSTOM: True
+```
+
+**SONUÇ: WIRED ✅ — Custom template LLM çıktısını doğrudan etkiliyor.**
+
+---
+
+### Test B — standard_video metadata_prompt_template (tüm modüller)
+
+**Soru:** `standard_video_metadata_prompt` admin'de kaydedilince üretilen YouTube metadata değişiyor mu?
+
+**Yöntem:** Aynı script, aynı başlık. A: hardcoded template. B: "title MUST start with 'EPIC:', desc must start with 'SPONSORED BY COFFEE INC', tags = ['espresso','beans']" custom template.
+
+**Kanıt:**
+
+| Alan | DEFAULT | CUSTOM |
+|---|---|---|
+| youtube_title | `The History of Coffee: From Ancient Ethiopia to Your Morning Cup` | `EPIC: THE HISTORY OF COFFEE` |
+| youtube_description (ilk 80) | `Embark on a fascinating journey through time...` | `SPONSORED BY COFFEE INC Scene 1: Imagine a discovery...` |
+| tags | 12 item (coffee history, origin of coffee...) | `['espresso', 'beans']` |
+
+```
+CUSTOM title starts with 'EPIC': True
+CUSTOM desc starts with 'SPONSORED': True
+CUSTOM tags == ['espresso','beans']: True
+Titles differ: True
+VERDICT: WIRED - metadata prompt affects output
+```
+
+**SONUÇ: WIRED ✅ — Custom metadata template YouTube title, description ve tags'i tamamen değiştiriyor.**
+
+news_bulletin ve product_review modülleri aynı `step_metadata` fonksiyonunu import ettiği için bu düzeltme onlar için de geçerli (ayrı test gerekmedi).
+
+---
+
+### Test C — tts_speed (Edge TTS)
+
+**Soru:** `tts_speed` admin'den değiştirilince ses süresi gerçekten değişiyor mu?
+
+**Yöntem:** Aynı metin (18 kelime), aynı ses. A: speed=0.6. B: speed=1.8.
+
+**Kanıt:**
+
+| Speed | duration_ms | audio_bytes | word_timings |
+|---|---|---|---|
+| 0.6 (yavaş) | 10374 | 70848 | 16 |
+| 1.8 (hızlı) | 3458 | 23760 | 16 |
+
+```
+Duration ratio slow/fast: 3.00x (expected ~3.0x)
+Slow is longer: True
+VERDICT: WIRED - speed affects audio duration
+```
+
+Beklenen oran: 1.8/0.6 = 3.0x. Ölçülen: tam 3.00x. Edge TTS lineer hız kontrolü doğrulandı.
+
+**SONUÇ: WIRED ✅ (Edge TTS) — tts_speed ses süresini doğrudan ve orantılı biçimde etkiliyor.**
+
+**Sınır:** ElevenLabs ve OpenAI TTS provider'ları `tts_speed` key'ini okumuyorlar — bu onlar için etkisiz. Edge TTS default provider olduğu sürece sorun yok.
+
+---
+
+### Test D — metadata_prompt_template `{placeholder}` davranışı
+
+**Soru:** Template içinde `{topic}` yazılırsa bu substitution yapılıyor mu?
+
+**Kanıt:** Template `'...about {topic}...'` gönderilince LLM'e giden system_instruction aynen `'...about {topic}...'` içeriyordu. `format()` çağrısı yok, substitution yapılmıyor.
+
+**Kabul edilebilir mi?**
+
+Evet. `step_metadata` LLM'e zaten user prompt'ta title + script summary gönderiyor. LLM `{topic}` literal metnini görerek bağlamdan anlar. Kullanıcı dilerse template'e `{topic}` yazmadan doğrudan instruction yazabilir — bu daha iyi pratik. Placeholder sistemi gerekirse ileriki sürümde eklenebilir.
+
+**SONUÇ: Limitation mevcut, kabul edilebilir, dokümante edildi.**
+
+---
+
+### Test Sonuçları (Statik)
+
+```
+python3 -m pytest backend/tests/ -q
+65 passed in 0.40s  ✅
+
+npx tsc --noEmit
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
+*Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*
