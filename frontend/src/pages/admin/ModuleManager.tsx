@@ -104,12 +104,12 @@ export default function ModuleManager() {
         setExpandedModule(null);
       }
     },
+    onKeyboardMove: notifyKeyboard,
   });
 
-  const { getTabIndex } = useRovingTabindex({
+  const { getTabIndex, notifyKeyboard } = useRovingTabindex({
     focusedIdx,
     itemCount: MODULES.length,
-    autoFocus: false,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
 

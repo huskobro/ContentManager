@@ -75,6 +75,11 @@ export interface ScopedKeyboardNavigationOptions {
   onArrowRight?: (idx: number) => void;
   /** ArrowLeft callback — accordion kapat */
   onArrowLeft?: (idx: number) => void;
+  /**
+   * Klavye navigasyonu gerçekleştiğinde çağrılır (ArrowUp/Down/Home/End/j/k).
+   * useRovingTabindex().notifyKeyboard ile bağlayarak gerçek DOM focus() sağlayın.
+   */
+  onKeyboardMove?: () => void;
   /** Scroll-into-view için liste container ref'i */
   scrollRef?: React.RefObject<HTMLElement | null>;
 }
@@ -103,6 +108,7 @@ export function useScopedKeyboardNavigation(
     onEscape,
     onArrowRight,
     onArrowLeft,
+    onKeyboardMove,
     scrollRef,
   } = opts;
 
@@ -113,29 +119,31 @@ export function useScopedKeyboardNavigation(
   const [focusedIdx, setFocusedIdx] = useState<number>(-1);
 
   // Mutable refs — stale closure olmadan her render değerini taşır
-  const itemCountRef    = useRef(itemCount);
-  const focusedIdxRef   = useRef(focusedIdx);
-  const disabledRef     = useRef(disabled);
-  const loopRef         = useRef(loop);
-  const vimKeysRef      = useRef(vimKeys);
-  const homeEndRef      = useRef(homeEnd);
-  const onSpaceRef      = useRef(onSpace);
-  const onEnterRef      = useRef(onEnter);
-  const onEscapeRef     = useRef(onEscape);
-  const onArrowRightRef = useRef(onArrowRight);
-  const onArrowLeftRef  = useRef(onArrowLeft);
+  const itemCountRef        = useRef(itemCount);
+  const focusedIdxRef       = useRef(focusedIdx);
+  const disabledRef         = useRef(disabled);
+  const loopRef             = useRef(loop);
+  const vimKeysRef          = useRef(vimKeys);
+  const homeEndRef          = useRef(homeEnd);
+  const onSpaceRef          = useRef(onSpace);
+  const onEnterRef          = useRef(onEnter);
+  const onEscapeRef         = useRef(onEscape);
+  const onArrowRightRef     = useRef(onArrowRight);
+  const onArrowLeftRef      = useRef(onArrowLeft);
+  const onKeyboardMoveRef   = useRef(onKeyboardMove);
 
-  itemCountRef.current    = itemCount;
-  focusedIdxRef.current   = focusedIdx;
-  disabledRef.current     = disabled;
-  loopRef.current         = loop;
-  vimKeysRef.current      = vimKeys;
-  homeEndRef.current      = homeEnd;
-  onSpaceRef.current      = onSpace;
-  onEnterRef.current      = onEnter;
-  onEscapeRef.current     = onEscape;
-  onArrowRightRef.current = onArrowRight;
-  onArrowLeftRef.current  = onArrowLeft;
+  itemCountRef.current        = itemCount;
+  focusedIdxRef.current       = focusedIdx;
+  disabledRef.current         = disabled;
+  loopRef.current             = loop;
+  vimKeysRef.current          = vimKeys;
+  homeEndRef.current          = homeEnd;
+  onSpaceRef.current          = onSpace;
+  onEnterRef.current          = onEnter;
+  onEscapeRef.current         = onEscape;
+  onArrowRightRef.current     = onArrowRight;
+  onArrowLeftRef.current      = onArrowLeft;
+  onKeyboardMoveRef.current   = onKeyboardMove;
 
   // Scope kayıt / çıkış
   const { push, pop, isActive } = useKeyboardStore();
@@ -230,17 +238,20 @@ export function useScopedKeyboardNavigation(
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
+          onKeyboardMoveRef.current?.();
           moveNext();
           break;
 
         case "ArrowUp":
           e.preventDefault();
+          onKeyboardMoveRef.current?.();
           movePrev();
           break;
 
         case "j":
           if (vimKeysRef.current) {
             e.preventDefault();
+            onKeyboardMoveRef.current?.();
             moveNext();
           }
           break;
@@ -248,6 +259,7 @@ export function useScopedKeyboardNavigation(
         case "k":
           if (vimKeysRef.current) {
             e.preventDefault();
+            onKeyboardMoveRef.current?.();
             movePrev();
           }
           break;
@@ -255,6 +267,7 @@ export function useScopedKeyboardNavigation(
         case "Home":
           if (homeEndRef.current && count > 0) {
             e.preventDefault();
+            onKeyboardMoveRef.current?.();
             setFocusedIdx(0);
           }
           break;
@@ -262,6 +275,7 @@ export function useScopedKeyboardNavigation(
         case "End":
           if (homeEndRef.current && count > 0) {
             e.preventDefault();
+            onKeyboardMoveRef.current?.();
             setFocusedIdx(count - 1);
           }
           break;

@@ -60,6 +60,15 @@ function _ensureListener() {
   _listenerAttached = true;
 }
 
+/**
+ * Test izolasyonu için yığını temizler.
+ * Production kodunda KULLANMAYIN — yalnızca test dosyalarında.
+ * @internal
+ */
+export function _clearDismissStackForTesting(): void {
+  _stack.splice(0, _stack.length);
+}
+
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
 interface DismissStackReturn {

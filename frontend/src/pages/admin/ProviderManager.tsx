@@ -180,12 +180,12 @@ export default function ProviderManager() {
         setExpandedProvider(null);
       }
     },
+    onKeyboardMove: notifyKeyboard,
   });
 
-  const { getTabIndex } = useRovingTabindex({
+  const { getTabIndex, notifyKeyboard } = useRovingTabindex({
     focusedIdx,
     itemCount: PROVIDERS.length,
-    autoFocus: false,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
 

@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
 import { useRovingTabindex } from "@/hooks/useRovingTabindex";
+import { useFocusRestore } from "@/hooks/useFocusRestore";
+import { useDismissOnEsc } from "@/hooks/useDismissStack";
 import { useJobStore, type Job } from "@/stores/jobStore";
 import { useAdminStore } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -61,6 +63,9 @@ export default function AdminJobs() {
 
   const anyPanelOpen = quickLookJob !== null || sheetJob !== null;
 
+  // ── Odak Geri Yükleme ────────────────────────────────────────────────────
+  const { captureForRestore, restoreFocusDeferred } = useFocusRestore();
+
   const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: jobs.length,
     disabled: anyPanelOpen,
@@ -69,20 +74,28 @@ export default function AdminJobs() {
     onSpace: (idx) => openQuickLook(jobs[idx]),
     onEnter: (idx) => {
       setFocusedIdx(idx);
+      captureForRestore();
       setSheetJob(jobs[idx]);
     },
     onEscape: () => {
       setQuickLookJob(null);
       setSheetJob(null);
     },
+    onKeyboardMove: notifyKeyboard,
   });
 
-  const { getTabIndex } = useRovingTabindex({
+  const { getTabIndex, notifyKeyboard } = useRovingTabindex({
     focusedIdx,
     itemCount: jobs.length,
-    autoFocus: false,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
+
+  // ── ESC Kapatma Yığını ────────────────────────────────────────────────────
+  useDismissOnEsc(quickLookJob !== null, () => setQuickLookJob(null), 20);
+  useDismissOnEsc(sheetJob !== null, () => {
+    setSheetJob(null);
+    restoreFocusDeferred(150);
+  }, 10);
 
   const loadData = useCallback(() => {
     fetchJobs({
@@ -155,8 +168,14 @@ export default function AdminJobs() {
   // Klavye navigasyonu merkezi hook'a taşındı (useKeyboardNavigation).
 
   function openQuickLook(job: Job) {
+    captureForRestore();
     pendingSheetJobRef.current = job;
     setQuickLookJob(job);
+  }
+
+  function closeQuickLook() {
+    setQuickLookJob(null);
+    restoreFocusDeferred(80);
   }
 
   function handleOpenDeepDiveFromQuickLook() {
@@ -165,6 +184,11 @@ export default function AdminJobs() {
       setSheetJob(job);
       pendingSheetJobRef.current = null;
     }
+  }
+
+  function closeSheet() {
+    setSheetJob(null);
+    restoreFocusDeferred(150);
   }
 
   const totalPages   = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
@@ -312,6 +336,7 @@ export default function AdminJobs() {
                   onHover={() => setFocusedIdx(idx)}
                   onClick={() => {
                     setFocusedIdx(idx);
+                    captureForRestore();
                     setSheetJob(job);
                   }}
                   onQuickLook={() => {
@@ -358,7 +383,7 @@ export default function AdminJobs() {
       <JobQuickLook
         job={quickLookJob}
         open={quickLookJob !== null}
-        onClose={() => setQuickLookJob(null)}
+        onClose={closeQuickLook}
         onOpenDeepDive={handleOpenDeepDiveFromQuickLook}
       />
 
@@ -366,7 +391,7 @@ export default function AdminJobs() {
       <JobDetailSheet
         job={sheetJob}
         open={sheetJob !== null}
-        onClose={() => setSheetJob(null)}
+        onClose={closeSheet}
         isAdmin
         onDeleted={loadData}
       />

@@ -527,3 +527,296 @@ describe("Quick Look Space toggle davranışı", () => {
     isOpen = false;
   });
 });
+
+// ─── Scope Ownership — Overlay Davranışı ────────────────────────────────────
+
+describe("Scope ownership — overlay açıkken alttaki scope pasif", () => {
+  beforeEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+  afterEach(() => {
+    useKeyboardStore.setState({ scopeStack: [] });
+  });
+
+  it("disabled=true olan scope tuşları işlemez", () => {
+    const onEnter = vi.fn();
+    const { result } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3, disabled: true, onEnter })
+    );
+
+    act(() => fireKey("ArrowDown"));
+    act(() => fireKey("Enter"));
+
+    expect(result.current.focusedIdx).toBe(-1);
+    expect(onEnter).not.toHaveBeenCalled();
+  });
+
+  it("overlay scope mount olunca alttaki scope tuşları işlemez", () => {
+    useKeyboardStore.setState({ scopeStack: [] });
+
+    const onSpaceUnderneath = vi.fn();
+    const onSpaceOverlay    = vi.fn();
+
+    // Alt liste scope'u (A) — overlay yokken aktif
+    const { result: resultA, rerender: rerenderA } = renderHook(
+      ({ disabled }: { disabled: boolean }) =>
+        useScopedKeyboardNavigation({ itemCount: 3, disabled, onSpace: onSpaceUnderneath }),
+      { initialProps: { disabled: false } }
+    );
+
+    // Başlangıçta A aktif
+    act(() => fireKey("ArrowDown")); // idx=0
+    act(() => fireKey(" "));
+    expect(onSpaceUnderneath).toHaveBeenCalledTimes(1);
+    onSpaceUnderneath.mockClear();
+
+    // Overlay açıldı → A disabled oldu, B mount oldu
+    act(() => rerenderA({ disabled: true }));
+
+    renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 2, onSpace: onSpaceOverlay })
+    );
+
+    act(() => fireKey("ArrowDown")); // B'de idx=0
+    act(() => fireKey(" "));
+
+    // Sadece overlay (B) tepki verir
+    expect(onSpaceOverlay).toHaveBeenCalledTimes(1);
+    expect(onSpaceUnderneath).not.toHaveBeenCalled();
+  });
+
+  it("üst scope pop olunca alttaki tekrar aktif hale gelir", () => {
+    useKeyboardStore.setState({ scopeStack: [] });
+
+    const onEnterA = vi.fn();
+    const onEnterB = vi.fn();
+
+    // A: alt scope
+    const { result: resultA } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3, onEnter: onEnterA })
+    );
+
+    // B: üst scope (overlay)
+    const { unmount: unmountB } = renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 2, onEnter: onEnterB })
+    );
+
+    // B aktif — A'nın Enter'ı çalışmaz
+    act(() => fireKey("ArrowDown")); // B idx=0
+    act(() => fireKey("Enter"));
+    expect(onEnterB).toHaveBeenCalledTimes(1);
+    expect(onEnterA).not.toHaveBeenCalled();
+    onEnterB.mockClear();
+
+    // B unmount → A tekrar aktif
+    act(() => unmountB());
+
+    act(() => fireKey("ArrowDown")); // A idx devam ediyor
+    act(() => fireKey("Enter"));
+    expect(onEnterA).toHaveBeenCalledTimes(1);
+    expect(onEnterB).not.toHaveBeenCalled();
+
+    void resultA; // suppress unused warning
+  });
+});
+
+// ─── ESC Kapatma Yığını — useDismissStack ───────────────────────────────────
+
+import { useDismissStack, useDismissOnEsc, _clearDismissStackForTesting } from "@/hooks/useDismissStack";
+
+describe("useDismissStack — ESC kapatma önceliği", () => {
+  beforeEach(() => {
+    _clearDismissStackForTesting();
+  });
+  afterEach(() => {
+    _clearDismissStackForTesting();
+  });
+
+  it("tek entry: ESC callback'i çağırır", () => {
+    const cb = vi.fn();
+    const { result } = renderHook(() => useDismissStack());
+
+    act(() => {
+      result.current.register(cb, 0);
+    });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it("iki entry: yüksek öncelikli çağrılır, düşük çağrılmaz", () => {
+    const cbLow  = vi.fn();
+    const cbHigh = vi.fn();
+    const { result } = renderHook(() => useDismissStack());
+
+    act(() => {
+      result.current.register(cbLow,  5);
+      result.current.register(cbHigh, 20);
+    });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(cbHigh).toHaveBeenCalledTimes(1);
+    expect(cbLow).not.toHaveBeenCalled();
+
+    // Cleanup: unregister both
+    act(() => {
+      // entries will clean themselves via test isolation
+    });
+  });
+
+  it("unregister sonrası ESC çağrılmaz", () => {
+    const cb = vi.fn();
+    const { result } = renderHook(() => useDismissStack());
+    let id: number;
+
+    act(() => {
+      id = result.current.register(cb, 0);
+    });
+
+    act(() => {
+      result.current.unregister(id!);
+    });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it("useDismissOnEsc: isOpen=true iken ESC tetikler", () => {
+    const onDismiss = vi.fn();
+    renderHook(() => useDismissOnEsc(true, onDismiss, 0));
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("useDismissOnEsc: isOpen=false iken ESC tetiklemez", () => {
+    const onDismiss = vi.fn();
+    renderHook(() => useDismissOnEsc(false, onDismiss, 0));
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("useDismissOnEsc: QuickLook (20) > Sheet (10) önceliği — QuickLook kapatılır", () => {
+    const closeQuickLook = vi.fn();
+    const closeSheet     = vi.fn();
+
+    renderHook(() => {
+      useDismissOnEsc(true, closeSheet,     10);
+      useDismissOnEsc(true, closeQuickLook, 20);
+    });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(closeQuickLook).toHaveBeenCalledTimes(1);
+    expect(closeSheet).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Roving Tabindex + onKeyboardMove ───────────────────────────────────────
+
+import { useRovingTabindex } from "@/hooks/useRovingTabindex";
+
+describe("useRovingTabindex", () => {
+  it("focusedIdx=-1 ise idx=0 tabIndex=0 alır", () => {
+    const container = document.createElement("div");
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      useRovingTabindex({ focusedIdx: -1, itemCount: 3, containerRef })
+    );
+
+    expect(result.current.getTabIndex(0)).toBe(0);
+    expect(result.current.getTabIndex(1)).toBe(-1);
+    expect(result.current.getTabIndex(2)).toBe(-1);
+  });
+
+  it("focusedIdx=1 ise idx=1 tabIndex=0, diğerleri -1", () => {
+    const container = document.createElement("div");
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      useRovingTabindex({ focusedIdx: 1, itemCount: 3, containerRef })
+    );
+
+    expect(result.current.getTabIndex(0)).toBe(-1);
+    expect(result.current.getTabIndex(1)).toBe(0);
+    expect(result.current.getTabIndex(2)).toBe(-1);
+  });
+
+  it("notifyKeyboard mevcut — çağrılabilir", () => {
+    const container = document.createElement("div");
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      useRovingTabindex({ focusedIdx: 0, itemCount: 3, containerRef })
+    );
+
+    // notifyKeyboard bir fonksiyon olmalı ve exception atmamalı
+    expect(typeof result.current.notifyKeyboard).toBe("function");
+    expect(() => result.current.notifyKeyboard()).not.toThrow();
+  });
+
+  it("focusItem: data-nav-row element varsa focus() çağrılır", () => {
+    const container = document.createElement("div");
+    const item = document.createElement("div");
+    item.setAttribute("data-nav-row", "");
+    item.tabIndex = -1;
+    container.appendChild(item);
+    document.body.appendChild(container);
+
+    const focusSpy = vi.spyOn(item, "focus");
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      useRovingTabindex({ focusedIdx: 0, itemCount: 1, containerRef })
+    );
+
+    act(() => {
+      result.current.focusItem(0);
+    });
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+
+    document.body.removeChild(container);
+    focusSpy.mockRestore();
+  });
+
+  it("useScopedKeyboardNavigation onKeyboardMove çağrılır", () => {
+    useKeyboardStore.setState({ scopeStack: [] });
+
+    const onKeyboardMove = vi.fn();
+    renderHook(() =>
+      useScopedKeyboardNavigation({ itemCount: 3, onKeyboardMove })
+    );
+
+    act(() => fireKey("ArrowDown"));
+    expect(onKeyboardMove).toHaveBeenCalledTimes(1);
+
+    act(() => fireKey("ArrowUp"));
+    expect(onKeyboardMove).toHaveBeenCalledTimes(2);
+
+    act(() => fireKey("Home"));
+    expect(onKeyboardMove).toHaveBeenCalledTimes(3);
+
+    act(() => fireKey("End"));
+    expect(onKeyboardMove).toHaveBeenCalledTimes(4);
+  });
+});

@@ -38,6 +38,8 @@ import { JobQuickLook } from "@/components/jobs/JobQuickLook";
 import { JobDetailSheet } from "@/components/jobs/JobDetailSheet";
 import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
 import { useRovingTabindex } from "@/hooks/useRovingTabindex";
+import { useFocusRestore } from "@/hooks/useFocusRestore";
+import { useDismissOnEsc } from "@/hooks/useDismissStack";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
@@ -62,6 +64,9 @@ export default function JobList() {
 
   const anyPanelOpen = quickLookJob !== null || sheetJob !== null;
 
+  // ── Odak Geri Yükleme ────────────────────────────────────────────────────
+  const { captureForRestore, restoreFocusDeferred } = useFocusRestore();
+
   // ── Klavye Navigasyonu ───────────────────────────────────────────────────
   const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: jobs.length,
@@ -71,21 +76,32 @@ export default function JobList() {
     onSpace: (idx) => openQuickLook(jobs[idx]),
     onEnter: (idx) => {
       setFocusedIdx(idx);
+      captureForRestore();
       setSheetJob(jobs[idx]);
     },
     onEscape: () => {
       setQuickLookJob(null);
       setSheetJob(null);
     },
+    onKeyboardMove: notifyKeyboard,
   });
 
   // ── Roving Tabindex ──────────────────────────────────────────────────────
-  const { getTabIndex } = useRovingTabindex({
+  const { getTabIndex, notifyKeyboard } = useRovingTabindex({
     focusedIdx,
     itemCount: jobs.length,
-    autoFocus: false,
     containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
+
+  // ── ESC Kapatma Yığını — Overlay önceliği ────────────────────────────────
+  // QuickLook: priority 20 (en üstte), Sheet: priority 10
+  // Scope'un kendi ESC handler'ı (onEscape) scope disabled iken çalışmaz;
+  // bu kayıtlar scope bağımsız olarak çalışır.
+  useDismissOnEsc(quickLookJob !== null, () => setQuickLookJob(null), 20);
+  useDismissOnEsc(sheetJob !== null, () => {
+    setSheetJob(null);
+    restoreFocusDeferred(150);
+  }, 10);
 
   // ── Data Loading ─────────────────────────────────────────────────────────
   const loadData = useCallback(() => {
@@ -118,8 +134,14 @@ export default function JobList() {
 
   // ── Quick Look / Sheet ───────────────────────────────────────────────────
   function openQuickLook(job: Job) {
+    captureForRestore();
     pendingSheetJobRef.current = job;
     setQuickLookJob(job);
+  }
+
+  function closeQuickLook() {
+    setQuickLookJob(null);
+    restoreFocusDeferred(80);
   }
 
   function handleOpenDeepDiveFromQuickLook() {
@@ -128,6 +150,11 @@ export default function JobList() {
       setSheetJob(job);
       pendingSheetJobRef.current = null;
     }
+  }
+
+  function closeSheet() {
+    setSheetJob(null);
+    restoreFocusDeferred(150);
   }
 
   const totalPages = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
@@ -289,6 +316,7 @@ export default function JobList() {
                   onHover={() => setFocusedIdx(idx)}
                   onClick={() => {
                     setFocusedIdx(idx);
+                    captureForRestore();
                     setSheetJob(job);
                   }}
                   onQuickLook={() => {
@@ -342,7 +370,7 @@ export default function JobList() {
       <JobQuickLook
         job={quickLookJob}
         open={quickLookJob !== null}
-        onClose={() => setQuickLookJob(null)}
+        onClose={closeQuickLook}
         onOpenDeepDive={handleOpenDeepDiveFromQuickLook}
       />
 
@@ -350,7 +378,7 @@ export default function JobList() {
       <JobDetailSheet
         job={sheetJob}
         open={sheetJob !== null}
-        onClose={() => setSheetJob(null)}
+        onClose={closeSheet}
       />
     </div>
   );
