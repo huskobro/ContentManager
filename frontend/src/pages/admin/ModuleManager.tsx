@@ -7,7 +7,7 @@
  *   • Ayarlar sadece güncellenebilir, silinemez
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Boxes,
   Video,
@@ -27,6 +27,7 @@ import {
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
+import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
 
 // ─── Modül tanımları ─────────────────────────────────────────────────────────
 
@@ -71,6 +72,21 @@ export default function ModuleManager() {
   const [expandedModule, setExpandedModule] = useState<string | null>("standard_video");
 
   const [moduleSettingsMap, setModuleSettingsMap] = useState<Record<string, SettingRecord[]>>({});
+
+  // ── Klavye Navigasyonu ──────────────────────────────────────────────────
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const { focusedIdx, setFocusedIdx } = useKeyboardNavigation({
+    itemCount: MODULES.length,
+    scrollRef: listRef as React.RefObject<HTMLElement | null>,
+    onEnter: (idx) => {
+      const mod = MODULES[idx];
+      handleSelectModule(mod.key);
+    },
+    onEscape: () => {
+      setExpandedModule(null);
+    },
+  });
 
   const loadModuleSettings = useCallback(
     async (moduleKey: string) => {
@@ -158,18 +174,22 @@ export default function ModuleManager() {
       )}
 
       {/* Modül kartları */}
-      <div className="space-y-3">
-        {MODULES.map((mod) => {
+      <div ref={listRef} className="space-y-3">
+        {MODULES.map((mod, idx) => {
           const moduleSettings = moduleSettingsMap[mod.key] ?? [];
           const enabled = isModuleEnabled(mod.key);
           const isExpanded = expandedModule === mod.key;
+          const isFocused = focusedIdx === idx;
 
           return (
             <div
               key={mod.key}
+              data-nav-row
+              onMouseEnter={() => setFocusedIdx(idx)}
               className={cn(
                 "rounded-xl border bg-card overflow-hidden transition-colors",
-                isExpanded ? mod.borderColor : "border-border"
+                isExpanded ? mod.borderColor : "border-border",
+                isFocused && !isExpanded && "ring-1 ring-inset ring-primary/30 bg-accent/20"
               )}
             >
               {/* Modül başlığı */}

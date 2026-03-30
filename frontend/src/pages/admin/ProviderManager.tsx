@@ -7,7 +7,7 @@
  *   • Kullanıcı provider anahtarlarını ezberlemek zorunda değil
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Plug,
   Eye,
@@ -26,6 +26,7 @@ import {
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
+import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
 
 // ─── Provider tanımları ──────────────────────────────────────────────────────
 
@@ -149,11 +150,25 @@ export default function ProviderManager() {
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
-  const [selectedProvider, setSelectedProvider] = useState<string>("gemini");
-  const [expandedProvider, setExpandedProvider] = useState<string | null>("gemini");
+  const [selectedProvider, setSelectedProvider] = useState<string>("kieai");
+  const [expandedProvider, setExpandedProvider] = useState<string | null>("kieai");
 
   const [providerSettingsMap, setProviderSettingsMap] = useState<Record<string, SettingRecord[]>>({});
   const [adminSettings, setAdminSettings] = useState<SettingRecord[]>([]);
+
+  // ── Klavye Navigasyonu ──────────────────────────────────────────────────
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const { focusedIdx, setFocusedIdx } = useKeyboardNavigation({
+    itemCount: PROVIDERS.length,
+    scrollRef: listRef as React.RefObject<HTMLElement | null>,
+    onEnter: (idx) => {
+      handleToggleExpand(PROVIDERS[idx].key);
+    },
+    onEscape: () => {
+      setExpandedProvider(null);
+    },
+  });
 
   const loadProviderSettings = useCallback(
     async (providerKey: string) => {
@@ -234,12 +249,13 @@ export default function ProviderManager() {
       )}
 
       {/* Kategoriler */}
+      <div ref={listRef}>
       {categories.map((cat) => {
         const catConfig = CATEGORY_CONFIG[cat];
         const catProviders = PROVIDERS.filter((p) => p.category === cat);
 
         return (
-          <div key={cat} className="space-y-2">
+          <div key={cat} className="space-y-2 mb-5">
             <div className="flex items-center gap-2 px-1">
               <span className={catConfig.color}>{catConfig.icon}</span>
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -251,11 +267,19 @@ export default function ProviderManager() {
               {catProviders.map((provider) => {
                 const isExpanded = expandedProvider === provider.key;
                 const provSettings = providerSettingsMap[provider.key] ?? [];
+                const globalIdx = PROVIDERS.findIndex((p) => p.key === provider.key);
+                const isFocused = focusedIdx === globalIdx;
 
                 return (
                   <div
                     key={provider.key}
-                    className="rounded-xl border border-border bg-card overflow-hidden"
+                    data-nav-row
+                    onMouseEnter={() => setFocusedIdx(globalIdx)}
+                    className={cn(
+                      "rounded-xl border bg-card overflow-hidden transition-colors",
+                      isExpanded ? "border-primary/30" : "border-border",
+                      isFocused && !isExpanded && "ring-1 ring-inset ring-primary/30 bg-accent/20"
+                    )}
                   >
                     <button
                       onClick={() => handleToggleExpand(provider.key)}
@@ -294,6 +318,7 @@ export default function ProviderManager() {
           </div>
         );
       })}
+      </div>{/* /listRef */}
     </div>
   );
 }

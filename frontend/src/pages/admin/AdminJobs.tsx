@@ -23,6 +23,7 @@ import {
   Trash2,
   Eraser,
 } from "lucide-react";
+import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
 import { useJobStore, type Job } from "@/stores/jobStore";
 import { useAdminStore } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -50,11 +51,28 @@ export default function AdminJobs() {
   const [bulkCleaning, setBulkCleaning] = useState(false);
 
   // ── Hibrit Navigasyon State ──────────────────────────────────────────────
-  const [focusedIdx, setFocusedIdx]     = useState<number>(-1);
   const [quickLookJob, setQuickLookJob] = useState<Job | null>(null);
   const [sheetJob, setSheetJob]         = useState<Job | null>(null);
   const listRef                         = useRef<HTMLDivElement>(null);
   const pendingSheetJobRef              = useRef<Job | null>(null);
+
+  const anyPanelOpen = quickLookJob !== null || sheetJob !== null;
+
+  const { focusedIdx, setFocusedIdx } = useKeyboardNavigation({
+    itemCount: jobs.length,
+    disabled: anyPanelOpen,
+    scrollRef: listRef as React.RefObject<HTMLElement | null>,
+    onSpace: (idx) => {
+      openQuickLook(jobs[idx]);
+    },
+    onEnter: (idx) => {
+      setSheetJob(jobs[idx]);
+    },
+    onEscape: () => {
+      setQuickLookJob(null);
+      setSheetJob(null);
+    },
+  });
 
   const loadData = useCallback(() => {
     fetchJobs({
@@ -77,7 +95,6 @@ export default function AdminJobs() {
 
   function handleFilterChange(type: "status" | "module", value: string) {
     setPage(1);
-    setFocusedIdx(-1);
     if (type === "status") setStatusFilter(value);
     else setModuleFilter(value);
   }
@@ -125,61 +142,7 @@ export default function AdminJobs() {
     }
   }
 
-  // ── Klavye Navigasyonu ───────────────────────────────────────────────────
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-      if (quickLookJob || sheetJob) {
-        if (e.key === "Escape") {
-          setQuickLookJob(null);
-          setSheetJob(null);
-        }
-        return;
-      }
-
-      if (jobs.length === 0) return;
-
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          setFocusedIdx((prev) => Math.min(prev + 1, jobs.length - 1));
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setFocusedIdx((prev) => Math.max(prev - 1, 0));
-          break;
-        case " ":
-          if (focusedIdx >= 0 && focusedIdx < jobs.length) {
-            e.preventDefault();
-            pendingSheetJobRef.current = jobs[focusedIdx];
-            setQuickLookJob(jobs[focusedIdx]);
-          }
-          break;
-        case "Enter":
-          if (focusedIdx >= 0 && focusedIdx < jobs.length) {
-            e.preventDefault();
-            setSheetJob(jobs[focusedIdx]);
-          }
-          break;
-        case "Escape":
-          setFocusedIdx(-1);
-          break;
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [jobs, focusedIdx, quickLookJob, sheetJob]);
-
-  // Odaklanan satırı görünüme kaydır
-  useEffect(() => {
-    if (focusedIdx < 0 || !listRef.current) return;
-    const rows = listRef.current.querySelectorAll("[data-job-row]");
-    const row = rows[focusedIdx] as HTMLElement | undefined;
-    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [focusedIdx]);
+  // Klavye navigasyonu merkezi hook'a taşındı (useKeyboardNavigation).
 
   function openQuickLook(job: Job) {
     pendingSheetJobRef.current = job;
@@ -427,7 +390,7 @@ function AdminJobRow({
 
   return (
     <div
-      data-job-row
+      data-nav-row
       onMouseEnter={onHover}
       onContextMenu={(e) => { e.preventDefault(); onSpaceClick(); }}
       className={cn(

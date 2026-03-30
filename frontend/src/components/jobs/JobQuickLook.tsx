@@ -6,6 +6,7 @@
  * Alt buton: "Tüm Detayları Gör" → Deep Dive Sheet açar.
  */
 
+import { useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   X,
@@ -29,6 +30,37 @@ interface Props {
 
 export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
   const addToast = useUIStore((s) => s.addToast);
+
+  /**
+   * Space Toggle Fix:
+   * Quick Look AÇIKKEN Space tuşu içerideki odaklanmış butonu tetiklemez.
+   * Space → ESC gibi davranır (modal kapanır).
+   * Buton tetiklenmesini engellemek için keydown'u en erken aşamada yakalarız
+   * (capture: true) ve preventDefault + stopPropagation uygularız.
+   */
+  useEffect(() => {
+    if (!open) return;
+
+    function blockSpaceOnButtons(e: KeyboardEvent) {
+      if (e.key !== " ") return;
+      const target = e.target as HTMLElement;
+      // Buton veya link ise Space'in default davranışını (tıklama) engelle
+      if (
+        target.tagName === "BUTTON" ||
+        target.tagName === "A" ||
+        target.role === "button"
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Space → modal kapat
+        onClose();
+      }
+    }
+
+    // capture:true → event DOM'a inmeden yakalanır, butonlara ulaşamaz
+    window.addEventListener("keydown", blockSpaceOnButtons, true);
+    return () => window.removeEventListener("keydown", blockSpaceOnButtons, true);
+  }, [open, onClose]);
 
   if (!job) return null;
 
