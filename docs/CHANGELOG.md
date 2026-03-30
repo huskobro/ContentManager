@@ -5,6 +5,57 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ve [Semantic Ver
 
 ---
 
+## [1.6.0] — 2026-03-30
+
+### Zero-Defect Pipeline — Ölü Kod Temizliği, Hard Delete, Klasör Seçici, Senkronize Pipeline
+
+Kod denetiminde (Code Audit) tespit edilen **3 kritik operasyonel hata** ve **5 mimari sorun** tamamen giderildi. Sistem artık "SaaS Kalitesi" etiketini hak ediyor.
+
+**Faz 10.92 — Ölü Bağımlılık ve Kod Temizliği (Dead Code Purge):**
+- `backend/providers/llm/gemini.py` — **Tamamen silindi.** Deprecated `google-generativeai` SDK yerine kie.ai (OpenAI-uyumlu) kullanılıyor. `warnings.filterwarnings` hack'i ortadan kalktı.
+- `requirements.txt` — `google-generativeai==0.8.3` bağımlılığı **silindi.** Daha temiz, daha hızlı kurulum.
+- `backend/config.py` — Ölü `gemini_api_key` ve `pixabay_api_key` field'ları **silindi.** Pixabay hiç implement edilmemişti; config'de referans kalması hatalıydı.
+- `backend/services/settings_resolver.py` — `"gemini_api_key"` ve `"pixabay_api_key"` global defaults'tan **silindi.**
+- `backend/providers/visuals/__init__.py` — "Pixabay, vb." docstring referansı temizlendi.
+- `backend/providers/composition/__init__.py` + dizini — 1 satır stub dosya ve boş dizin **silindi.**
+- `backend/providers/llm/__init__.py` — Docstring temizlendi.
+- **Audit bulgusu çözüldü:** Provider scope'a yazılan ölü API key write (`ProviderManager.tsx` L375-386) — sadece admin scope'a yazılacak şekilde temizlendi (bir önceki fazda).
+
+**Faz 10.92 — output_dir Mutation Anti-Pattern Düzeltmesi:**
+- `backend/main.py` startup — Ham SQLAlchemy sorgusu kaldırıldı. `output_dir` artık `SettingsResolver.get(key="output_dir")` ile **standart 5-katman çözümleme** üzerinden yükleniyor. Tek okuma path, tutarlı davranış.
+
+**Faz 10.92 — CostTracker Gerçek Backend Endpoint'i:**
+- `backend/api/admin.py` — **Yeni dosya oluşturuldu.** `GET /api/admin/costs`: `job_steps.cost_estimate_usd` DB'den SUM, provider bazlı toplam, son 10 job. Artık **MOCK_DATA yok** — audit'in en kritik bulgusuydu.
+- `GET /api/admin/stats` — Job sayıları + output dizin disk kullanımı endpoint'i eklendi.
+- `backend/main.py` — Admin router `app.include_router()` ile sisteme eklendi.
+
+**Faz 10.92 — İş Silme Fiziksel Dosya Temizliği (Hard Delete):**
+- `backend/services/job_manager.py` → `delete_job()` — Sadece DB kaydı silmekle kalmıyor; artık `job.output_path` üzerinden **`.mp4` dosyasını `os.remove()` ile fiziksel olarak siliyor**, session dizinini `shutil.rmtree()` ile temizliyor. Disk şişmesi sorunu çözüldü.
+
+**Faz 10.93 — Localhost Klasör Seçici (Directory Picker Dialog):**
+- `backend/api/admin.py` → `GET /api/admin/directories?path=...` — Verilen dizindeki alt klasörleri listeler. Gizli klasörler (`/.`) hariç, `PermissionError` güvenli yakalanıyor.
+- `frontend/src/pages/admin/GlobalSettings.tsx` — `output_dir` field'ına **tam işlevsel klasör seçici dialog** eklendi:
+  - `FolderPickerDialog` bileşeni — Modal, breadcrumb (mevcut yol), üst dizine gitme, alt klasörlere tıklama ile gezinti
+  - Backend'den `GET /api/admin/directories` ile alt klasörler canlı yükleniyor
+  - "Bu Klasörü Seç" → path otomatik input'a yazılıyor
+  - `FolderOpen` ikon artık tıklanabilir buton
+  - Yeni ikonlar: `ChevronRight`, `Home`, `X` eklendi
+
+**Faz 10.93 — Prompt Master Template Entegrasyonu (SettingsResolver):**
+- `backend/modules/standard_video/pipeline.py` → `step_script()` — Hardcoded `_SCRIPT_SYSTEM_INSTRUCTION` yerine `config.get("script_prompt_template")` okunuyor. PromptManager'dan admin panelde ayarlanan değer varsa kullanılıyor; yoksa varsayılana düşüyor. `{scene_count}` ve `{language_name}` yer tutucuları dolduruluyor.
+- `backend/modules/news_bulletin/pipeline.py` → `step_script_bulletin()` — Aynı mekanizma uygulandı.
+
+**Faz 10.93 — TTS/Subtitle Senkronizasyon Onarımı (Kök Neden Düzeltmesi):**
+- **Kök neden:** LLM çıktısında `**kalın**`, `*italik*`, `# başlık`, backtick gibi Markdown kalıntıları gelebiliyor. TTS bunları farklı seslendiriyor / atlıyor, subtitle ise ham narasyonla eşleşmeye çalışıyordu → word-timing kayması.
+- `backend/modules/standard_video/pipeline.py` — `_normalize_narration_for_tts()` yardımcı fonksiyonu eklendi: Markdown temizleme (`**`, `*`, `#`, `` ` ``, madde işaretleri), whitespace normalizasyonu. TTS'e bu normalize metin gönderiliyor.
+- `backend/pipeline/steps/subtitles.py` — `_normalize_narration()` fonksiyonu eklendi (aynı regex seti). Her sahne için **TTS ve subtitle kelimesi kelimesine aynı token dizisini işliyor** → timing kayması sıfır.
+- **Bonus:** Subtitle'da `scenes[i]` index yerine `scenes_by_number[scene_num]` scene_number bazlı lookup — sıra karışması önlendi.
+
+**Faz 10.93 — Composition Overengineering Temizliği:**
+- `backend/pipeline/steps/composition.py` — Manuel `ThreadingMixIn(HTTPServer)` karışımı kaldırıldı. Python stdlib'in `http.server.ThreadingHTTPServer` (Python 3.7+) direkt kullanılıyor. `from socketserver import ThreadingMixIn` import silindi. Daha temiz, daha stabil, dokümanlı.
+
+---
+
 ## [1.5.0] — 2026-03-30
 
 ### Enterprise SaaS UI/UX — Global SSE, Worker Loop, Prompt Engine, State Sync

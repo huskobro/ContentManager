@@ -23,9 +23,7 @@ import shutil
 import threading
 from datetime import datetime
 from functools import partial
-from http.server import SimpleHTTPRequestHandler
-from socketserver import ThreadingMixIn
-from http.server import HTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -79,11 +77,6 @@ def _resolve_visual_type(file_type: str | None, filename: str | None) -> str:
     return "video"
 
 
-class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    """Her request'i ayrı thread'de handle eden HTTP server."""
-    daemon_threads = True
-
-
 class _SilentHandler(SimpleHTTPRequestHandler):
     """Log yazdırmayan HTTP handler."""
 
@@ -91,15 +84,18 @@ class _SilentHandler(SimpleHTTPRequestHandler):
         pass  # Sessiz — ana log'a karışmasın
 
 
-def _start_media_server(directory: Path) -> tuple[_ThreadingHTTPServer, int]:
+def _start_media_server(directory: Path) -> tuple[ThreadingHTTPServer, int]:
     """
     Verilen dizini serve eden geçici bir threaded HTTP file server başlatır.
 
-    Boş bir port seçer, background thread'de çalıştırır.
+    stdlib'in ThreadingHTTPServer'ını kullanır (Python 3.7+, extra import yok).
+    Boş bir port seçer, daemon background thread'de çalıştırır.
+
     Returns: (server_instance, port)
     """
     handler = partial(_SilentHandler, directory=str(directory.resolve()))
-    server = _ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

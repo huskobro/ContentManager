@@ -211,10 +211,22 @@ async def step_script_bulletin(
             "Verilen konu hakkinda genel bilgilerle bulten olustur."
         )
 
-    system_instruction = _BULLETIN_SYSTEM_INSTRUCTION.format(
-        scene_count=scene_count,
-        language_name=language_name,
-    )
+    # PromptManager'dan ayarlanan master prompt şablonunu kullan;
+    # ayarlanmamışsa varsayılan hardcoded şablona düş.
+    prompt_template = config.get("script_prompt_template", "") or ""
+    if prompt_template.strip():
+        try:
+            system_instruction = prompt_template.format(
+                scene_count=scene_count,
+                language_name=language_name,
+            )
+        except KeyError:
+            system_instruction = prompt_template
+    else:
+        system_instruction = _BULLETIN_SYSTEM_INSTRUCTION.format(
+            scene_count=scene_count,
+            language_name=language_name,
+        )
 
     prompt = (
         f"Haber bulteni konusu: {title}\n"

@@ -22,6 +22,7 @@ yerine kullanılabilir.
 from __future__ import annotations
 
 import os
+import re as _re
 from typing import Any
 
 import httpx
@@ -118,6 +119,25 @@ SUBTITLE_STYLES: dict[str, dict[str, Any]] = {
         "background_opacity": 0.5,
     },
 }
+
+
+def _normalize_narration(text: str) -> str:
+    """
+    Altyazı metnini normalize eder — TTS pipeline'ı ile aynı temizleme
+    uygulanır. İki tarafın kelimesi kelimesine aynı string'i işlemesini
+    ve word-timing hizalamasının kaymasız olmasını garantiler.
+    """
+    if not text:
+        return text
+    cleaned = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
+    cleaned = _re.sub(r"_{1,3}(.*?)_{1,3}", r"\1", cleaned)
+    cleaned = _re.sub(r"^#{1,6}\s+", "", cleaned, flags=_re.MULTILINE)
+    cleaned = _re.sub(r"`+([^`]*)`+", r"\1", cleaned)
+    cleaned = _re.sub(r"^\s*[-•*]\s+", "", cleaned, flags=_re.MULTILINE)
+    cleaned = _re.sub(r"\n{2,}", " ", cleaned)
+    cleaned = _re.sub(r"\n", " ", cleaned)
+    cleaned = _re.sub(r" {2,}", " ", cleaned).strip()
+    return cleaned
 
 
 def get_style_config(style_name: str) -> dict[str, Any]:
@@ -309,6 +329,11 @@ async def step_subtitles_enhanced(
     scenes = script_data.get("scenes", []) if script_data else []
     tts_files = tts_data.get("files", [])
 
+    # Scene'leri ve TTS dosyalarını scene_number'a göre eşleştir (sıra garantisi için)
+    scenes_by_number: dict[int, dict] = {
+        s.get("scene_number", i + 1): s for i, s in enumerate(scenes)
+    }
+
     # Stil bilgisini al
     style_name = config.get("subtitle_style", "standard")
     style_config = get_style_config(style_name)
@@ -329,10 +354,12 @@ async def step_subtitles_enhanced(
         duration_sec = tts_file.get("duration_seconds", 15.0)
         tts_word_timings = tts_file.get("word_timings", [])
 
-        # Narasyon metnini al
-        narration = ""
-        if i < len(scenes):
-            narration = scenes[i].get("narration", "")
+        # Narasyon metnini scene_number'a göre eşleştirerek al
+        # (sıra bazlı index değil, scene_number bazlı lookup — senkronizasyon garantisi)
+        scene_entry = scenes_by_number.get(scene_num, {})
+        raw_narration = scene_entry.get("narration", "")
+        # TTS ile aynı normalizasyonu uygula — word-timing hizalaması için zorunlu
+        narration = _normalize_narration(raw_narration)
 
         word_timings: list[dict[str, Any]] = []
         scene_timing_source = "unknown"

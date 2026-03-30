@@ -102,20 +102,36 @@ async def step_script(
     cache: CacheManager,
 ) -> dict[str, Any]:
     """
-    Adım 0: Senaryo üretimi — LLM Provider (Gemini + fallback).
+    Adım 0: Senaryo üretimi — LLM Provider.
 
     ProviderRegistry üzerinden LLM kategorisindeki provider zincirini
-    çalıştırır. Gemini başarısız olursa sıradaki LLM provider denenir.
+    çalıştırır. System prompt; PromptManager'dan ayarlanan
+    'script_prompt_template' (module scope) değerinden çekilir.
+    Ayarlanmamışsa varsayılan şablon kullanılır.
     """
     scene_count = config.get("scene_count", 10)
     language = config.get("language", "tr")
     title = config.get("_job_title", "Yapay Zekanın Geleceği")
     language_name = _LANGUAGE_MAP.get(language, language)
 
-    base_instruction = _SCRIPT_SYSTEM_INSTRUCTION.format(
-        scene_count=scene_count,
-        language_name=language_name,
-    )
+    # PromptManager'dan ayarlanan master prompt şablonunu kullan;
+    # ayarlanmamışsa varsayılan hardcoded şablona düş.
+    prompt_template = config.get("script_prompt_template", "") or ""
+    if prompt_template.strip():
+        # Şablonda {scene_count} ve {language_name} yer tutucularını doldur
+        try:
+            base_instruction = prompt_template.format(
+                scene_count=scene_count,
+                language_name=language_name,
+            )
+        except KeyError:
+            # Şablonda bilinmeyen yer tutucular varsa olduğu gibi kullan
+            base_instruction = prompt_template
+    else:
+        base_instruction = _SCRIPT_SYSTEM_INSTRUCTION.format(
+            scene_count=scene_count,
+            language_name=language_name,
+        )
 
     # Kategori ve hook zenginleştirmesi
     system_instruction, hook_instruction = build_enhanced_prompt(
@@ -280,10 +296,14 @@ async def step_tts(
             log.warning("Boş narasyon, sahne atlanıyor", scene_number=scene_num)
             continue
 
+        # TTS metnini normalize et — LLM çıktısındaki Markdown kalıntılarını ve
+        # özel karakterleri temizle. Subtitle ile aynı string gönderilmeli.
+        tts_text = _normalize_narration_for_tts(narration)
+
         result = await provider_registry.execute_with_fallback(
             category="tts",
             input_data={
-                "text": narration,
+                "text": tts_text,
                 "voice": voice,
             },
             config=config,
@@ -449,6 +469,45 @@ async def step_visuals(
 # ─────────────────────────────────────────────────────────────────────────────
 # Yardımcı fonksiyonlar
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+import re as _re
+
+
+def _normalize_narration_for_tts(text: str) -> str:
+    """
+    Narasyon metnini TTS için normalize eder.
+
+    LLM çıktısında kalabilecek Markdown kalıntıları (*, **, #, `backtick` vb.)
+    ve aşırı boşlukları temizler. TTS'e giden string ile subtitle'ın
+    sahne metni (narration) olabildiğince aynı token dizisini paylaşır;
+    bu sayede word-timing hizalaması kaymasız olur.
+
+    Args:
+        text: Ham narasyon metni (LLM çıktısından).
+
+    Returns:
+        TTS sentezi ve altyazı için uyumlu temiz metin.
+    """
+    if not text:
+        return text
+
+    # Markdown kalın/italik işaretlerini kaldır (**, *, __, _)
+    cleaned = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
+    cleaned = _re.sub(r"_{1,3}(.*?)_{1,3}", r"\1", cleaned)
+    # Markdown başlıkları (## Başlık → Başlık)
+    cleaned = _re.sub(r"^#{1,6}\s+", "", cleaned, flags=_re.MULTILINE)
+    # Backtick kod bloklarını temizle
+    cleaned = _re.sub(r"`+([^`]*)`+", r"\1", cleaned)
+    # Satır başındaki madde işaretlerini kaldır (- , • , * )
+    cleaned = _re.sub(r"^\s*[-•*]\s+", "", cleaned, flags=_re.MULTILINE)
+    # Birden fazla satır sonunu tek satır sonuna indir
+    cleaned = _re.sub(r"\n{2,}", " ", cleaned)
+    cleaned = _re.sub(r"\n", " ", cleaned)
+    # Birden fazla boşluğu teke indir ve strip
+    cleaned = _re.sub(r" {2,}", " ", cleaned).strip()
+
+    return cleaned
 
 
 def _normalize_script(

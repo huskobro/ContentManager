@@ -1,1 +1,1 @@
-"""LLM Providers — Metin üretimi sağlayıcıları (Gemini, OpenAI, vb.)."""
+"""LLM Providers — Metin üretimi sağlayıcıları (kie.ai / OpenAI uyumlu)."""

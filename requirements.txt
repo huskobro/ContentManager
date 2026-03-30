@@ -22,7 +22,7 @@ openai==1.57.2
 
 # ── LLM Providers ────────────────────────────────────────────────────────────
 # openai yukarıda zaten mevcut (GPT + Whisper)
-google-generativeai==0.8.3
+# google-generativeai kaldırıldı — kie.ai üzerinden OpenAI-uyumlu API kullanılıyor
 
 # ── Utility ──────────────────────────────────────────────────────────────────
 python-multipart==0.0.20   # FastAPI form/file upload

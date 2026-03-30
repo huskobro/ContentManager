@@ -25,9 +25,11 @@
 | 🧠 **Prompt Yönetim Motoru** | 🎣 **8 Açılış Hook'u** | 🔐 **SaaS Kalitesinde Admin Paneli** |
 | Admin panelden tüm prompt'lar düzenlenebilir, kategorize | Şok edici gerçek, soru, hikaye, çelişki + tekrar önleme | Modül, provider, prompt, maliyet, ayar — tek yerden yönet |
 | 💾 **Global Worker Loop** | 💰 **Maliyet Takibi (Cost Tracker)** | 🌙 **Dark Mode** |
-| Kuyruk sistemi + `max_concurrent_jobs` limiti + otomatik dispatch | Provider bazlı tahmini API maliyeti, job ve adım granülaritesinde | Glassmorphism UI tasarım |
+| Kuyruk sistemi + `max_concurrent_jobs` limiti + otomatik dispatch | Provider bazlı gerçek API maliyeti — DB'den canlı, mock yok | Glassmorphism UI tasarım |
 | 📊 **Toplu Video Üretimi (Batch)** | 🔒 **5 Katmanlı Ayar Sistemi** | 🎥 **Long + Shorts Format** |
 | Bir formda 50+ konu gir, hepsi sırayla üretilsin | Global → Admin → Modül → Provider → Kullanıcı override zinciri | 16:9 yatay video veya 9:16 dikey Shorts/Reels desteği |
+| 🗑️ **Fiziksel Dosya Temizliği (Hard Delete)** | 📁 **Localhost Klasör Seçici** | 🔁 **Senkronize Pipeline** |
+| İş silindiğinde `.mp4` + session dizini diskten fiziksel olarak temizlenir | Admin panelden output dizinini tıklayarak seçin — dialog ile dizin ağacında gezin | TTS ve altyazı aynı normalize edilmiş metni işler; word-timing kayması sıfır |
 
 ---
 
@@ -37,9 +39,9 @@
 React UI → FastAPI → Worker Loop (Kuyruk) → Pipeline Runner → Providers
                 ↓           ↓                       ↓
             SQLite WAL   Global SSE          Remotion CLI → MP4
-            (Single       (Tüm sayfalar        (Gemini, Edge TTS,
-             Source        anlık güncellenir)    Pexels + fallback)
-             of Truth)
+            (Single       (Tüm sayfalar        (kie.ai / OpenAI,
+             Source        anlık güncellenir)    Edge TTS, Pexels
+             of Truth)                           + fallback chain)
 ```
 
 ---

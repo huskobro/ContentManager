@@ -27,6 +27,7 @@ from backend.database import create_tables, check_db_health
 from backend.utils.logger import get_logger
 from backend.api import jobs as jobs_router
 from backend.api import settings as settings_router
+from backend.api import admin as admin_router
 
 log = get_logger(__name__)
 
@@ -56,28 +57,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         directory = getattr(settings, path_attr)
         directory.mkdir(parents=True, exist_ok=True)
 
-    # Admin panel'de ayarlanan output_dir'i yükle + interrupted jobs kurtarma
-    # (İki işlemi de aynı DB session'da yap — startup time optimizasyonu)
+    # output_dir ayarını DB'den yükle (SettingsResolver üzerinden) + interrupted jobs kurtarma
     from pathlib import Path
     from backend.database import SessionLocal
     from backend.services.job_manager import JobManager
+    from backend.services.settings_resolver import SettingsResolver
 
     with SessionLocal() as db:
-        # 1. Output_dir'i yükle (admin ayarından) — DB'ye direkt sorgula
-        from backend.models.settings import Setting
-        import json as _json
+        # 1. Output_dir'i SettingsResolver üzerinden yükle
         try:
-            row = (
-                db.query(Setting)
-                .filter(Setting.scope == "admin", Setting.key == "output_dir")
-                .first()
-            )
-            if row:
-                saved_output_dir = _json.loads(row.value)
-                settings.output_dir = Path(saved_output_dir)
-                settings.output_dir.mkdir(parents=True, exist_ok=True)
+            resolver = SettingsResolver(db)
+            saved_output_dir = resolver.get(key="output_dir")
+            if saved_output_dir and str(saved_output_dir).strip():
+                resolved_path = Path(str(saved_output_dir))
+                resolved_path.mkdir(parents=True, exist_ok=True)
+                settings.output_dir = resolved_path
                 log.info(
-                    "Admin panel'den output_dir yüklendi",
+                    "SettingsResolver'dan output_dir yüklendi",
                     path=str(settings.output_dir),
                 )
         except Exception as e:
@@ -195,11 +191,7 @@ def health_check() -> JSONResponse:
 
 app.include_router(jobs_router.router, prefix="/api", tags=["jobs"])
 app.include_router(settings_router.router, prefix="/api", tags=["settings"])
-
-# Sonraki fazlarda eklenecek router'lar:
-#   app.include_router(modules.router,   prefix="/api", tags=["modules"])   # Faz 4
-#   app.include_router(providers.router, prefix="/api", tags=["providers"]) # Faz 4
-#   app.include_router(admin.router,     prefix="/api", tags=["admin"])     # Faz 4
+app.include_router(admin_router.router, prefix="/api", tags=["admin"])
 
 
 # ─── Doğrudan çalıştırma ──────────────────────────────────────────────────────

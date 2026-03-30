@@ -30,7 +30,10 @@ import {
   FolderOpen,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   CheckCircle2,
+  Home,
+  X,
 } from "lucide-react";
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -40,6 +43,9 @@ import {
   type SystemSettingDef,
   type SettingCategory,
 } from "@/lib/constants";
+import { api } from "@/api/client";
+
+import { cn } from "@/lib/utils";
 
 // Değer "boş" mı? Boş ise unset (deleteSetting) yapılacak.
 function isEmpty(value: unknown): boolean {
@@ -48,7 +54,181 @@ function isEmpty(value: unknown): boolean {
   if (Array.isArray(value)) return value.length === 0;
   return false;
 }
-import { cn } from "@/lib/utils";
+
+// ─── Klasör Seçici Dialog ─────────────────────────────────────────────────────
+
+interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+interface DirectoryResponse {
+  current_path: string;
+  parent_path: string;
+  is_root: boolean;
+  subdirectories: DirectoryEntry[];
+}
+
+interface FolderPickerDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (path: string) => void;
+  initialPath?: string;
+}
+
+function FolderPickerDialog({ isOpen, onClose, onSelect, initialPath }: FolderPickerDialogProps) {
+  const [currentPath, setCurrentPath] = useState(initialPath ?? "");
+  const [parentPath, setParentPath] = useState("");
+  const [isRoot, setIsRoot] = useState(false);
+  const [subdirs, setSubdirs] = useState<DirectoryEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const adminPin = localStorage.getItem("cm-admin-pin") ?? "";
+
+  const loadDir = useCallback(
+    async (path: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = path ? `?path=${encodeURIComponent(path)}` : "";
+        const data = await api.get<DirectoryResponse>(`/admin/directories${params}`, {
+          adminPin,
+        });
+        setCurrentPath(data.current_path);
+        setParentPath(data.parent_path);
+        setIsRoot(data.is_root);
+        setSubdirs(data.subdirectories);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Dizin yüklenemedi");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [adminPin]
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      loadDir(initialPath ?? "");
+    }
+  }, [isOpen, initialPath, loadDir]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="relative w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl flex flex-col max-h-[80vh]">
+        {/* Başlık */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+          <div className="flex items-center gap-2">
+            <FolderOpen size={16} className="text-primary" />
+            <span className="text-sm font-semibold text-foreground">Klasör Seç</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Mevcut yol breadcrumb */}
+        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border bg-muted/30 shrink-0">
+          <Home size={12} className="text-muted-foreground shrink-0" />
+          <p
+            className="text-[11px] text-muted-foreground font-mono truncate flex-1"
+            title={currentPath}
+          >
+            {currentPath || "—"}
+          </p>
+        </div>
+
+        {/* Dizin listesi */}
+        <div className="flex-1 overflow-y-auto px-2 py-2 min-h-0">
+          {loading ? (
+            <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+              <Loader2 size={14} className="animate-spin mr-2" />
+              Yükleniyor...
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-xs text-red-400 m-2">
+              <AlertCircle size={13} />
+              {error}
+            </div>
+          ) : (
+            <div className="space-y-0.5">
+              {/* Üst dizine git */}
+              {!isRoot && (
+                <button
+                  type="button"
+                  onClick={() => loadDir(parentPath)}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                >
+                  <FolderOpen size={13} className="text-amber-400 shrink-0" />
+                  <span className="font-mono">..</span>
+                  <span className="text-muted-foreground/50 ml-auto">(üst dizin)</span>
+                </button>
+              )}
+
+              {subdirs.length === 0 && (
+                <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  Bu dizinde alt klasör yok
+                </p>
+              )}
+
+              {subdirs.map((dir) => (
+                <button
+                  key={dir.path}
+                  type="button"
+                  onClick={() => loadDir(dir.path)}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-foreground hover:bg-accent transition-colors group"
+                >
+                  <FolderOpen size={13} className="text-amber-400 shrink-0" />
+                  <span className="flex-1 truncate text-left font-mono">{dir.name}</span>
+                  <ChevronRight
+                    size={12}
+                    className="text-muted-foreground/40 group-hover:text-muted-foreground transition-colors shrink-0"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Alt butonlar */}
+        <div className="flex items-center justify-between gap-2 px-4 py-3 border-t border-border shrink-0">
+          <p className="text-[10px] text-muted-foreground truncate flex-1" title={currentPath}>
+            Seçili: <span className="font-mono text-foreground">{currentPath || "—"}</span>
+          </p>
+          <div className="flex gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              İptal
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (currentPath) {
+                  onSelect(currentPath);
+                  onClose();
+                }
+              }}
+              disabled={!currentPath}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Bu Klasörü Seç
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Değer dönüşüm yardımcıları ─────────────────────────────────────────────
 
@@ -276,6 +456,7 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   useEffect(() => {
     setDisplay(dbRecord ? rawToDisplay(def, dbRecord.value) : defaultToDisplay(def));
@@ -361,19 +542,31 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
           ) : def.type === "array" ? (
             <ArrayTagInput value={display} onChange={setDisplay} />
           ) : def.type === "path" ? (
-            <div className="relative">
-              <input
-                type="text"
-                value={display}
-                onChange={(e) => setDisplay(e.target.value)}
-                placeholder="/tam/dizin/yolu"
-                className="w-full rounded-lg border border-border bg-input px-3 py-2 pr-8 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors font-mono"
+            <>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={display}
+                  onChange={(e) => setDisplay(e.target.value)}
+                  placeholder="/tam/dizin/yolu"
+                  className="flex-1 rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setFolderPickerOpen(true)}
+                  title="Klasör seç"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >
+                  <FolderOpen size={13} />
+                </button>
+              </div>
+              <FolderPickerDialog
+                isOpen={folderPickerOpen}
+                onClose={() => setFolderPickerOpen(false)}
+                onSelect={(path) => setDisplay(path)}
+                initialPath={display || undefined}
               />
-              <FolderOpen
-                size={13}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-              />
-            </div>
+            </>
           ) : (
             <input
               type="text"

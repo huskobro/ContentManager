@@ -113,7 +113,6 @@ class Settings(BaseSettings):
     # admin panelinde girilmesi gerekir.
 
     # LLM
-    gemini_api_key: str = Field(default="", description="Google Gemini API anahtarı")
     kieai_api_key: str = Field(
         default="", description="kie.ai üzerinden Gemini erişimi için API anahtarı"
     )
@@ -124,7 +123,6 @@ class Settings(BaseSettings):
 
     # Visuals
     pexels_api_key: str = Field(default="", description="Pexels stok video/fotoğraf API anahtarı")
-    pixabay_api_key: str = Field(default="", description="Pixabay görsel API anahtarı")
 
     # YouTube
     youtube_client_id: str = Field(default="", description="YouTube OAuth2 client ID")
@@ -143,7 +141,7 @@ class Settings(BaseSettings):
     )
     default_llm_provider: str = Field(
         default="kieai",
-        description="Varsayılan LLM provider adı (kieai birincil, gemini yedek)",
+        description="Varsayılan LLM provider adı",
     )
     default_visuals_provider: str = Field(
         default="pexels",

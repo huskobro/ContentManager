@@ -1,1 +1,1 @@
-"""Visuals Providers — Görsel/video indirme sağlayıcıları (Pexels, Pixabay, vb.)."""
+"""Visuals Providers — Görsel/video indirme sağlayıcıları (Pexels)."""

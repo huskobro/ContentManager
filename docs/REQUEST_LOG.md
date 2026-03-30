@@ -250,4 +250,25 @@
 
 ---
 
+---
+
+### REQ-013: Faz 10.92 & 10.93 — Zero-Defect Pipeline, Hard Delete, Klasör Seçici, Senkronizasyon
+
+| Alan | Değer |
+|------|-------|
+| **Kimlik** | REQ-013 |
+| **Tarih** | 2026-03-30 |
+| **Talep Eden** | Huseyin |
+| **Açıklama** | Kod denetimi (Code Audit) raporundaki tüm kritik bulguları gidererek sistemi "Sıfır Hata (Zero-Defect)" durumuna taşı. Görevler: (1) Deprecated `google-generativeai` SDK ve tüm ölü kod referanslarını (Gemini, Pixabay, composition stub) temizle; (2) `output_dir` startup mutation'ını SettingsResolver standart akışıyla değiştir; (3) `/api/admin/costs` gerçek backend endpoint'ini ekle — MOCK_DATA'yı kaldır; (4) İş silme işleminde `.mp4` dosyasını ve session dizinini fiziksel olarak diskten temizle (Hard Delete); (5) Admin panelde `output_dir` için localhost dizin ağacında gezinen klasör seçici dialog ekle; (6) Script adımındaki hardcoded prompt'ları SettingsResolver/PromptManager entegrasyonuyla yönetilebilir hale getir; (7) TTS ve subtitle pipeline'larındaki word-timing kayma sorununu çift taraflı metin normalizasyonuyla çöz; (8) Composition adımındaki `ThreadingMixIn` overengineering'i stdlib `ThreadingHTTPServer` ile sadeleştir. |
+| **Kapsam** | Backend: `backend/providers/llm/gemini.py` (silindi), `backend/providers/composition/__init__.py` (silindi), `backend/config.py`, `backend/services/settings_resolver.py`, `backend/services/job_manager.py`, `backend/main.py`, `backend/api/admin.py` (yeni), `backend/pipeline/steps/composition.py`, `backend/pipeline/steps/subtitles.py`, `backend/modules/standard_video/pipeline.py`, `backend/modules/news_bulletin/pipeline.py`, `requirements.txt`. Frontend: `frontend/src/pages/admin/GlobalSettings.tsx` |
+| **Öncelik** | Kritik |
+| **Durum** | Tamamlandı |
+| **İlgili Modüller** | backend/providers, backend/config, backend/services, backend/api, backend/pipeline, frontend/admin |
+| **İlgili Dosyalar** | `backend/providers/llm/gemini.py` (silindi), `backend/api/admin.py` (yeni), `backend/main.py`, `backend/config.py`, `backend/services/settings_resolver.py`, `backend/services/job_manager.py`, `backend/pipeline/steps/composition.py`, `backend/pipeline/steps/subtitles.py`, `backend/modules/standard_video/pipeline.py`, `backend/modules/news_bulletin/pipeline.py`, `frontend/src/pages/admin/GlobalSettings.tsx`, `requirements.txt` |
+| **Uygulanma Notları** | **Ölü Kod Temizliği:** `gemini.py` silindi, `google-generativeai` requirements'dan çıkarıldı, `pixabay_api_key` config/resolver'dan silindi, composition stub kaldırıldı. **output_dir:** Startup'ta ham SQLAlchemy yerine `SettingsResolver.get()` kullanılıyor. **CostTracker Endpoint:** `backend/api/admin.py` oluşturuldu — `GET /api/admin/costs` DB'den gerçek SUM sorgusu, MOCK_DATA yok. **Hard Delete:** `delete_job()` artık `os.remove(output_path)` + `shutil.rmtree(session_dir)` yapıyor. **Klasör Seçici:** `FolderPickerDialog` bileşeni — `GET /api/admin/directories` ile canlı dizin listesi, breadcrumb, üst/alt gezinti, "Bu Klasörü Seç" butonu. **Prompt Entegrasyonu:** `step_script()` artık `config.get("script_prompt_template")` okuyor; PromptManager'dan ayarlanan değer öncelikli, yoksa varsayılan şablon. **TTS/Subtitle Sync:** `_normalize_narration_for_tts()` ve `_normalize_narration()` fonksiyonları — aynı Markdown temizleme regex'i her iki tarafta; scene_number bazlı lookup ile sıra garantisi. **ThreadingHTTPServer:** Manuel `ThreadingMixIn` kaldırıldı, stdlib `ThreadingHTTPServer` kullanılıyor. **Kontroller:** `tsc --noEmit` hatasız, tüm Python syntax ve import kontrolleri geçti. |
+| **Riskler** | Yok — tüm değişiklikler mevcut işlevselliği kırmadan refactor niteliğinde |
+| **Açık Kalan Noktalar** | Yok — tüm audit bulguları giderildi |
+
+---
+
 *Her yeni kullanıcı talebi bu dokümana eklenir. Karşılama durumu `IMPLEMENTATION_REPORT.md`'de raporlanır.*

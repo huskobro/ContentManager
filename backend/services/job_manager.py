@@ -642,9 +642,31 @@ class JobManager:
                 f"Aktif iş silinemez (durum: {job.status}). Önce iptal edin."
             )
 
-        # Session dizinini diskten temizle
+        import os
+        import shutil
+
+        # Output dizinindeki final .mp4 dosyasını fiziksel olarak sil
+        output_path_str = getattr(job, "output_path", None)
+        if output_path_str:
+            output_file = Path(output_path_str)
+            if output_file.exists() and output_file.is_file():
+                try:
+                    os.remove(output_file)
+                    log.info(
+                        "Final video dosyası silindi",
+                        job_id=job_id[:8],
+                        path=str(output_file),
+                    )
+                except Exception as e:
+                    log.warning(
+                        "Final video silinemedi",
+                        job_id=job_id[:8],
+                        path=str(output_file),
+                        error=str(e),
+                    )
+
+        # Session dizinini diskten temizle (ara dosyalar)
         if job.session_dir:
-            import shutil
             session_path = Path(job.session_dir)
             if session_path.exists():
                 shutil.rmtree(session_path, ignore_errors=True)

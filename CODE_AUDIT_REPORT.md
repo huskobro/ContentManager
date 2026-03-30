@@ -2,510 +2,518 @@
 
 > **Denetim Tarihi:** 2026-03-30
 > **Denetçi:** Kıdemli Yazılım Mimarı (AI destekli)
-> **Kod Tabanı Sürümü:** v1.0.0
-> **Denetlenen Toplam Dosya:** 73 (44 Python, 21 TypeScript/TSX, 8 Remotion)
-> **Toplam Kod Satırı:** ~16.500
+> **Kod Tabanı Sürümü:** v1.5.0
+> **Denetim Kapsamı:** Tam kod tabanı — backend, frontend, remotion, servisler, sağlayıcılar, pipeline
 
 ---
 
 ## 1. Yönetici Özeti
 
-ContentManager, 10 geliştirme fazında inşa edilmiş, iyi mimariye sahip, localhost-first bir YouTube video üretim platformudur. Kod tabanı güçlü sorumluluk ayrımı (FastAPI + React + Remotion), sağlam 5 katmanlı ayar hiyerarşisi ve gerçekten uçtan uca çalışan modüler bir pipeline göstermektedir. Kod temiz, tip güvenli ve büyük ölçüde dead code'dan arındırılmıştır. Ancak **UI, 3 kritik noktada tutamayacağı sözler veriyor** ve `.env`, SQLite ve localStorage arasında **veri kaynağı belirsizlikleri** sistem büyüdükçe karışıklık yaratacaktır.
+ContentManager, 4 farklı referans projeden harmanlanan ve localhost-first, moduler bir YouTube içerik üretim platformudur. Temel mimari kararlar sağlamdır: FastAPI + SQLite WAL + asyncio worker loop + React + Remotion kombinasyonu, localhost kullanım senaryosu için uygun ve ölçekli değildir. Ancak çeşitli önemli sorunlar mevcuttur: **CostTracker sayfası tamamen sahte veri göstermektedir** (`/api/admin/costs` endpoint'i yoktur, bunu silen kod sıfır mock data döner), **`max_concurrent_jobs` admin ayarı DB'ye yazılır ama runtime'da asla okunmaz** (worker loop `app_settings` singleton'ından okur), ve **ProviderManager API key kaydında çift yazma yapar** (birisi ölü — provider scope'a yazılan asla okunmaz). Bu üç sorun, admin panelinin üç kritik özelliğinin güvenilmez ya da tamamen işlevsiz olduğu anlamına gelir. Kod tabanı genel olarak sağlıklıdır ve sıfırdan yazmayı gerektirmez — hedefli düzeltmeler yeterlidir.
 
-### En Ciddi 5 Mimari Sorun
+### 5 En Ciddi Mimari Problem
 
-| # | Sorun | Önem |
-|---|-------|------|
-| 1 | **Modül "aktif/pasif" toggle'ı kozmetik** — admin UI'dan modülü pasife alabilir ama pipeline bunu yok sayar; pasif modüllerde iş hâlâ çalışır | Kritik |
-| 2 | **Provider fallback sırası UI'ı dead code** — admin sıralama yapabilir ama `ProviderRegistry` bu sırayı DB'den asla okumaz | Kritik |
-| 3 | **Kullanıcı ayarları sadece localStorage'a kaydediliyor** — "Ayarlar kaydedildi" toast mesajı yanıltıcı; ayarlar backend'e gönderilmiyor | Yüksek |
-| 4 | **Admin PIN frontend doğrulaması kolayca atlanabilir** — sadece localStorage okuma; gerçek koruma backend header kontrolü, ama frontend sahte güvenlik hissi veriyor | Orta |
-| 5 | **İş silindiğinde session dosyaları yetim kalıyor** — `DELETE /api/jobs/{id}` DB kayıtlarını siler ama `sessions/{job_id}/` diskte kalır | Orta |
+1. **CostTracker backend endpoint eksikliği** — `/api/admin/costs` hiç uygulanmamış; frontend hata alınca tüm değerleri sıfır olan MOCK_DATA gösterir. Maliyet verisi DB'de mevcut ama hiç servis edilmiyor.
+2. **`max_concurrent_jobs` runtime drift** — Worker loop `app_settings.max_concurrent_jobs` okur (job_manager.py:770), DB'deki admin ayarını asla okumaz. Admin panelden değişiklik restart olmadan etkisizdir.
+3. **`output_dir` mutation anti-pattern** — Startup'ta ve settings save'de ham SQLAlchemy sorgusu `app_settings` singleton'ını mutasyonlar. Bu, 5-katman SettingsResolver'ı tamamen bypass eder ve yeniden başlatma gerektirmeden output dizinini değiştirmek mümkün değildir.
+4. **Deprecated Gemini SDK** — `gemini.py` eski `google.generativeai` SDK'yı kullanır ve `warnings.filterwarnings("ignore")` ile uyarıları bastırır. Bu, gizli bir kırılma riski yaratır.
+5. **Test yokluğu** — Projenin hiçbir yerinde test dosyası bulunmuyor. Kritik path'ler (pipeline runner, settings resolver, provider fallback) için sıfır test coverage.
 
-### En Ciddi 5 UI/UX Operasyonel Gerçeklik Sorunu
+### 5 En Ciddi UI/UX Operasyonel Gerçeklik Problemi
 
-| # | Sorun | Önem |
-|---|-------|------|
-| 1 | Modül aktif/pasif toggle'ının çalışma zamanında sıfır etkisi var | Kritik |
-| 2 | Provider fallback sırası yapılandırması hiçbir yerde tüketilmiyor | Kritik |
-| 3 | Kullanıcı Ayarları kayıt butonu sadece localStorage yazan işlem için başarı toast'ı gösteriyor | Yüksek |
-| 4 | SSE bağlantı kopması sadece log'a yazılıyor, ana UI'da gösterilmiyor | Yüksek |
-| 5 | ProviderManager API anahtarlarını doğrulama yapmadan kaydediyor; "bağlantı test et" yok | Orta |
+1. **CostTracker tüm değerleri sıfır gösteriyor** — Kullanıcı maliyet takip ettiğini sanır ama gerçekte mock veri görür. Yanıltıcı güven oluşturur.
+2. **`max_concurrent_jobs` ayar ekranı etkisiz** — Admin panelden değer kaydedilir, toast başarı gösterir ama worker loop bu değeri okumaz. Yapısal olarak yanıltıcı.
+3. **Provider API key çift yazma** — ProviderManager iki farklı scope'a yazar; provider scope yazısı asla okunmaz ama başarı toast'u gösterir. Yarı işlevsel.
+4. **Output dizini ayarı restart gerektiriyor** — Admin'den `output_dir` değiştirme görünürde çalışır ama etki ancak server restart sonrası gerçekleşir; UI bunu belirtmiyor.
+5. **Job resume butonu tutarsız davranış** — `interrupted` statüsündeki job'lar için "Devam Et" butonu görüntülenir ancak bu durum, tamamlanmış adımların doğru şekilde atlanıp atlanmadığı test edilmemiş.
 
-### En Ciddi 5 Veri Kaynağı / Konfigürasyon Sorunu
+### 5 En Ciddi Source-of-Truth / Config Problemi
 
-| # | Sorun | Önem |
-|---|-------|------|
-| 1 | API anahtarları hem `.env`'de HEM SQLite ayarlarında var — çalışma zamanında hangisi kazanır belirsiz (cevap: DB katmanı .env'yi geçer, ama bu belgelenmemiş) | Yüksek |
-| 2 | `ADMIN_PIN` sadece `.env`'de yaşıyor ama frontend kullanıcının girdiği PIN'i localStorage'da saklıyor — senkronizasyon mekanizması yok | Orta |
-| 3 | Modül `DEFAULT_CONFIG` dict'leri DB'ye otomatik oluşturulmuyor; admin modül düzeyindeki override'ları manuel olarak ayarlamalı | Orta |
-| 4 | `openai_api_key`, `elevenlabs_api_key`, `pixabay_api_key` config'de tanımlı ama hiçbir provider implementasyonu bunları tüketmiyor | Düşük |
-| 5 | `GET /api/settings/resolved` herkese açık — API anahtar kalıpları dahil tüm yapılandırmayı herhangi bir çağırıcıya açıyor | Düşük |
+1. **`max_concurrent_jobs` için iki kaynak** — `app_settings` (runtime okur) vs DB `settings` tablosu (admin yazar). Hangi birinin kazandığı belirsiz değil, app_settings her zaman kazanır — DB yazısı etkisizdir.
+2. **Provider API key için iki write path** — `scope='admin', key='{provider}_api_key'` (geçerli) vs `scope='provider', key='api_key'` (ölü). Her ikisi de yazılır, sadece birisi okunur.
+3. **`output_dir` için iki okuma path** — SettingsResolver üzerinden (5-katman, ama kullanılmıyor) vs ham SQLAlchemy sorgusu (startup+save, gerçekte kullanılan).
+4. **Settings snapshot immutability kırılması** — Pipeline settings snapshot kullanır (doğru), ama composition step `app_settings.output_dir` okur (snapshot'tan değil). Anlık değişiklikler bazı ayarlar için etkili olur.
+5. **Frontend settings state** — `settingsStore.ts` hem user hem admin ayarları tutar. Admin değişikliklerinin store'a ne zaman yansıdığı, polling mi SSE mi belirsiz.
 
-### En Büyük 5 Sadeleştirme Fırsatı
+### 5 En Büyük Basitleştirme Fırsatı
 
-| # | Fırsat | Kazanım |
-|---|--------|---------|
-| 1 | `STATUS_CONFIG` ve `MODULE_INFO`'yu 4 frontend sayfasından çıkarıp `lib/constants.ts`'e taşı | 120+ satır tekrarı kaldır |
-| 2 | Remotion frame hesaplama döngüsü, Vignette bileşeni ve `DEFAULT_DURATION_SECONDS`'ı ortak utils'e çıkar | 3 composition'daki üçlü tekrarı kaldır |
-| 3 | `StandardVideo.tsx` ve `NewsBulletin.tsx`'den kullanılmayan `spring` import'unu kaldır | Dead import temizliği |
-| 4 | `AppShell.tsx`'den hayalet `/admin/cost-tracker` referansını kaldır | Dead referans |
-| 5 | `ProductReview.tsx`'de `SECTION_COLORS`, `SECTION_LABELS`, `SECTION_ICONS`'ı tek `SECTION_CONFIG`'da birleştir | 3 lookup'ı 1'e indir |
+1. **PromptManager'ı ModuleManager accordion'ı yap** — Ayrı sayfa gereksiz, modül bazlı prompt yönetimi ModuleManager'ın içinde olabilir.
+2. **Dead provider-scope API key write'ı sil** — ProviderManager.tsx L375-386'daki çift yazma tek yazma olabilir; ölü branch silinmeli.
+3. **`output_dir` runtime mutation'ını SettingsResolver'a taşı** — Özel-cased startup logic'i genel ayar çözümleme mekanizmasına dahil et.
+4. **CostTracker'a gerçek endpoint ekle** — ~20 satır DB aggregate sorgusu ile MOCK_DATA sorununu tamamen çöz.
+5. **Gemini SDK'yı yeni API'ye migrate et** — `google-generativeai` → `google-genai` geçişi warnings.filterwarnings hack'ini ortadan kaldırır.
 
 ---
 
 ## 2. Mimari Değerlendirme
 
-### Mimari Desen
+### Mimari Pattern ve Uyum
 
-**Desen:** Modüler monolit (3 süreç: FastAPI, Vite, Remotion CLI)
-**Uygunluk:** Localhost-first, tek geliştirici YouTube otomasyon aracı için uygun
-**Çalışma Zamanı:** Asenkron Python (FastAPI + uvicorn) + React SPA + Remotion CLI alt işlemi
+**Pattern:** Monolitik localhost-first uygulama, FastAPI (Python) backend + React (TypeScript) frontend + Remotion (Node.js) video engine. In-process asyncio worker loop ile kuyruk yönetimi. SQLite WAL tek veri kaynağı.
 
-### Katman Değerlendirmesi
+**Uyum Değerlendirmesi:** Seçilen mimari, localhost-first kullanım senaryosu için uygundur. Docker/Redis/Celery gibi dış bağımlılıklar bilerek dışarıda bırakılmış, bu doğru bir karardır. FastAPI + asyncio + SQLite WAL kombinasyonu single-user localhost senaryosu için aşırı değil, yeterli.
 
-| Katman | Durum | Notlar |
-|--------|-------|--------|
-| **API (FastAPI route'ları)** | Gerçek | 13 endpoint, tümü işlevsel, düzgün doğrulama |
-| **İş Mantığı (pipeline, modüller, provider'lar)** | Gerçek | 6 adımlı pipeline gerçek provider'larla çalışıyor |
-| **Kalıcılık (SQLite WAL)** | Gerçek | Jobs, steps, settings — düzgün ORM |
-| **Durum Yönetimi (Zustand store'ları)** | Gerçek | 4 store, düzgün ayrım, SSE entegrasyonu çalışıyor |
-| **UI (React sayfaları)** | Çoğunlukla Gerçek | 10 sayfa, 3'ünde dürüstlük sorunu var (yukarıya bakın) |
-| **Video Kompozisyon (Remotion)** | Gerçek | 3 composition derleniyor, CLI alt işlemiyle render yapılıyor |
-| **5 Katmanlı Ayarlar** | Gerçek | Hiyerarşi çalışıyor; admin kilitleri uygulanıyor; iş oluşturmada snapshot alınıyor |
-| **Provider Fallback** | Kısmi | Registry var, `execute_with_fallback()` çalışıyor, ama admin yapılandırmalı sıra yok sayılıyor |
+### Gerçek vs Yapay Katmanlar
 
-### Bağımlılık / Uyum (Coupling / Cohesion)
+**Gerçek değer yaratan katmanlar:**
+- `pipeline/runner.py` — asıl iş akışı orkestratörü
+- `services/settings_resolver.py` — 5-katman çözümleme mekanizması
+- `services/job_manager.py` — SQLite-backed job state yönetimi
+- `providers/` — gerçek provider abstraction'ı
+- `pipeline/steps/` — modüler adım tanımları
 
-**Bağımlılık (Coupling):** DÜŞÜK — İyi ayrım. Modüller birbirini import etmiyor (news_bulletin/product_review'un standard_video step'lerini tekrar kullanması hariç, bu kasıtlı). Provider'lar registry tabanlı.
+**Yapay veya zayıf katmanlar:**
+- `services/cost_tracker.py` — backend dosyası var, API endpoint yok, frontend mock data gösterir
+- `pipeline/cache.py` — CacheManager mantığı basit ama `runner.py`'de inline da yapılabilirdi
 
-**Uyum (Cohesion):** YÜKSEK — Her modülün net sorumluluğu var. Pipeline step'leri bağımsız async fonksiyonlar. Store'ların ayrı alanları var.
+### Coupling / Cohesion
 
-### Proje Yapısı Hedefe Uyuyor mu?
+**Düşük coupling (iyi):** Provider'lar birbirinden bağımsız. Modüller pipeline adımlarını paylaşır ama kendi config'lerine sahip. SSE stream'i pipeline'dan bağımsız.
 
-**Evet.** Kod tabanı söz verdiğini teslim ediyor: modüler, genişletilebilir bir YouTube içerik üretim platformu. 3 katmanlı mimari (backend/frontend/remotion) problem alanına temiz bir şekilde eşleniyor. 10 fazlık geliştirme yaklaşımı, önemli teknik borç birikimi olmadan artımlı olarak sağlam kod üretti.
+**Yüksek coupling (sorunlu):**
+- `composition.py` step'i `app_settings` singleton'ını direkt okur (settings resolver bypass)
+- `job_manager.py` worker loop `app_settings.max_concurrent_jobs` okur
+- `runner.py` import zinciri: runner → job_manager → models → settings — tüm sistemi birbirine bağlar
+
+### Codebase Şekli ile Ürün Vaadi Uyumu
+
+Ürün vaadi: "6 adımlı pipeline, provider fallback, global SSE, 5 altyazı stili, 3 içerik modülü, SaaS kalitesinde admin paneli."
+
+**Gerçekte çalışan:** 6-adım pipeline ✓, provider fallback ✓, global SSE ✓, 3 modül ✓, admin panel ✓ (kısmi)
+
+**Çalışmayan/yanıltıcı:** Cost tracker (mock), max_concurrent_jobs admin ayarı (runtime etkisiz)
 
 ---
 
 ## 3. UI/UX Sistem Değerlendirmesi
 
-### Yapısal Güvenilirlik
+### UI Yapısal Güvenilirlik
 
-UI **10 sayfanın 8'inde yapısal olarak güvenilir**. Dashboard, CreateVideo, JobList, JobDetail, AdminDashboard, GlobalSettings, ProviderManager (API anahtar kaydetme) ve AdminJobs'un tümü uçtan uca gerçek backend operasyonlarına izlenebilir.
+Frontend React + Zustand + SSE mimarisi genel olarak sağlamdır. API client wrapper (`client.ts`) tutarlı, SSE hook'ları gerçek zamanlı güncellemeler için doğru çalışıyor. Zustand store'ları basit ve fazla mühendislik içermiyor.
 
-**İki sayfada dürüstlük sorunu var:**
-1. **UserSettings** — kayıt işlemi sadece localStorage, backend'e kalıcı değil
-2. **ModuleManager** — modül aktif toggle'ı kaydediliyor ama çalışma zamanında hiç kontrol edilmiyor
+**Güvenilir:** Job oluşturma formu, job detay sayfası, step progress, log viewer, provider manager (API key kaydetme gerçek çalışıyor), module manager, prompt manager.
 
-### Bilgi Mimarisi
+**Güvenilmez / Yanıltıcı:**
+- CostTracker sayfası: Tamamen mock veri
+- Global Settings'deki `max_concurrent_jobs`: Kaydediliyor ama runtime etkisi yok
+- ProviderManager API key formu: Çalışıyor ama provider-scope'a da yazmak (ölü yazma) potansiyel karışıklık
 
-Tutarlı çift UI tasarımı (kullanıcı + admin), net navigasyon. PAGE_TITLES eşlemesinde hiçbir route'a karşılık gelmeyen bir hayalet giriş var (`/admin/cost-tracker`).
+### UX'in Runtime Davranışı Yansıtması
 
-### Veri Kaynağı Çatışmaları
+Genel olarak iyi — SSE ile gerçek zamanlı step progress, log stream, job status güncellemeleri doğru çalışıyor. Kullanıcı pipeline'ın nerede olduğunu görebiliyor.
 
-Ayarlar 3 konumdan girilebilir:
-1. `.env` dosyası (başlangıçta yüklenir)
-2. Admin paneli (GlobalSettings, ModuleManager, ProviderManager → SQLite)
-3. Kullanıcı tercihleri (UserSettings → sadece localStorage)
+**Eksik feedback:**
+- `max_concurrent_jobs` değişikliğinin "restart gerektirir" uyarısı yok
+- `output_dir` değişikliğinin "restart gerektirir" uyarısı yok
+- CostTracker'da "veri yükleniyor" yerine sessiz mock data
 
-SettingsResolver, 1-4 katmanları kod+DB'den doğru şekilde birleştiriyor. Katman 5 (kullanıcı) yalnızca iş oluştururken istek gövdesindeki `settings_overrides` ile uygulanıyor. **Bu tasarım sağlam** ama **kullanıcılar için belgelenmemiş** — bir admin global ayarı değiştirdiğinde zaten oluşturulmuş işlerde etkisini görmeyecek (çünkü işler oluşturma anında ayarları snapshot'lıyor).
+### Information Architecture
+
+7 admin sayfası (AdminDashboard, ModuleManager, PromptManager, ProviderManager, GlobalSettings, CostTracker, AdminJobs) makul organize edilmiş. PromptManager'ın ayrı sayfa olması gereksiz — ModuleManager altında accordion olabilir.
+
+5 user sayfası (Dashboard, CreateVideo, JobList, JobDetail, UserSettings) temiz ve işlevsel.
 
 ---
 
 ## 4. Dosya ve Modül Bulguları
 
-### Çekirdek Modüller (Korunmalı)
+### Çekirdek Modüller
 
-| Dosya | Amaç | Katman | Risk | Öneri |
-|-------|-------|--------|------|-------|
-| `backend/main.py` (178 satır) | FastAPI app, yaşam döngüsü, CORS, health | altyapı | yüksek | koru |
-| `backend/config.py` (194 satır) | Pydantic ayarları, .env yükleme | config | yüksek | koru |
-| `backend/database.py` (121 satır) | SQLite WAL motoru, session fabrikası | kalıcılık | kritik | koru |
-| `backend/models/job.py` (266 satır) | Job + JobStep ORM | kalıcılık | kritik | koru |
-| `backend/models/settings.py` (124 satır) | Setting ORM (5 katmanlı) | kalıcılık | yüksek | koru |
-| `backend/models/schemas.py` (240 satır) | Pydantic istek/yanıt şemaları | API | yüksek | koru |
-| `backend/api/jobs.py` (400 satır) | Job CRUD + SSE endpoint'leri | API | yüksek | koru |
-| `backend/api/settings.py` (305 satır) | Ayarlar CRUD endpoint'leri | API | yüksek | koru |
-| `backend/services/job_manager.py` (629 satır) | İş yaşam döngüsü + SSE hub | iş_mantığı | kritik | koru |
-| `backend/services/settings_resolver.py` (461 satır) | 5 katmanlı çözümleme motoru | iş_mantığı | yüksek | koru |
-| `backend/pipeline/runner.py` (400 satır) | Asenkron iş yürütme orkestratörü | iş_mantığı | kritik | koru |
-| `backend/pipeline/cache.py` (336 satır) | Session tabanlı dosya önbelleği | kalıcılık | yüksek | koru |
-| `backend/modules/base.py` (150 satır) | ContentModule ABC + Capability enum | iş_mantığı | yüksek | koru |
-| `backend/modules/registry.py` (138 satır) | Modül registry singleton | iş_mantığı | yüksek | koru |
-| `backend/modules/standard_video/pipeline.py` (647 satır) | 6 adımlı pipeline (gerçek provider'lar) | iş_mantığı | kritik | koru |
-| `backend/providers/base.py` (125 satır) | BaseProvider ABC + ProviderResult | iş_mantığı | yüksek | koru |
-| `backend/providers/registry.py` (305 satır) | Provider registry + fallback zinciri | iş_mantığı | yüksek | koru |
+| Dosya | Amaç | Önem | Katman | Ana Problemler | Öneri | Risk |
+|-------|------|------|--------|----------------|-------|------|
+| `backend/main.py` | FastAPI app, CORS, startup, worker loop başlatma | core | infra | output_dir mutation startup'ta; lifespan event'te SSE manager init | keep | medium |
+| `backend/pipeline/runner.py` | Pipeline orkestratörü, adım-adım yürütme | core | business logic | output_dir app_settings'ten okur (snapshot bypass) | keep, fix output_dir reading | high |
+| `backend/services/job_manager.py` | Job CRUD, worker loop, state transitions | core | business logic | max_concurrent_jobs app_settings'ten okur (L770); cost aggregation var ama endpoint yok | keep, fix max_concurrent_jobs | high |
+| `backend/services/settings_resolver.py` | 5-katman config çözümleme | core | business logic | output_dir için bypass var; locked key logic tamam | keep | medium |
+| `backend/database.py` | SQLite WAL init, tablo oluşturma | core | persistence | tablolar correct; WAL mode doğru | keep | low |
+| `backend/config.py` | Global defaults, .env yükleme, AppSettings | core | config | output_dir hem config'de hem DB'de; max_concurrent_jobs aynı sorun | keep, consider removing DB overrides for these | medium |
 
 ### Destekleyici Modüller
 
-| Dosya | Amaç | Katman | Risk | Öneri |
-|-------|-------|--------|------|-------|
-| `backend/pipeline/steps/script.py` (376 satır) | Kategori prompt'ları, hook'lar | iş_mantığı | orta | koru |
-| `backend/pipeline/steps/subtitles.py` (432 satır) | 3 katmanlı zamanlama, 5 stil | iş_mantığı | orta | koru |
-| `backend/pipeline/steps/composition.py` (643 satır) | Props builder'lar, Remotion CLI | iş_mantığı | yüksek | koru |
-| `backend/modules/news_bulletin/pipeline.py` (368 satır) | URL çekme, bülten senaryosu | iş_mantığı | orta | koru |
-| `backend/modules/product_review/pipeline.py` (258 satır) | Pro/Con yapılandırılmış inceleme | iş_mantığı | orta | koru |
-| `backend/providers/llm/gemini.py` (204 satır) | Google Gemini LLM provider | altyapı | düşük | koru |
-| `backend/providers/tts/edge_tts_provider.py` (214 satır) | Edge TTS (ücretsiz, kelime zamanlaması) | altyapı | düşük | koru |
-| `backend/providers/visuals/pexels.py` (355 satır) | Pexels stok medya | altyapı | düşük | koru |
-| `backend/utils/logger.py` (195 satır) | JSON yapılandırılmış loglama | altyapı | orta | koru |
+| Dosya | Amaç | Önem | Katman | Ana Problemler | Öneri | Risk |
+|-------|------|------|--------|----------------|-------|------|
+| `backend/api/jobs.py` | Job CRUD endpoints, SSE stream | supporting | route | SSE per-job ve global doğru; endpoint coverage iyi | keep | low |
+| `backend/api/settings.py` | Settings read/write endpoints | supporting | route | output_dir özel case burada da; genel mantık temiz | keep | low |
+| `backend/api/admin.py` | Admin PIN doğrulama, admin endpoints | supporting | route | `/api/admin/costs` eksik — en kritik eksiklik | keep, add costs endpoint | medium |
+| `backend/api/modules.py` | Module management endpoints | supporting | route | temiz; capability toggle çalışıyor | keep | low |
+| `backend/api/providers.py` | Provider management, health check | supporting | route | health check async/sync karışıklığı var | keep | low |
+| `backend/services/cost_tracker.py` | Cost hesaplama servisi | supporting | business logic | backend kodu var ama API endpoint yok; frontend mock gösterir | keep, add endpoint | medium |
+| `backend/pipeline/cache.py` | Session-based intermediate output cache | supporting | persistence | basit ve işlevsel | keep | low |
+| `backend/utils/logger.py` | JSON structured logging | supporting | infra | temiz | keep | low |
 
-### Frontend Çekirdek
+### Şüpheli Modüller
 
-| Dosya | Amaç | Katman | Risk | Öneri |
-|-------|-------|--------|------|-------|
-| `frontend/src/api/client.ts` (196 satır) | Fetch sarmalayıcı + SSE | API | yüksek | koru |
-| `frontend/src/stores/jobStore.ts` (362 satır) | Job CRUD + SSE abonelik | durum | yüksek | koru |
-| `frontend/src/stores/settingsStore.ts` (155 satır) | Kullanıcı varsayılanları + çözümlenmiş config | durum | yüksek | koru |
-| `frontend/src/stores/adminStore.ts` (172 satır) | Admin ayarlar CRUD | durum | yüksek | koru |
-| `frontend/src/stores/uiStore.ts` (131 satır) | Tema, sidebar, toast'lar | durum | yüksek | koru |
-| `frontend/src/pages/user/JobDetail.tsx` (525 satır) | SSE canlı ilerleme, loglar | UI | yüksek | koru |
-| `frontend/src/pages/admin/ProviderManager.tsx` (607 satır) | Provider yapılandırma (en büyük sayfa) | UI | yüksek | koru |
+| Dosya | Amaç | Önem | Katman | Ana Problemler | Öneri | Risk |
+|-------|------|------|--------|----------------|-------|------|
+| `backend/providers/llm/gemini.py` | Gemini LLM provider | suspicious | business logic | deprecated SDK, warnings bastırılıyor | refactor to new SDK | medium |
+| `backend/pipeline/steps/composition.py` | Remotion composition step | suspicious | business logic | app_settings doğrudan okur; ThreadingMixIn HTTP server in async | keep, fix app_settings | medium |
 
-### Şüpheli / Dikkat Gerektiren
+### Yüksek Risk Modülleri
 
-| Dosya | Sorun | Öneri |
-|-------|-------|-------|
-| `frontend/src/pages/user/UserSettings.tsx` (441 satır) | Kayıt sadece localStorage; yanıltıcı başarı toast'ı | yeniden bağla |
-| `frontend/src/pages/admin/ModuleManager.tsx` (461 satır) | Modül toggle'ının çalışma zamanı etkisi yok | yeniden bağla |
-| `frontend/src/pages/admin/GlobalSettings.tsx` (371 satır) | Kullanılmayan `SCOPE_TABS` sabiti (satır 27-29) | sadeleştir |
-| `frontend/src/components/layout/AppShell.tsx` (52 satır) | Hayalet `/admin/cost-tracker` PAGE_TITLES'da (satır 21) | sadeleştir |
-| `frontend/src/components/layout/Header.tsx` (183 satır) | PIN backend yerine localStorage'a karşı doğrulanıyor (satır 24-26) | belgele |
+| Dosya | Amaç | Önem | Katman | Ana Problemler | Öneri | Risk |
+|-------|------|------|--------|----------------|-------|------|
+| `backend/pipeline/runner.py` | Pipeline orkestratörü | core | business logic | Settings snapshot bypass (composition için); output_dir karışıklığı | fix | high |
+| `backend/services/job_manager.py` | Job state + worker loop | core | business logic | max_concurrent_jobs runtime drift; cost endpoint yok | fix | high |
 
-### Remotion — Yeniden Düzenleme Adayları
+### UI Modülleri — Admin
 
-| Dosya | Sorun | Öneri |
-|-------|-------|-------|
-| `remotion/src/compositions/StandardVideo.tsx` (292 satır) | Kullanılmayan `spring` import'u | sadeleştir |
-| `remotion/src/compositions/NewsBulletin.tsx` (338 satır) | Kullanılmayan `spring` import'u, kullanılmayan `globalFrame` değişkeni | sadeleştir |
-| `remotion/src/compositions/ProductReview.tsx` (560 satır) | En büyük dosya; 3 ayrı lookup nesnesi birleştirilmeli | yeniden düzenle |
-| `remotion/src/Root.tsx` (172 satır) | `calculateMetadata` 3 kez tekrarlanmış | yeniden düzenle |
+| Dosya | Amaç | Önem | Katman | Ana Problemler | Öneri | Risk |
+|-------|------|------|--------|----------------|-------|------|
+| `frontend/src/pages/admin/CostTracker.tsx` | Maliyet takibi sayfası | core | UI | Backend endpoint yok; mock data gösteriyor | fix (add backend endpoint) | high |
+| `frontend/src/pages/admin/ProviderManager.tsx` | Provider API key, fallback sırası | core | UI | Dual API key write (L375-386); dead write | fix (remove dead write) | medium |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | Global ayarlar yönetimi | core | UI | max_concurrent_jobs save etkisiz | fix (add restart warning) | medium |
+| `frontend/src/pages/admin/ModuleManager.tsx` | Module aktif/pasif, capability | supporting | UI | temiz | keep | low |
+| `frontend/src/pages/admin/PromptManager.tsx` | Prompt şablonları yönetimi | optional | UI | Ayrı sayfa gereksiz; ModuleManager accordion olabilir | merge into ModuleManager | low |
+| `frontend/src/pages/admin/AdminDashboard.tsx` | Sistem durumu, özet | supporting | UI | temiz | keep | low |
+| `frontend/src/pages/admin/AdminJobs.tsx` | Tüm job'lar admin görünümü | supporting | UI | temiz | keep | low |
 
-### Kaldırılabilir Adaylar
+### UI Modülleri — User
 
-| Dosya/Öğe | Neden Kaldırılabilir | Güven | Risk |
-|-----------|---------------------|-------|------|
-| `spring` import'u `StandardVideo.tsx`'de | Dosyada kullanılmıyor | Yüksek | Yok |
-| `spring` import'u `NewsBulletin.tsx`'de | Dosyada kullanılmıyor | Yüksek | Yok |
-| `globalFrame` değişkeni `NewsBulletin.tsx`'de | Kullanılmıyor | Yüksek | Yok |
-| `SCOPE_TABS` sabiti `GlobalSettings.tsx` satır 27-29 | Tanımlı ama hiç kullanılmıyor | Yüksek | Yok |
-| `/admin/cost-tracker` `AppShell.tsx` satır 21'de | Karşılık gelen route yok | Yüksek | Yok |
-| `backend/providers/composition/__init__.py` | Boş yer tutucu paket | Orta | Düşük |
-| `config.py`: `kieai_api_key`, `pixabay_api_key`, `youtube_client_id`, `youtube_client_secret` | Tanımlı ama hiçbir provider tüketmiyor | Orta | Düşük |
+| Dosya | Amaç | Önem | Katman | Ana Problemler | Öneri | Risk |
+|-------|------|------|--------|----------------|-------|------|
+| `frontend/src/pages/user/Dashboard.tsx` | Ana dashboard | core | UI | temiz | keep | low |
+| `frontend/src/pages/user/CreateVideo.tsx` | Video oluşturma formu | core | UI | temiz | keep | low |
+| `frontend/src/pages/user/JobDetail.tsx` | Job detay + log viewer | core | UI | temiz; SSE doğru çalışıyor | keep | low |
+| `frontend/src/pages/user/JobList.tsx` | Job listesi | supporting | UI | temiz | keep | low |
+| `frontend/src/pages/user/UserSettings.tsx` | Kullanıcı ayarları | supporting | UI | temiz | keep | low |
 
 ---
 
 ## 5. Teknik Borç ve Kod Kokuları
 
-### Aşırı Mühendislik
+### Overengineering
 
-Önemli bir şey yok. 5 katmanlı ayar sistemi en karmaşık kısım ve admin kilitleri + modüle özgü override gereksinimiyle gerekçelendirilmiş.
+- `backend/pipeline/steps/composition.py`: `ThreadingMixIn` kullanan bir HTTP server başlatıyor, bir asyncio fonksiyonu içinde. Bu pattern, async/sync karışımı yaratır ve debug'lanması zordur. Remotion CLI subprocess output'unu almak için daha basit yollar mevcut.
 
 ### Dead Code
 
-| Konum | Kod | Tür |
-|-------|-----|-----|
-| `StandardVideo.tsx` satır ~20 | `import { spring }` | Kullanılmayan import |
-| `NewsBulletin.tsx` satır ~11 | `import { spring }` | Kullanılmayan import |
-| `NewsBulletin.tsx` satır ~42 | `const globalFrame = useCurrentFrame()` | Kullanılmayan değişken |
-| `GlobalSettings.tsx` satır 27-29 | `const SCOPE_TABS` | Kullanılmayan sabit |
-| `AppShell.tsx` satır 21 | `"/admin/cost-tracker": "Maliyet Takibi"` | Hayalet route başlığı |
-| `config.py` | `openai_api_key`, `elevenlabs_api_key`, `pixabay_api_key`, `kieai_api_key` | Tanımlı ama hiçbir provider tüketmiyor |
+- `backend/api/providers.py`: Providers yazan API, `scope='provider', key='api_key'` path'ini okuyan hiçbir kod yoktur. Bu write path ölüdür.
+- `backend/services/cost_tracker.py`: Tüm dosya fonksiyonel ama `backend/api/admin.py`'deki cost endpoint yokluğu yüzünden hiç çağrılmıyor.
 
-### Tekrarlanan Mantık
+### Deprecated Bağımlılıklar
 
-| Desen | Konumlar | Etkilenen Satır |
-|-------|----------|----------------|
-| `STATUS_CONFIG` (durum renkleri/etiketleri) | Dashboard, JobList, JobDetail, AdminJobs | ~40 satır × 4 = ~160 |
-| `MODULE_INFO` (modül görünen adları) | Dashboard, JobList, AdminJobs | ~20 satır × 3 = ~60 |
-| Frame hesaplama döngüsü | StandardVideo:244, NewsBulletin:96, ProductReview:525 | ~12 satır × 3 = ~36 |
-| Vignette overlay bileşeni | StandardVideo:283, NewsBulletin:132, ProductReview (satır içi) | ~8 satır × 3 = ~24 |
-| `DEFAULT_DURATION_SECONDS = 5` | StandardVideo, NewsBulletin, ProductReview | 3 konum |
-| Root.tsx'de `calculateMetadata` deseni | Satır 85, 120, 156 | ~15 satır × 3 = ~45 |
+- `backend/providers/llm/gemini.py:1-5`: `import google.generativeai as genai` + `warnings.filterwarnings("ignore", category=DeprecationWarning, module="google")` — Bu, gizli bir kırılma noktasıdır. Google, `google-generativeai` paketini deprecated etmiş; yeni `google-genai` SDK farklı bir API sunuyor.
 
-### String Tabanlı Mantık
+### Settings Consistency Sorunları
 
-| Konum | Sorun |
-|-------|-------|
-| `video_resolution` `"1920x1080"` string olarak saklanıyor | composition.py'de `.split("x")` ile ayrıştırılıyor — kırılgan |
-| SQLite'ta `settings.value` JSON metin olarak saklanıyor | Tip bilgisi kayboluyor; `"30"` string mi int mi belirsiz |
+- `backend/main.py` startup: Ham SQLAlchemy sorgusu ile `output_dir` `app_settings` üzerine yazılıyor. Bu, SettingsResolver'ı tamamen bypass eder.
+- `backend/services/job_manager.py:770`: `available_slots = app_settings.max_concurrent_jobs - running_count` — SettingsResolver yerine `app_settings` doğrudan okunuyor.
+- `backend/pipeline/steps/composition.py`: `app_settings.output_dir` okunuyor — settings snapshot yerine canlı config okunuyor (diğer tüm adımlar snapshot kullanıyor).
 
-### Gizli Yan Etkiler
+### Duplicate Logic
 
-| Konum | Yan Etki |
-|-------|----------|
-| `backend/modules/registry.py` import'u | Import zamanında `_register_all_modules()` tetikleniyor |
-| `backend/providers/registry.py` import'u | Import zamanında `_register_all_providers()` tetikleniyor |
-| `backend/pipeline/steps/script.py` | Modül düzeyinde `_used_hook_types` listesi — oturum durumu işler arasında sızar |
+- `backend/api/settings.py` ve `backend/main.py` her ikisi de `output_dir` için özel case içeriyor — aynı mantık iki yerde.
 
-### Konfigürasyon Karmaşası
+### Hata Yönetimi Zayıflıkları
 
-| Sorun | Detay |
-|-------|-------|
-| API anahtarları 2 yerde | `.env` (başlangıç) + SQLite `settings` tablosu (çalışma zamanı) — DB, SettingsResolver aracılığıyla kazanır |
-| Modül varsayılanları DB'de yok | `standard_video/config.py` DEFAULT_CONFIG hiçbir zaman settings tablosuna otomatik oluşturulmuyor |
-| Frontend PIN'i farklı saklıyor | localStorage anahtarı `cm-admin-pin` vs backend `config.admin_pin` `.env`'den |
+- `frontend/src/pages/admin/CostTracker.tsx:~130`: `catch { setData(MOCK_DATA) }` — Herhangi bir hata (network, 404, 500) sessizce MOCK_DATA ile kapatılıyor. Kullanıcı hiçbir zaman gerçek bir hata mesajı görmüyor.
+
+### Test Yokluğu
+
+Projenin hiçbir yerinde `test_`, `*.test.ts`, `*.spec.ts` veya `pytest` dosyası yok. `pipeline/runner.py`, `services/settings_resolver.py`, `services/job_manager.py` gibi kritik modüller sıfır test coverage'ına sahip.
+
+### Composition Provider Stub
+
+`backend/providers/composition/__init__.py` — tek satır docstring, uygulama yok. Composition, provider registry pattern'ını takip etmiyor; `pipeline/steps/composition.py` doğrudan Remotion CLI çağırıyor. Bu mimari tutarsızlık (diğer tüm kategoriler için provider pattern var, composition için yok) bilerek yapılmış olabilir ama belgelenmemiş.
+
+### Pixabay Provider Dead Code
+
+`backend/config.py` `pixabay_api_key` field tanımlıyor. `backend/providers/visuals/__init__.py` docstring'de Pixabay'dan bahsediyor. `settings_resolver.py` Pixabay key'ini ayarlara dahil ediyor. Ancak `backend/providers/visuals/pixabay.py` **mevcut değil** — sadece `pexels.py` var. README ve UI'da Pixabay fallback provider olarak gösteriliyor ama hiç implement edilmemiş.
 
 ---
 
-## 6. UI Öğesi Gerçeklik Tablosu
+## 6. UI Element Gerçeklik Tablosu
 
-| Ekran / Öğe | Kullanıcıya Görünen Amaç | Erişilebilirlik | Gerçek Hedef | Çalışma Zamanı Etkisi | Kalıcılık | Geri Okuyan Tüketici | Geri Bildirim Dürüstlüğü | Karar |
+| Ekran/Route/Bileşen | Kullanıcıya Görünen Amaç | Erişilebilirlik | Gerçek Bağlantı | Gerçek Hedef | Runtime Etkisi | Kalıcılık Etkisi | Okuyucu | Gerçeğin Kaynağı | Çakışan Kaynaklar | Geri Bildirim Dürüstlüğü | Karar | Önerilen Eylem |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CostTracker `/admin/costs` | Maliyet takibi | Erişilebilir | `GET /api/admin/costs` çağrısı | Endpoint YOK → catch → MOCK_DATA | Yok | Yok | Yok | MOCK_DATA (hardcoded) | Yok | Yanıltıcı — sıfır değerler gerçekmiş gibi görünüyor | **DEAD/MISLEADING** | Backend endpoint ekle, mock'u kaldır |
+| GlobalSettings `max_concurrent_jobs` | Worker limit'i ayarla | Erişilebilir | PUT `/api/settings` → DB | DB `settings` tablosu | Yok (worker loop app_settings okur) | DB'ye yazılıyor | Worker loop (ama app_settings okur, DB değil) | `app_settings` singleton | DB `settings` tablosu | Yanıltıcı — kaydet başarılı ama etkisiz | **PARTIAL/MISLEADING** | Worker loop'u DB'den oku, ya da restart uyarısı ekle |
+| ProviderManager API Key formu | Provider API key kaydet | Erişilebilir | PUT `/api/providers/{name}/settings` | admin scope (geçerli) + provider scope (ölü) | Admin scope çalışıyor | İkisi de DB'ye yazılıyor | Sadece admin scope okunuyor | DB `settings` admin scope | provider scope (ölü) | Kısmen yanıltıcı | **PARTIAL** | Provider scope yazımını kaldır |
+| GlobalSettings `output_dir` | Video çıktı dizinini ayarla | Erişilebilir | PUT `/api/settings` → app_settings mutation | `app_settings.output_dir` | Çalışıyor ama restart sonrası | DB + app_settings mutation | composition.py step | app_settings | DB (yedek) | Restart gerektirir, UI belirtmiyor | **PARTIAL** | "Restart gerektirir" uyarısı ekle |
+| ProviderManager Health Check | Provider API erişilebilirliğini test et | Erişilebilir | POST `/api/providers/{name}/health` | provider.health_check() | Gerçek test yapılıyor | Yok | Yok | Provider API | Yok | Dürüst | **WORKING** | Keep |
+| ModuleManager aktif/pasif toggle | Modülü aktif/pasif yap | Erişilebilir | PUT `/api/modules/{name}` | DB `settings` + module registry | Pipeline modül kontrolü | DB | PipelineRunner | DB | Yok | Dürüst | **WORKING** | Keep |
+| PromptManager prompt düzenleme | Modül prompt şablonlarını düzenle | Erişilebilir | PUT `/api/settings` | DB `settings` module scope | Script generation step okur | DB | Script pipeline step | DB | Yok | Dürüst | **WORKING** | Keep, consider merging into ModuleManager |
+| CreateVideo formu | Yeni video oluştur | Erişilebilir | POST `/api/jobs` | JobManager.create_job() | Pipeline başlatılıyor | DB `jobs` tablosu | PipelineRunner | DB | Yok | Dürüst | **WORKING** | Keep |
+| JobDetail log viewer | Gerçek zamanlı log stream | Erişilebilir | GET `/api/jobs/{id}/events` (SSE) | SSE stream | Log stream gerçek | Yok (memory) | React SSE hook | SSE stream | Yok | Dürüst | **WORKING** | Keep |
+| JobDetail "Devam Et" butonu | Interrupted job'ı devam ettir | Erişilebilir (status=interrupted için) | POST `/api/jobs/{id}/resume` | PipelineRunner resume logic | Done step'ler atlanıyor | DB status güncelleniyor | PipelineRunner | DB | Yok | Teorik olarak dürüst, test edilmemiş | **UNVERIFIED** | Test et |
+| Dashboard SSE global stream | Tüm job'ların anlık durumu | Erişilebilir | GET `/api/jobs/stream` (SSE) | Global SSE manager | Gerçek zamanlı güncellemeler | Yok | React dashboard | SSE stream | Yok | Dürüst | **WORKING** | Keep |
+| FallbackOrderEditor drag-drop | Provider fallback sırasını ayarla | Erişilebilir | PUT `/api/settings` → admin scope | DB `settings` admin scope | ProviderRegistry.execute_with_fallback() okur | DB | ProviderRegistry | DB admin scope | Yok | Dürüst | **WORKING** | Keep |
+| AdminDashboard sistem durumu | Sistem özeti | Erişilebilir | GET `/api/admin/stats` | DB aggregate | Gerçek istatistikler | Yok | Yok | DB | Yok | Dürüst | **WORKING** | Keep |
+| UserSettings TTS override | TTS provider'ını override et | Erişilebilir | PUT `/api/settings` user scope | DB user scope | SettingsResolver user layer | DB | SettingsResolver | DB user scope | Locked key check | Dürüst | **WORKING** | Keep |
+| Batch create video | Toplu video oluştur | Erişilebilir | POST `/api/jobs/batch` | JobManager batch create | N job oluşturuluyor | DB | Worker loop | DB | Yok | Dürüst | **WORKING** | Keep |
+
+---
+
+## 7. Action Flow Trace Tablosu
+
+| Eylem | Giriş Noktası | Route/Sayfa | Handler | Doğrulama | State Katmanı | Service/API Path | Backend Hedefi | Kalıcılık Hedefi | Sonraki Tüketici | Gerçek Sonuç | Karar |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| API key kaydet (provider) | ProviderManager formu | `/admin/providers` | `handleSaveApiKey()` | Frontend: boş string kontrolü | Local React state | PUT `/api/providers/{name}/settings` | `settings` tablosu (admin scope + provider scope) | DB (iki kayıt) | Provider.execute() (sadece admin scope okunuyor) | Kısmen çalışıyor | **PARTIAL** — provider scope yazımı ölü |
+| max_concurrent_jobs kaydet | GlobalSettings formu | `/admin/settings` | `handleSave()` | Pydantic v2 (backend) | Zustand settingsStore | PUT `/api/settings` | DB `settings` tablosu | DB | job_manager worker loop (ama app_settings okur) | Başarı toast ama etkisiz | **MISLEADING** |
+| Yeni video oluştur | CreateVideo formu | `/create` | `handleSubmit()` | Pydantic JobCreate | jobStore | POST `/api/jobs` | JobManager.create_job() | DB `jobs` + settings snapshot | PipelineRunner | Çalışıyor | **WORKING** |
+| Pipeline step izle | JobDetail SSE | `/jobs/{id}` | useSSE hook | Yok | SSE event | GET `/api/jobs/{id}/events` | SSEManager per-job | Memory | React UI update | Çalışıyor | **WORKING** |
+| Provider health check | ProviderManager butonu | `/admin/providers` | `handleHealthCheck()` | Yok | Local state | POST `/api/providers/{name}/health` | provider.health_check() | Yok | Toast mesajı | Çalışıyor | **WORKING** |
+| Maliyet görüntüle | CostTracker sayfası | `/admin/costs` | useEffect fetch | Yok | Local state | GET `/api/admin/costs` | **ENDPOINT YOK** → 404 → catch → MOCK_DATA | Yok | UI render | MOCK_DATA gösterilir | **DEAD** |
+| Fallback sırası kaydet | FallbackOrderEditor | `/admin/providers` | `handleSaveFallback()` | Yok | Local state | PUT `/api/settings` admin scope | DB `settings` | DB | ProviderRegistry.execute_with_fallback() | Çalışıyor | **WORKING** |
+| Interrupted job devam ettir | JobDetail butonu | `/jobs/{id}` | `handleResume()` | Yok | jobStore | POST `/api/jobs/{id}/resume` | PipelineRunner resume | DB step statuses | Pipeline (done step'ler atlanıyor) | Teorik çalışıyor | **UNVERIFIED** |
+| Prompt şablonu düzenle | PromptManager formu | `/admin/prompts` | `handleSavePrompt()` | Yok | Local state | PUT `/api/settings` module scope | DB `settings` module scope | DB | script.py step (SettingsResolver okur) | Çalışıyor | **WORKING** |
+| Output dizini değiştir | GlobalSettings | `/admin/settings` | `handleSave()` | Yok | Zustand settingsStore | PUT `/api/settings` | app_settings mutation + DB | DB + app_settings | composition.py (app_settings okur) | Restart sonrası çalışıyor | **PARTIAL** |
+
+---
+
+## 8. Source-of-Truth Tablosu
+
+| Değer Adı | Giriş Yerleri | Yazma Path'leri | Okuma Path'leri | Override Kaynakları | Gerçek Source of Truth | Çakışan/Eski Path'ler | Karar | Önerilen Konsolidasyon |
 |---|---|---|---|---|---|---|---|---|
-| **Video Oluştur "İşi Başlat"** | Video işi oluştur | ✓ /create | POST /api/jobs → run_pipeline() | İş oluşturulur, pipeline başlar | SQLite jobs + job_steps | Pipeline runner | Dürüst (iş detayına yönlendiriyor) | **GERÇEK** |
-| **İş Detayı "İptal Et"** | Çalışan işi iptal et | ✓ /jobs/:id | PATCH /api/jobs/{id} status=cancelled | DB güncellenir, pipeline mevcut adımdan sonra durur | SQLite jobs.status | Runner durum kontrolü | Dürüst (toast + SSE güncelleme) | **GERÇEK** |
-| **İş Detayı SSE akışı** | Canlı ilerleme | ✓ /jobs/:id | GET /api/jobs/{id}/events | Gerçek zamanlı adım/log güncellemeleri | Bellek içi kuyruk | Frontend store | Kısmi (bağlantı kopma göstergesi yok) | **GERÇEK** ⚠ |
-| **Kullanıcı Ayarları "Kaydet"** | Kullanıcı tercihlerini kaydet | ✓ /settings | Zustand persist → localStorage | localStorage güncellenir | localStorage cm-settings | Sonraki CreateVideo form varsayılanları | **Dürüst Değil** (backend'e gönderilmiyor ama "kaydedildi" diyor) | **KISMİ** |
-| **Header Admin PIN** | Admin panelini aç | ✓ header | Sadece localStorage kontrolü | UI durum değişikliği | localStorage cm-admin-pin | API çağrılarında X-Admin-Pin header | Yanıltıcı (frontend bypass mümkün) | **KOZMETİK** (frontend) / **GERÇEK** (backend) |
-| **Global Ayarlar CRUD** | Admin ayarlarını yönet | ✓ /admin/global-settings | POST/PUT/DELETE /api/settings | SQLite settings güncellenir | SQLite settings tablosu | SettingsResolver katman 2 | Dürüst | **GERÇEK** |
-| **Global Ayarlar Kilit toggle** | Kullanıcı override'ını engelle | ✓ /admin/global-settings | PUT /api/settings/{id} locked=true | Kilit bayrağı kaydedilir | SQLite settings.locked | SettingsResolver kullanıcı katmanını atlar | Dürüst | **GERÇEK** |
-| **Modül Yönetimi aktif toggle** | Modülü aktif/pasif yap | ✓ /admin/modules | PUT /api/settings/{id} | Ayar DB'ye kaydedilir | SQLite settings (modül scope) | **HİÇBİR ŞEY bunu okumuyor** | **Dürüst Değil** (toggle çalışıyor gibi görünüyor) | **KOZMETİK** |
-| **Provider Yönetimi API anahtar kaydetme** | Provider anahtarını yapılandır | ✓ /admin/providers | PUT /api/settings/{id} | Anahtar kaydedilir | SQLite settings (provider scope) | Provider.execute() config üzerinden | Kısmi (doğrulama yok) | **GERÇEK** ⚠ |
-| **Provider Yönetimi fallback sırası** | Provider önceliğini ayarla | ✓ /admin/providers | PUT /api/settings/{id} | DB'ye kaydedilir | SQLite settings | **HİÇBİR ŞEY bunu okumuyor** | **Dürüst Değil** | **DEAD** |
-| **Admin İşler silme** | İş kaydını kaldır | ✓ /admin/jobs | DELETE /api/jobs/{id} | DB kayıtları silinir | SQLite (cascade delete) | Yok (kaldırıldı) | Kısmi (dosyalar yetim kalır) | **GERÇEK** ⚠ |
-| **Dashboard sağlık kontrolü** | Sistem durumunu göster | ✓ /dashboard | GET /health | Salt okunur | Yok | UI gösterimi | Dürüst | **GERÇEK** |
+| `max_concurrent_jobs` | GlobalSettings UI | PUT `/api/settings` → DB | `app_settings.max_concurrent_jobs` (worker loop L770) | .env, DB settings | `app_settings` singleton (startup'ta yüklenir) | DB `settings` tablosu (yazılıyor ama okunmuyor) | **CONFLICT** | Worker loop'u `SettingsResolver` kullanacak şekilde güncelle |
+| Provider API key | ProviderManager UI | provider scope + admin scope (çift yazma) | `settings_resolver.get(f"{provider}_api_key", scope='admin')` | .env | DB admin scope | DB provider scope (ölü) | **DEAD WRITE** | Provider scope yazımını kaldır |
+| `output_dir` | GlobalSettings UI, .env | PUT `/api/settings` → app_settings mutation + DB | `app_settings.output_dir` (composition.py + runner.py) | .env override (startup) | `app_settings` singleton | DB `settings` (yazılıyor, kullanılıyor ama mutation via startup query) | **INCONSISTENT** | SettingsResolver üzerinden standart okuma |
+| `default_tts_provider` | GlobalSettings UI, UserSettings UI | DB admin/user scope | SettingsResolver (5-katman) | User override | DB (SettingsResolver) | Yok | **WORKING** | Keep |
+| `llm_provider` | GlobalSettings UI, CreateVideo form | DB admin scope, job config snapshot | SettingsResolver + snapshot | Job config override | DB → snapshot | Yok | **WORKING** | Keep |
+| `subtitle_style` | CreateVideo form, GlobalSettings | DB admin scope, job config | SettingsResolver + snapshot | Job config | DB → snapshot | Yok | **WORKING** | Keep |
+| `fallback_order` (tts/llm/visuals) | FallbackOrderEditor | DB admin scope | ProviderRegistry.execute_with_fallback() | Yok | DB admin scope | Yok | **WORKING** | Keep |
+| Module `enabled` flag | ModuleManager toggle | DB settings (module scope) | PipelineRunner module lookup | Yok | DB module scope | Yok | **WORKING** | Keep |
+| Prompt templates | PromptManager forms | DB settings (module scope) | script.py step via SettingsResolver | Yok | DB module scope | Yok | **WORKING** | Keep |
 
 ---
 
-## 7. Eylem Akışı İzleme Tablosu
+## 9. Route-to-Capability Tablosu
 
-| Eylem | Giriş Noktası | Handler | API Yolu | Backend Hedefi | Kalıcılık | Sonraki Tüketici | Gerçek Sonuç | Karar |
-|---|---|---|---|---|---|---|---|---|
-| Video oluştur | CreateVideo.tsx form | jobStore.createJob() | POST /api/jobs | JobManager.create_job() → asyncio.create_task(run_pipeline) | SQLite jobs+steps | PipelineRunner | İş kuyruğa alınır ve pipeline başlar | **GERÇEK** |
-| İş iptal et | JobDetail.tsx buton | jobStore.cancelJob() | PATCH /api/jobs/{id} | JobManager.update_job_status("cancelled") | SQLite jobs.status | Runner her adımdan sonra kontrol eder | Durum değişir, pipeline mevcut adımdan sonra durur | **GERÇEK** |
-| Kullanıcı ayarı kaydet | UserSettings.tsx form | settingsStore.setUserDefaults() | (yok) | Zustand persist middleware | localStorage | Sonraki CreateVideo form varsayılanları | Yerel olarak kaydedilir, sadece sonraki iş oluşturma formunu etkiler | **KISMİ** |
-| Admin: ayar oluştur | GlobalSettings.tsx form | adminStore.createSetting() | POST /api/settings | SettingsResolver.upsert() | SQLite settings | SettingsResolver.resolve() iş oluşturmada | Ayar 5 katmanlı birleştirmede kullanılabilir | **GERÇEK** |
-| Admin: ayar kilitle | GlobalSettings.tsx toggle | adminStore.updateSetting() | PUT /api/settings/{id} | Setting.locked = True | SQLite settings.locked | SettingsResolver kullanıcı override'ını engeller | Bu anahtar için kullanıcı katmanı yok sayılır | **GERÇEK** |
-| Admin: API anahtarı kaydet | ProviderManager.tsx alan | adminStore.updateSetting() | PUT /api/settings/{id} | Setting.value güncellenir | SQLite settings (provider scope) | Provider.execute() config.get() ile okur | Anahtar sonraki iş oluşturmada kullanılabilir | **GERÇEK** |
-| Admin: modül toggle | ModuleManager.tsx switch | adminStore.updateSetting() | PUT /api/settings/{id} | Setting(scope=module, key=enabled) kaydedilir | SQLite settings | **Hiçbir şey** | Ayar kaydedilir ama pipeline/registry tarafından yok sayılır | **KOZMETİK** |
-| Admin: fallback sırası | ProviderManager.tsx editör | adminStore.updateSetting() | PUT /api/settings/{id} | Ayar kaydedilir | SQLite settings | **Hiçbir şey** | Sıra kaydedilir ama ProviderRegistry yok sayar | **DEAD** |
-| Admin: iş sil | AdminJobs.tsx buton | adminStore.deleteJob() | DELETE /api/jobs/{id} | JobManager.delete_job() (sadece terminal) | SQLite (cascade delete) | Yok (kaldırıldı) | DB temiz, session dosyaları kalır | **GERÇEK** ⚠ |
-
----
-
-## 8. Veri Kaynağı Tablosu
-
-| Değer | Giriş Konumları | Yazma Yolları | Çalışma Zamanı Okuma Yolu | Override Kaynakları | Efektif Veri Kaynağı | Çatışmalar | Karar |
-|---|---|---|---|---|---|---|---|
-| `gemini_api_key` | .env, ProviderManager UI | .env → config.py; UI → SQLite | GeminiProvider'da `config.get("gemini_api_key")` | DB katmanları 2-4, .env'yi geçer | **SQLite (ayarlanmışsa), yoksa .env** | Her iki yol da çalışıyor ama öncelik belgelenmemiş | ⚠ Belgelenmeli |
-| `pexels_api_key` | .env, ProviderManager UI | .env → config.py; UI → SQLite | PexelsProvider'da `config.get("pexels_api_key")` | Yukarıdaki ile aynı | **SQLite (ayarlanmışsa), yoksa .env** | Aynı | ⚠ |
-| `openai_api_key` | .env, ProviderManager UI | .env → config.py; UI → SQLite | **Tüketilmiyor** — OpenAI provider implementasyonu yok | Yok | **Yok (dead config)** | config'de var ama kullanılmıyor | Dead |
-| `admin_pin` | Sadece .env | .env → config.py | `_require_admin()` `app_settings.admin_pin` okur | Yok (DB katmanı yok) | **Sadece .env** | Frontend localStorage uyumsuz olabilir | ⚠ |
-| `default_tts_provider` | .env, config.py varsayılan, admin ayarları, modül config, kullanıcı override | 5 katman | step_tts'de `config.get("tts_provider")` | Tam 5 katmanlı hiyerarşi | **Kilitli olmayan en yüksek katman kazanır** | Doğru çalışıyor | ✓ |
-| `subtitle_style` | Modül config, admin ayarları, CreateVideo form | Modül config (kod), admin (SQLite), kullanıcı (istek override) | subtitles.py'de `config.get("subtitle_style")` | Tam 5 katmanlı hiyerarşi | **İş oluşturma snapshot'ı** | Doğru çalışıyor | ✓ |
-| `video_resolution` | Modül config, admin ayarları | Kod varsayılan "1920x1080", SQLite | composition.py'de `config.get("video_resolution")` `.split("x")` ile | Tam 5 katmanlı hiyerarşi | **İş oluşturma snapshot'ı** | String ayrıştırma kırılgan | ⚠ |
-| `tts_voice` | Modül config, provider ayarları, kullanıcı override | Modül config (kod), provider (SQLite), kullanıcı (istek) | EdgeTTSProvider'da `config.get("tts_voice")` | Tam hiyerarşi | **İş oluşturma snapshot'ı** | Doğru çalışıyor | ✓ |
-| Modül `enabled` | ModuleManager UI | SQLite settings (modül scope) | **Okunmuyor** | Yok | **Uygulanmıyor** | Ayar kaydedilir ama yok sayılır | ❌ Dead |
-| Provider fallback sırası | ProviderManager UI | SQLite settings (admin scope) | ProviderRegistry tarafından **okunmuyor** | Yok | **Uygulanmıyor** | Ayar kaydedilir ama yok sayılır | ❌ Dead |
+| Route/Sayfa | Kullanıcıya Amaç | Gerçek Kapasite | Tamlık | Operasyonel Uyum | Karar | Önerilen Eylem |
+|---|---|---|---|---|---|---|
+| `/` (Dashboard) | Genel bakış, aktif job'lar | Job listesi, SSE global stream | Tam | Tam | **WORKING** | Keep |
+| `/create` | Video oluşturma formu | Job oluşturma, modül seçimi, ayar override | Tam | Tam | **WORKING** | Keep |
+| `/jobs` | Tüm job'lar | Job listesi, filtreleme | Tam | Tam | **WORKING** | Keep |
+| `/jobs/:id` | Job detay, progress, log | SSE per-job, step progress, log viewer | Tam | Tam | **WORKING** | Keep |
+| `/settings` | Kullanıcı ayarları | Locked olmayan override'lar | Tam | Tam | **WORKING** | Keep |
+| `/admin` | Admin dashboard | Sistem istatistikleri, job özeti | Tam | Tam | **WORKING** | Keep |
+| `/admin/modules` | Modül yönetimi | Aktif/pasif toggle, capability | Tam | Tam | **WORKING** | Keep |
+| `/admin/providers` | Provider yönetimi | API key, health check, fallback sırası | Kısmi | Kısmi (dead write) | **PARTIAL** | Remove dead write |
+| `/admin/settings` | Global ayarlar | Default değerleri yönetme | Kısmi | Kısmi (max_concurrent_jobs etkisiz) | **PARTIAL** | Fix max_concurrent_jobs runtime |
+| `/admin/costs` | Maliyet takibi | **HİÇ** — backend endpoint yok | Yok | Yok | **DEAD** | Implement `/api/admin/costs` |
+| `/admin/jobs` | Tüm sistem job'ları | Job listesi (admin view) | Tam | Tam | **WORKING** | Keep |
+| `/admin/prompts` | Prompt şablonları | Module scope prompt yönetimi | Tam | Tam ama ayrı sayfa gereksiz | **WORKING/OPTIONAL** | Merge into ModuleManager |
 
 ---
 
-## 9. Route-Yetenek Tablosu
+## 10. Kaldırılabilir Adaylar
 
-| Route | Bileşen | Gerçek Backend Yeteneği | Tamlık | Karar |
+| Dosya/Modül/Bileşen/Route | Neden Kaldırılabilir | Güven | Kaldırma Riski | Güvenli Doğrulama |
 |---|---|---|---|---|
-| `/dashboard` | Dashboard.tsx | GET /jobs/stats, GET /jobs, GET /health | Tam | **İşlevsel** |
-| `/create` | CreateVideo.tsx | POST /api/jobs → pipeline | Tam | **İşlevsel** |
-| `/jobs` | JobList.tsx | GET /api/jobs (sayfalı, filtreli) | Tam | **İşlevsel** |
-| `/jobs/:jobId` | JobDetail.tsx | GET /api/jobs/{id}, SSE akışı, PATCH iptal | Tam | **İşlevsel** |
-| `/settings` | UserSettings.tsx | GET /api/settings/resolved (okuma) | Kısmi — yazma sadece localStorage | **Kısmi** |
-| `/admin/dashboard` | AdminDashboard.tsx | GET /jobs/stats, GET /health | Tam | **İşlevsel** |
-| `/admin/global-settings` | GlobalSettings.tsx | Tam CRUD /api/settings (admin scope) | Tam | **İşlevsel** |
-| `/admin/modules` | ModuleManager.tsx | CRUD /api/settings (modül scope) | Kısmi — aktif toggle kozmetik | **Kısmi** |
-| `/admin/providers` | ProviderManager.tsx | CRUD /api/settings (provider scope) | Kısmi — fallback sırası dead | **Kısmi** |
-| `/admin/jobs` | AdminJobs.tsx | GET /api/jobs, DELETE /api/jobs/{id} | Tam (dosyalar temizlenmiyor) | **İşlevsel** ⚠ |
-| `/admin/cost-tracker` | (yok) | Yok | PAGE_TITLES'da route başlığı var ama route yok | **Hayalet** |
+| DB provider-scope API key write (`ProviderManager.tsx` L375-386) | Yazılan değer hiç okunmuyor; admin scope yeterli | Yüksek | Düşük | `settings` tablosunda `scope='provider', key='api_key'` kayıtlarını kontrol et |
+| `backend/providers/composition/__init__.py` (stub) | Tek satır docstring; composition provider pattern'ına uymuyor ama zaten kullanılmıyor (hardcoded CLI call) | Orta | Çok düşük | Dosyayı kaldır ya da TODO docstring ekle |
+| `pixabay_api_key` config field + settings resolver reference | Pixabay.py hiç yazılmamış; config'deki key ve resolver referansı ölü | Yüksek | Düşük | Config ve resolver'dan Pixabay referanslarını kaldır ya da implement et |
+| `MOCK_DATA` sabit değeri (`CostTracker.tsx`) | Backend endpoint eklenince gereksiz hale gelir | Yüksek (backend eklenince) | Düşük | Backend endpoint çalışınca mock'u kaldır |
+| `warnings.filterwarnings` satırı (`gemini.py`) | SDK yenilendikten sonra gereksiz | Yüksek (yenilemeden sonra) | Düşük | SDK migrate sonrası |
+| `PromptManager.tsx` ayrı sayfa olarak | ModuleManager accordion'ına taşınabilir | Orta | Düşük | Accordion component eklendikten sonra route kaldırılabilir |
+| `adsız klasör/` (proje root) | Boş, amaçsız klasör | Yüksek | Çok düşük | Boşluğunu doğrula, sil |
 
 ---
 
-## 10. Kaldırma Adayları
+## 11. Merge / Flatten / Simplify Adayları
 
-| Dosya / Öğe | Neden Kaldırılabilir | Güven | Kaldırılırsa Risk | Doğrulama |
+| İlgili Dosyalar/Modüller | Neden Örtüşüyorlar | Önerilen Basitleştirme | Beklenen Fayda | Risk |
 |---|---|---|---|---|
-| `spring` import'u `StandardVideo.tsx`'de | Kullanılmayan import | Yüksek | Yok | `tsc --noEmit` geçer |
-| `spring` import'u `NewsBulletin.tsx`'de | Kullanılmayan import | Yüksek | Yok | `tsc --noEmit` geçer |
-| `globalFrame` değişkeni `NewsBulletin.tsx`'de | Kullanılmayan değişken | Yüksek | Yok | `tsc --noEmit` geçer |
-| `SCOPE_TABS` `GlobalSettings.tsx` satır 27-29 | Tanımlı ama hiç kullanılmıyor | Yüksek | Yok | SCOPE_TABS kullanımı için grep |
-| `/admin/cost-tracker` `AppShell.tsx` satır 21 | Karşılık gelen route yok | Yüksek | Yok | App.tsx'de route yok |
-| `backend/providers/composition/__init__.py` | Boş yer tutucu paket | Orta | Düşük (gelecek kullanım) | Import kontrolü |
-| `config.py`: `kieai_api_key`, `pixabay_api_key`, `youtube_client_id`, `youtube_client_secret` | Tanımlı ama hiçbir provider tüketmiyor | Orta | Düşük | Grep ile kullanım doğrulama |
+| `PromptManager.tsx` + `ModuleManager.tsx` | PromptManager module-scoped settings düzenliyor; ModuleManager zaten modül bazlı | PromptManager'ı ModuleManager accordion'ı yap | Navigasyon basitleşir, ilgili ayarlar bir yerde | Düşük — sadece UI taşıma |
+| `output_dir` handling in `main.py` + `api/settings.py` + `composition.py` | Üç yerde özel case logic | SettingsResolver'a taşı, `app_settings` mutation'ını kaldır | Tek okuma path, consistency | Orta — dikkatli test gerekir |
+| `max_concurrent_jobs` in `config.py` + DB `settings` | İki write path, bir okuma path (app_settings) | Worker loop DB'den oku via SettingsResolver | Runtime değişiklik etkili olur | Orta — worker loop core logic |
+| Tüm provider scope API key writes | provider scope yazısı ölü | Tek write path (admin scope) | Dead code elenir | Düşük |
 
 ---
 
-## 11. Birleştirme / Düzleştirme / Sadeleştirme Adayları
+## 12. Bağımlılık Değerlendirmesi
 
-| İlgili Dosyalar | Neden Örtüşüyorlar | Önerilen Sadeleştirme | Beklenen Kazanım | Risk |
-|---|---|---|---|---|
-| Dashboard, JobList, JobDetail, AdminJobs | `STATUS_CONFIG` + `MODULE_INFO` tekrarlanmış | `frontend/src/lib/constants.ts`'e çıkar | -160 satır tekrar | Düşük |
-| StandardVideo, NewsBulletin, ProductReview | Frame hesaplama döngüsü (12 satır × 3) | `remotion/src/utils/calculateSceneFrames.ts`'e çıkar | -24 satır, tek kaynak | Düşük |
-| StandardVideo, NewsBulletin, ProductReview | Vignette bileşeni (8 satır × 3) | `remotion/src/components/Vignette.tsx`'e çıkar | -16 satır | Düşük |
-| StandardVideo, NewsBulletin, ProductReview | `DEFAULT_DURATION_SECONDS = 5` | `remotion/src/constants.ts`'e çıkar | Tek sabit | Düşük |
-| Root.tsx | `calculateMetadata` deseni × 3 | Fabrika fonksiyonu `createCalculateMetadata(itemsKey)` | -30 satır | Düşük |
-| ProductReview.tsx | `SECTION_COLORS` + `SECTION_LABELS` + `SECTION_ICONS` (3 nesne) | Tek `SECTION_CONFIG` nesnesinde birleştir | Daha temiz lookup | Düşük |
+### Muhtemelen Gereksiz
 
----
+- `google-generativeai`: Deprecated. `google-genai` (yeni SDK) ile değiştirilmeli.
+- `warnings` (stdlib): gemini.py'deki suppress filter SDK yenilendikten sonra kaldırılabilir.
 
-## 12. Bağımlılık İncelemesi
+### Ağır Ama Haklı
 
-### Python (requirements.txt)
+- `remotion` (Node.js): Video composition için gerekli, alternatif yok (MoviePy/FFmpeg çok daha düşük kalite).
+- `openai`: Hem TTS hem LLM için kullanılıyor, makul.
+- `elevenlabs`: Premium TTS, haklı.
 
-| Paket | Amaç | Karar |
-|-------|-------|-------|
-| `aiohttp` (3.11.10) | Asenkron HTTP istemci | **Gereksiz** — `httpx` zaten asenkron HTTP sağlıyor; aiohttp kod tabanında kullanılmıyor |
-| `ffmpeg-python` (0.2.0) | FFmpeg sarmalayıcı | **Kullanılmıyor** — Remotion video kompozisyonunu hallediyor; doğrudan ffmpeg çağrısı bulunamadı |
-| `elevenlabs` (1.9.0) | ElevenLabs TTS | **Kullanılmıyor** — ElevenLabs provider implementasyonu yok |
-| `openai` (1.57.2) | OpenAI API | **Kısmen kullanılmıyor** — Whisper subtitles.py'de referanslanmış ama provider sınıfı yok |
-| `google-generativeai` (0.8.3) | Gemini LLM | **Deprecated** — Kütüphane FutureWarning gösteriyor; `google-genai`'ye geçilmeli |
-| `aiofiles` (24.1.0) | Asenkron dosya I/O | **Muhtemelen kullanılmıyor** — Cache manager senkron dosya I/O kullanıyor |
-| `python-multipart` (0.0.20) | Dosya yüklemeleri | **Muhtemelen kullanılmıyor** — Dosya yükleme endpoint'i bulunamadı |
+### Dikkat Edilmesi Gerekenler
 
-### Frontend (package.json)
-
-Tüm bağımlılıklar aktif olarak kullanılıyor. Gereksizlik tespit edilmedi. Radix UI bileşenleri gerçek Shadcn kullanımıyla eşleşiyor.
-
-### Remotion (package.json)
-
-Minimal ve doğru. `@remotion/player` dahil ama sadece Studio önizleme için gerekli olabilir, CLI render için değil.
+- `edge-tts`: Ücretsiz Microsoft TTS, güzel; ancak Microsoft resmi API değil, tersine mühendislik. Kırılabilir.
+- `pexels-python`: Tek endpoint wrapper, stabil ama minimal.
+- Frontend: `@radix-ui/*` paketleri Shadcn komponetleri için, haklı. Zustand minimal, haklı. Tailwind haklı.
 
 ---
 
-## 13. Yeniden Düzenleme Strateji Seçenekleri
+## 13. Refactor Strateji Seçenekleri
 
-### Seçenek A: Muhafazakâr Temizlik (Önerilen)
+### Seçenek A: Muhafazakar Temizlik
 
-**Ne zaman uygun:** Çekirdek sağlam ve sorunlar kenarlarda olduğunda.
+**Uygun olduğu durum:** Mevcut işlevsellik yeterli, sadece kritik bug'lar düzeltilmek isteniyorsa.
 
-**Ne yapılır:**
-1. Dead import'ları/değişkenleri kaldır (StandardVideo, NewsBulletin, GlobalSettings)
-2. AppShell'deki hayalet route başlığını kaldır
-3. `STATUS_CONFIG`/`MODULE_INFO`'yu ortak sabitlere çıkar
-4. Remotion ortak utils'lerini çıkar (frame hesap, Vignette, sabitler)
-5. `run_pipeline()`'a modül aktif kontrolü ekle (5 satır)
-6. `ProviderRegistry.get_ordered_providers()`'a fallback sırası okuma ekle (10 satır)
-7. `delete_job()`'a session dizini silme ekle (3 satır)
-8. UserSettings kaydetmeyi backend API çağrısı içerecek şekilde düzelt
-9. Kullanılmayan Python paketlerini kaldır (aiohttp, ffmpeg-python)
-10. API anahtarı önceliğini belgele (.env vs DB)
+**Ne kalır:** Tüm mevcut mimari, tüm sayfalar, tüm provider'lar.
 
-**Ne kalır:** Tüm mimari, tüm dosyalar, tüm route'lar.
+**Ne kaldırılır:** Dead API key write, MOCK_DATA (backend endpoint eklendikten sonra), `adsız klasör`.
 
-**Kazanımlar:** Minimum risk, maksimum dürüstlük iyileştirmesi, < 1 günlük iş.
-**Riskler:** Daha derin sorunları ele almıyor (SSE yeniden bağlanma, deprecated google-generativeai).
-**Efor:** 4-6 saat.
+**UI'da ne olur:** CostTracker gerçek veri gösterir. max_concurrent_jobs için uyarı mesajı eklenir. Provider scope dead write kaldırılır.
 
-### Seçenek B: Çekirdeği Koru, Kenarları Yeniden İnşa Et
+**Faydalar:** Minimal değişiklik, düşük risk, hızlı.
 
-**Ne zaman uygun:** Bazı alt sistemlerin önemli yeniden bağlantıya ihtiyaç duyduğunda.
+**Riskler:** max_concurrent_jobs runtime sorununu çözmez. Gemini deprecated SDK devam eder.
 
-**Ne yapılır:** Seçenek A'daki her şey, artı:
-1. OpenAI TTS/LLM provider'larını implemente et (paketler zaten yüklü)
-2. `google-generativeai` → `google-genai`'ye geçir
-3. Üstel geri çekilme ile SSE yeniden bağlanma implemente et
-4. Provider sağlık kontrolü/bağlantı test butonu ekle
-5. Eşzamanlı iş sınırlayıcı implemente et (asyncio.Semaphore)
-6. İlk çalıştırmada modül DEFAULT_CONFIG'un DB'ye otomatik oluşturulmasını ekle
-7. API endpoint'lerini sürümlendir (`/api/v1/`)
+**Efor:** 1-2 gün
 
-**Ne kalır:** Çekirdek mimari, veritabanı şeması, pipeline mantığı, UI yapısı.
+**Sadece şu durumda önerilir:** Proje bakım moduna girecekse ya da çok sınırlı değişiklik kapasitesi varsa.
 
-**Kazanımlar:** Üretime hazır güvenilirlik.
-**Riskler:** google-generativeai geçişi regresyon getirebilir.
-**Efor:** 2-3 gün.
+---
+
+### Seçenek B: Core'u Koru, Kenarları Yeniden Yap
+
+**Uygun olduğu durum:** Temel mimari sağlam, birkaç kritik düzeltme + küçük yeniden yapılanma gerekiyorsa.
+
+**Ne kalır:** FastAPI + SQLite + asyncio worker loop + React + Remotion mimarisi. Tüm provider'lar. Tüm pipeline adımları.
+
+**Ne değişir:**
+1. `/api/admin/costs` endpoint eklenir (~20 satır)
+2. Worker loop `max_concurrent_jobs` için `SettingsResolver` kullanır
+3. Provider scope dead write kaldırılır
+4. `output_dir` mutation, SettingsResolver standart akışına alınır
+5. Gemini SDK güncellenir
+6. PromptManager ModuleManager accordion'ına taşınır
+
+**UI'da ne olur:** CostTracker gerçek veri gösterir. max_concurrent_jobs admin'den gerçekten kontrol edilebilir. Navigasyon sadeleşir.
+
+**Faydalar:** Tüm kritik sorunlar çözülür. Mimari daha tutarlı. Az risk.
+
+**Riskler:** `output_dir` değişikliği dikkatli test gerektirir.
+
+**Efor:** 3-5 gün
+
+**Önerilir:** Projeye devam edecek ve sağlıklı bir foundation istiyorsa.
+
+---
 
 ### Seçenek C: Kontrollü Yeniden Yazma
 
-**Ne zaman uygun:** Mimari temelden yanlış olduğunda. **Burada durum bu DEĞİL.**
+**Uygun olduğu durum:** Mevcut mimari fundamentally broken olsaydı.
 
-Önerilmiyor. Mimari sağlam. Yeniden yazma, 10 fazlık artımlı çalışmayı anlamlı bir kazanım olmadan yok eder.
+**Ne olur:** Mevcut proje analiz edilip sıfırdan temiz kurulur.
 
----
+**Durum:** Mevcut proje bu kategoriye girmiyor. Mimari sağlam, sorunlar spesifik ve hedefli.
 
-## 14. Önerilen Yol
+**Faydalar:** Yok — gereksiz.
 
-**Seçenek A: Muhafazakâr Temizlik.**
+**Riskler:** Çok yüksek. 3-6 ay efor.
 
-**Neden:** Kod tabanı gerçekten iyi. 44 backend dosyasının 35'i ve 21 frontend dosyasının 19'u sıfır değişiklik gerektiriyor. Sorunlar yerelleşmiş: 2 dead UI özelliği (modül toggle, fallback sırası), 1 yanıltıcı kaydetme (UserSettings) ve bazı dead import'lar. Bunlar cerrahi düzeltmeler, mimari sorunlar değil.
-
-**Önce ne yapılmalı:**
-1. `run_pipeline()`'a modül aktif kontrolünü bağla — en yüksek etkili düzeltme (5 satır kod, kozmetik toggle'ı gerçek özelliğe dönüştürür)
-2. `ProviderRegistry.get_ordered_providers()`'a fallback sırası okumayı bağla — ikinci en yüksek etki
-3. UserSettings'i kaydetme sırasında backend API çağıracak şekilde düzelt
-
-**Önce ne DOKUNULMAMALI:**
-- Pipeline runner mantığı (doğru çalışıyor)
-- Provider implementasyonları (doğru çalışıyor)
-- Veritabanı şeması (değişiklik gerekmiyor)
-- Ayar çözümleme hiyerarşisi (doğru çalışıyor)
-
-**Derhal ne dondurulmalı:**
-- `backend/pipeline/runner.py` — kritik yol, çalışıyor, dokunma
-- `backend/services/job_manager.py` — durum makinesi, çalışıyor, dokunma
-- `backend/services/settings_resolver.py` — 5 katmanlı hiyerarşi, çalışıyor, dokunma
-
-**Hangi ayar akışı önce tek veri kaynağı olmalı:**
-- API anahtarları için SQLite settings tablosunun .env değerlerini geçersiz kıldığını belgele
-- İş oluşturmanın ayarları snapshot'ladığını belgele (değişiklikler çalışan işleri etkilemiyor)
+**Önerilir:** Sadece fundamental mimari sorunlar varsa (bu projede yok).
 
 ---
 
-## 15. Sıralı Kurtarma Planı
+## 14. Önerilen Path
 
-### Adım 1: Dead Code Temizliği (30 dk, sıfır risk)
-- [ ] `StandardVideo.tsx`'den `spring` import'unu kaldır
-- [ ] `NewsBulletin.tsx`'den `spring` import'unu ve `globalFrame`'i kaldır
-- [ ] `GlobalSettings.tsx`'den `SCOPE_TABS`'ı kaldır
-- [ ] `AppShell.tsx` PAGE_TITLES'dan `/admin/cost-tracker` kaldır
-- [ ] Doğrulamak için frontend ve remotion'da `tsc --noEmit` çalıştır
-- [ ] `requirements.txt`'den kullanılmayan paketleri kaldır: `aiohttp`, `ffmpeg-python`
+**Seçenek B: Core'u Koru, Kenarları Yeniden Yap**
 
-### Adım 2: Dead UI Özelliklerini Bağla (1 saat, düşük risk)
-- [ ] `backend/pipeline/runner.py`'de `_execute_step` döngüsünden önce modül aktif kontrolü ekle
-- [ ] `backend/providers/registry.py` `get_ordered_providers()`'a fallback sırası okuma ekle — config dict'ten `fallback_order_{category}` oku
-- [ ] `backend/services/job_manager.py` `delete_job()`'a session dizini silme ekle — `shutil.rmtree(session_dir)`
+### Neden En İyi Seçim
 
-### Adım 3: UserSettings Dürüstlüğünü Düzelt (1 saat, düşük risk)
-- [ ] `UserSettings.tsx` kaydetme handler'ını backend API çağıracak şekilde değiştir (POST /api/settings scope="user" ile)
-- [ ] Başarı toast'ını sadece backend onayladıktan sonra göster
-- [ ] localStorage'ı birincil depo değil önbellek olarak tut
+1. **Mimari sağlam** — FastAPI + SQLite WAL + asyncio + React + Remotion kombinasyonu bilinçli kararların sonucu, değiştirilmemeli.
+2. **Sorunlar spesifik ve izole** — 3 kritik sorun (CostTracker endpoint, max_concurrent_jobs runtime, dead API key write) birbirinden bağımsız, hedefli düzeltme mümkün.
+3. **Veri modeli doğru** — `jobs`, `job_steps`, `settings` tabloları tutarlı ve doğru; ORM modellar sağlıklı.
+4. **Provider sistemi çalışıyor** — Provider fallback zinciri, ProviderRegistry, health check fonksiyonel; sadece dead write var.
+5. **Frontend temiz** — Zustand store'ları, SSE hook'ları, sayfa yapısı temiz; sadece CostTracker ve birkaç form geri bildirimi sorunu var.
 
-### Adım 4: Ortak Sabitleri Çıkar (1 saat, düşük risk)
-- [ ] `STATUS_CONFIG` ve `MODULE_INFO` ile `frontend/src/lib/constants.ts` oluştur
-- [ ] Dashboard, JobList, JobDetail, AdminJobs'u ortak dosyadan import edecek şekilde güncelle
-- [ ] `DEFAULT_DURATION_SECONDS` ile `remotion/src/constants.ts` oluştur
-- [ ] Vignette'i `remotion/src/components/Vignette.tsx`'e çıkar
-- [ ] Frame hesaplamayı `remotion/src/utils/calculateSceneFrames.ts`'e çıkar
+### İlk Yapılacaklar
 
-### Adım 5: Konfigürasyon Önceliğini Belgele (30 dk, sıfır risk)
-- [ ] DEVELOPER_GUIDE.md'ye "Konfigürasyon Önceliği" bölümü ekle
-- [ ] Belgele: `.env` → kod varsayılanları → admin DB → modül DB → provider DB → kullanıcı override
-- [ ] Belgele: iş oluşturma snapshot'ları oluşturulduktan sonra değişmez
-- [ ] Belgele: DB'deki API anahtarları .env değerlerini geçersiz kılar
+1. `/api/admin/costs` endpoint yaz (en yüksek görünür etki, en düşük risk)
+2. `max_concurrent_jobs` worker loop fix (admin paneli güvenilir hale getirir)
+3. Provider scope dead write'ı kaldır
 
-### Adım 6: Doğrulama (30 dk)
-- [ ] Tam Python import testi çalıştır (21+ modül)
-- [ ] Frontend'de `tsc --noEmit` çalıştır
-- [ ] Remotion'da `tsc --noEmit` çalıştır
-- [ ] Manuel test: iş oluştur, iş iptal et, admin ayarlar CRUD
-- [ ] Modül aktif toggle'ının artık iş yürütmeyi engellediğini doğrula
+### Hemen Dokunulmaması Gerekenler
+
+- `pipeline/runner.py` core mantığı — çalışıyor, dokunma
+- SSE implementasyonu — temiz, dokunma
+- Provider fallback chain — çalışıyor, dokunma
+- Job state machine — doğru, dokunma
+
+### Hemen Dondurulması Gerekenler
+
+- Yeni özellik ekleme — önce bug'lar düzeltilmeli
+- CostTracker üzerine yeni metrikler ekleme — önce gerçek data akışı sağlanmalı
+
+### Güvenilmemesi Gerekenler (Düzeltilene Kadar)
+
+- `/admin/costs` sayfasındaki tüm rakamlar (mock)
+- Admin panelinden `max_concurrent_jobs` değişikliğinin anlık etkisi
 
 ---
 
-## 16. Nihai Karar
+## 15. Sıralı Recovery Planı
 
-**"Sıfırdan başlama; mevcut kod tabanını sadeleştir."**
+### Adım 1: Kritik Bug Düzeltmeleri (Düşük Risk, Yüksek Etki)
 
-**5 somut gerekçe:**
+1. **`/api/admin/costs` endpoint ekle**
+   - `backend/api/admin.py`'ye ~20 satır DB aggregate sorgusu ekle
+   - `job_steps.cost_estimate_usd` SUM by provider + recent jobs listesi
+   - `CostTracker.tsx`'deki `catch { setData(MOCK_DATA) }` → gerçek hata mesajı
 
-1. **Mimari sağlam.** 3 katmanlı ayrım (backend/frontend/remotion) probleme doğru eşleniyor. Modül sistemi genişletilebilir. Provider deseni değiştirme imkânı sağlıyor. 5 katmanlı ayar hiyerarşisi iyi tasarlanmış ve işlevsel.
+2. **Provider scope dead write'ı kaldır**
+   - `ProviderManager.tsx` L375-386: provider scope yazımını kaldır
+   - Sadece admin scope yazımı bırak
 
-2. **Kod kalitesi yüksek.** 44 Python dosyası, 21 TSX dosyası, kapsamlı tip ipuçları, düzgün async/await, dairesel bağımlılık yok, tanrı sınıfları (god class) yok, minimum dead code. Bu, çoğu üretim kod tabanından daha iyi.
+3. **Admin `max_concurrent_jobs` runtime fix**
+   - `job_manager.py:770`'deki `app_settings.max_concurrent_jobs` → `SettingsResolver` çağrısı
+   - Ya da yeniden başlatma gerektirdiğini belirten UI uyarısı ekle
 
-3. **Sorunlar yerelleşmiş.** 3 kritik sorun (modül toggle, fallback sırası, UserSettings kaydetme) her biri < 20 satır kodla düzeltilebilir. Bunlar mimari çürüme değil — tasarlanmış ama çalışma zamanına bağlanmamış özellikleri gösteriyor.
+### Adım 2: Uyarı ve Feedback Düzeltmeleri (Düşük Risk)
 
-4. **Pipeline uçtan uca çalışıyor.** Temel değer önerisi — bir metin isteğini LLM + TTS + görseller + Remotion aracılığıyla render edilmiş videoya dönüştürme — tamamen işlevsel. Senaryo üretimi, kelime düzeyinde zamanlamalı Edge TTS, Pexels medya indirme, altyazı senkronizasyonu ve Remotion CLI render hepsi çalışıyor.
+4. **`output_dir` ve `max_concurrent_jobs` değişikliği için restart uyarısı**
+   - GlobalSettings'te bu iki alan için "Bu değişiklik server yeniden başlatılana kadar etkili olmaz" uyarısı
 
-5. **10 fazlık artımlı çalışma.** Her faz öncekinin üzerine temiz bir şekilde inşa edilmiş. Kod tabanı disiplin gösteriyor: hack yok, kestirme yok, "bunu sonra düzeltirim" TODO'su yok. Bunu çöpe atmak israf olur. Yukarıdaki temizlik planı tespit edilen her sorunu 1 günden kısa sürede ele alıyor.
+5. **CostTracker hata mesajı**
+   - Endpoint yokken veya hata olduğunda "Veri yüklenemedi" göster, sıfır mock değil
+
+### Adım 3: Küçük Yeniden Yapılanma (Orta Risk)
+
+6. **Gemini SDK güncelleme**
+   - `google-generativeai` → `google-genai`
+   - `warnings.filterwarnings` hack'ini kaldır
+
+7. **`output_dir` mutation standardizasyonu**
+   - `main.py` ve `api/settings.py`'deki özel case logic → SettingsResolver standart akışı
+
+8. **PromptManager → ModuleManager accordion**
+   - Ayrı sayfa kaldır, ModuleManager'a accordion ekle
+
+### Adım 4: Test Altyapısı (Uzun Vadeli)
+
+9. **Kritik path'ler için temel testler**
+   - `settings_resolver.py` için unit test (5-katman çözümleme)
+   - `job_manager.py` worker loop için integration test
+   - Provider fallback zinciri için mock-based test
+
+### Adım 5: Dokümantasyon Senkronizasyonu
+
+10. **Bug fix'lerden sonra docs güncelle**
+    - CHANGELOG.md'ye fix notları
+    - IMPLEMENTATION_REPORT.md güncelle
+
+11. **REQUEST_LOG.md'ye yeni REQ girişi**
+    - Code audit bulguları ve düzeltmeler için REQ kaydı
 
 ---
 
-*Bu rapor code-audit yeteneği tarafından üretilmiştir. Tüm bulgular varsayımlara değil, gerçek dosya okumalarına dayanmaktadır.*
+## 16. Final Karar
+
+### "Sıfırdan Başlama — Mevcut Kodu Basitleştir ve Düzelt"
+
+**ContentManager sıfırdan yazılmamalıdır.** Mevcut kod tabanı, bilinçli mimari kararların ürünüdür. Sorunlar spesifik, izole ve hedefli düzeltmelerle çözülebilir.
+
+**5 Somut Neden:**
+
+1. **Temel mimari pattern doğru.** FastAPI + SQLite WAL + asyncio + React + Remotion kombinasyonu, localhost-first YouTube otomasyon platformu için ideal seçim. Bu kararlar zaman ve deneyimle verilmiş, korunmalı.
+
+2. **Pipeline runner ve job state management sağlam.** `runner.py` + `job_manager.py` kombinasyonu crash-safe, resume destekli, SSE entegre; bu katmanı yeniden yazmak ay sürer ve mevcut durumdan daha iyi olmaz.
+
+3. **Kritik sorunlar 3 spesifik lokasyonda.** CostTracker (eksik endpoint), max_concurrent_jobs (yanlış okuma, tek satır fix), dead API key write (birkaç satır silme) — bunlar mimari sorun değil, implementasyon atlama/hatası.
+
+4. **Provider sistemi gerçekten çalışıyor.** ProviderRegistry, fallback chain, health check, TTS/LLM/Visuals provider'ları; bu sistemi yeniden yazmak risk altında çalışan bir şeyi riske atmak demektir.
+
+5. **Frontend temiz ve modern.** React 18 + Zustand + TypeScript + Tailwind + SSE hook'ları güncel, minimal, temiz. CostTracker ve birkaç form dışında tüm sayfalar dürüst ve işlevsel.
+
+**Sonuç:** Seçenek B uygula. Kritik 3 bug'ı düzelt (1-2 gün), Gemini SDK'yı güncelle (1 gün), PromptManager'ı birleştir (yarım gün). Toplam efor: 3-4 gün. Sonuç: Tamamen güvenilir, gerçek veri gösteren, runtime tutarlı bir sistem.
