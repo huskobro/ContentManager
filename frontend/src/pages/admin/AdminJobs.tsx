@@ -1,17 +1,17 @@
 /**
  * AdminJobs — Tüm işlerin admin yönetim ekranı.
  *
- * User panelindeki JobList'ten farklı olarak:
- *   • Tüm işleri gösterir (admin yetkisi ile)
- *   • İptal ve silme yetkisi vardır
- *   • Toplu temizlik (tamamlanan/başarısız işleri sil)
+ * UX: Hibrit Navigasyon (Klavye + Fare Kusursuz Uyumu)
+ *   • ArrowUp/ArrowDown → satır odaklanması
+ *   • Fare hover → klavye odağını o satıra taşır
+ *   • Space → Quick Look (Dialog önizleme)
+ *   • Enter veya Sol Tık → Deep Dive (Sağ Çekmece + silme butonu)
+ *   • ESC → açık pencereyi kapar
  *
- * Gerçek Zamanlı Güncelleme:
- *   Global SSE stream'e bağlanır — polling yok, push-based.
+ * Fare kullanıcıları için tıklanabilirlik/hover hiçbir şekilde bozulmaz.
  */
 
-import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ListVideo,
   RefreshCw,
@@ -19,7 +19,6 @@ import {
   ChevronRight,
   Loader2,
   AlertCircle,
-  Video,
   Ban,
   Trash2,
   Eraser,
@@ -29,6 +28,8 @@ import { useAdminStore } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import { STATUS_CONFIG, MODULE_INFO, STATUS_FILTERS, getModuleIcon } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { JobQuickLook } from "@/components/jobs/JobQuickLook";
+import { JobDetailSheet } from "@/components/jobs/JobDetailSheet";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
@@ -37,17 +38,23 @@ const PAGE_SIZE = 20;
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function AdminJobs() {
-  const navigate = useNavigate();
   const { jobs, totalJobs, loading, error, fetchJobs, cancelJob, connectGlobalStream } = useJobStore();
   const { deleteJob } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
-  const [page, setPage] = useState(1);
+  const [page, setPage]               = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const [moduleFilter, setModuleFilter] = useState("");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId]     = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [bulkCleaning, setBulkCleaning] = useState(false);
+
+  // ── Hibrit Navigasyon State ──────────────────────────────────────────────
+  const [focusedIdx, setFocusedIdx]     = useState<number>(-1);
+  const [quickLookJob, setQuickLookJob] = useState<Job | null>(null);
+  const [sheetJob, setSheetJob]         = useState<Job | null>(null);
+  const listRef                         = useRef<HTMLDivElement>(null);
+  const pendingSheetJobRef              = useRef<Job | null>(null);
 
   const loadData = useCallback(() => {
     fetchJobs({
@@ -62,18 +69,15 @@ export default function AdminJobs() {
     loadData();
   }, [loadData]);
 
-  // Global SSE stream — mount'ta bağlan, unmount'ta kapat
-  // Polling yok: job değişikliklerinde liste reaktif güncellenir
   useEffect(() => {
     const closeStream = connectGlobalStream();
-    return () => {
-      closeStream();
-    };
+    return () => closeStream();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleFilterChange(type: "status" | "module", value: string) {
     setPage(1);
+    setFocusedIdx(-1);
     if (type === "status") setStatusFilter(value);
     else setModuleFilter(value);
   }
@@ -107,15 +111,12 @@ export default function AdminJobs() {
     const terminalJobs = jobs.filter(
       (j) => j.status === "completed" || j.status === "failed" || j.status === "cancelled"
     );
-
     let deleted = 0;
     for (const job of terminalJobs) {
       const ok = await deleteJob(job.id);
       if (ok) deleted++;
     }
-
     setBulkCleaning(false);
-
     if (deleted > 0) {
       addToast({ type: "success", title: `${deleted} iş temizlendi` });
       loadData();
@@ -124,8 +125,76 @@ export default function AdminJobs() {
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
+  // ── Klavye Navigasyonu ───────────────────────────────────────────────────
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
+      if (quickLookJob || sheetJob) {
+        if (e.key === "Escape") {
+          setQuickLookJob(null);
+          setSheetJob(null);
+        }
+        return;
+      }
+
+      if (jobs.length === 0) return;
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setFocusedIdx((prev) => Math.min(prev + 1, jobs.length - 1));
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setFocusedIdx((prev) => Math.max(prev - 1, 0));
+          break;
+        case " ":
+          if (focusedIdx >= 0 && focusedIdx < jobs.length) {
+            e.preventDefault();
+            pendingSheetJobRef.current = jobs[focusedIdx];
+            setQuickLookJob(jobs[focusedIdx]);
+          }
+          break;
+        case "Enter":
+          if (focusedIdx >= 0 && focusedIdx < jobs.length) {
+            e.preventDefault();
+            setSheetJob(jobs[focusedIdx]);
+          }
+          break;
+        case "Escape":
+          setFocusedIdx(-1);
+          break;
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [jobs, focusedIdx, quickLookJob, sheetJob]);
+
+  // Odaklanan satırı görünüme kaydır
+  useEffect(() => {
+    if (focusedIdx < 0 || !listRef.current) return;
+    const rows = listRef.current.querySelectorAll("[data-job-row]");
+    const row = rows[focusedIdx] as HTMLElement | undefined;
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [focusedIdx]);
+
+  function openQuickLook(job: Job) {
+    pendingSheetJobRef.current = job;
+    setQuickLookJob(job);
+  }
+
+  function handleOpenDeepDiveFromQuickLook() {
+    const job = pendingSheetJobRef.current;
+    if (job) {
+      setSheetJob(job);
+      pendingSheetJobRef.current = null;
+    }
+  }
+
+  const totalPages   = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
   const terminalCount = jobs.filter(
     (j) => j.status === "completed" || j.status === "failed" || j.status === "cancelled"
   ).length;
@@ -142,17 +211,23 @@ export default function AdminJobs() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Klavye ipucu */}
+          <span className="hidden md:flex items-center gap-1 text-[10px] text-muted-foreground/60">
+            <kbd className="rounded border border-border px-1 font-mono">↑↓</kbd>
+            <span>seç</span>
+            <kbd className="rounded border border-border px-1 font-mono ml-1">Space</kbd>
+            <span>önizle</span>
+            <kbd className="rounded border border-border px-1 font-mono ml-1">Enter</kbd>
+            <span>detay</span>
+          </span>
+
           {terminalCount > 0 && (
             <button
               onClick={handleBulkClean}
               disabled={bulkCleaning}
               className="flex h-8 items-center gap-1.5 rounded-lg border border-red-500/30 px-3 text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
             >
-              {bulkCleaning ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Eraser size={12} />
-              )}
+              {bulkCleaning ? <Loader2 size={12} className="animate-spin" /> : <Eraser size={12} />}
               Tamamlananları Temizle ({terminalCount})
             </button>
           )}
@@ -242,12 +317,21 @@ export default function AdminJobs() {
             </div>
 
             {/* Satırlar */}
-            <div className="divide-y divide-border">
-              {jobs.map((job) => (
+            <div ref={listRef} className="divide-y divide-border">
+              {jobs.map((job, idx) => (
                 <AdminJobRow
                   key={job.id}
                   job={job}
-                  onNavigate={() => navigate(`/jobs/${job.id}`)}
+                  isFocused={focusedIdx === idx}
+                  onHover={() => setFocusedIdx(idx)}
+                  onClick={() => {
+                    setFocusedIdx(idx);
+                    setSheetJob(job);
+                  }}
+                  onSpaceClick={() => {
+                    setFocusedIdx(idx);
+                    openQuickLook(job);
+                  }}
                   onCancel={() => handleCancel(job.id)}
                   onDelete={() => handleDelete(job.id)}
                   isDeleting={deletingId === job.id}
@@ -267,14 +351,14 @@ export default function AdminJobs() {
           </p>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => { setPage((p) => Math.max(1, p - 1)); setFocusedIdx(-1); }}
               disabled={page <= 1}
               className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:opacity-30 transition-colors"
             >
               <ChevronLeft size={14} />
             </button>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); setFocusedIdx(-1); }}
               disabled={page >= totalPages}
               className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:opacity-30 transition-colors"
             >
@@ -283,47 +367,87 @@ export default function AdminJobs() {
           </div>
         </div>
       )}
+
+      {/* ── Quick Look Modal ── */}
+      <JobQuickLook
+        job={quickLookJob}
+        open={quickLookJob !== null}
+        onClose={() => setQuickLookJob(null)}
+        onOpenDeepDive={handleOpenDeepDiveFromQuickLook}
+      />
+
+      {/* ── Deep Dive Sheet (admin modda silme butonu aktif) ── */}
+      <JobDetailSheet
+        job={sheetJob}
+        open={sheetJob !== null}
+        onClose={() => setSheetJob(null)}
+        isAdmin
+        onDeleted={loadData}
+      />
     </div>
   );
 }
 
 // ─── Admin İş Satırı ────────────────────────────────────────────────────────
 
-function AdminJobRow({
-  job,
-  onNavigate,
-  onCancel,
-  onDelete,
-  isDeleting,
-  isCancelling,
-}: {
+interface AdminJobRowProps {
   job: Job;
-  onNavigate: () => void;
+  isFocused: boolean;
+  onHover: () => void;
+  onClick: () => void;
+  onSpaceClick: () => void;
   onCancel: () => void;
   onDelete: () => void;
   isDeleting: boolean;
   isCancelling: boolean;
-}) {
+}
+
+function AdminJobRow({
+  job,
+  isFocused,
+  onHover,
+  onClick,
+  onSpaceClick,
+  onCancel,
+  onDelete,
+  isDeleting,
+  isCancelling,
+}: AdminJobRowProps) {
   const statusCfg = STATUS_CONFIG[job.status];
-  const modMeta = MODULE_INFO[job.module_key];
-  const modInfo = {
+  const modMeta   = MODULE_INFO[job.module_key];
+  const modInfo   = {
     label: modMeta?.label ?? job.module_key,
-    icon: getModuleIcon(job.module_key, 14),
+    icon:  getModuleIcon(job.module_key, 14),
   };
 
-  const isActive = job.status === "queued" || job.status === "running";
+  const isActive   = job.status === "queued" || job.status === "running";
   const isTerminal = !isActive;
-  const dateStr = formatShortDate(job.created_at);
-  const cost = job.cost_estimate_usd > 0 ? `$${job.cost_estimate_usd.toFixed(4)}` : "—";
+  const dateStr    = formatShortDate(job.created_at);
+  const cost       = job.cost_estimate_usd > 0 ? `$${job.cost_estimate_usd.toFixed(4)}` : "—";
 
   return (
-    <div className="flex w-full items-center gap-3 px-4 py-3 sm:grid sm:grid-cols-[1fr_120px_100px_90px_70px_100px] sm:gap-2">
-      {/* Başlık — tıklanabilir */}
+    <div
+      data-job-row
+      onMouseEnter={onHover}
+      onContextMenu={(e) => { e.preventDefault(); onSpaceClick(); }}
+      className={cn(
+        "flex w-full items-center gap-3 px-4 py-3 transition-colors",
+        "sm:grid sm:grid-cols-[1fr_120px_100px_90px_70px_100px] sm:gap-2",
+        isFocused ? "bg-muted ring-1 ring-inset ring-primary/30" : "hover:bg-accent/30"
+      )}
+      aria-selected={isFocused}
+    >
+      {/* Başlık — tıklanınca Deep Dive açılır */}
       <button
-        onClick={onNavigate}
-        className="min-w-0 flex-1 sm:flex-none text-left hover:text-primary transition-colors"
+        onClick={onClick}
+        className="min-w-0 flex-1 sm:flex-none text-left group"
       >
-        <p className="truncate text-sm font-medium text-foreground">{job.title}</p>
+        <p className={cn(
+          "truncate text-sm font-medium transition-colors",
+          isFocused ? "text-primary" : "text-foreground group-hover:text-primary"
+        )}>
+          {job.title}
+        </p>
         <p className="truncate text-xs text-muted-foreground sm:hidden">{modInfo.label}</p>
       </button>
 
@@ -350,11 +474,11 @@ function AdminJobRow({
       {/* Tarih */}
       <span className="hidden sm:block text-xs text-muted-foreground text-right">{dateStr}</span>
 
-      {/* İşlemler */}
+      {/* İşlemler — inline butonlar (fare kullanıcıları için) */}
       <div className="hidden sm:flex items-center justify-end gap-1">
         {isActive && (
           <button
-            onClick={onCancel}
+            onClick={(e) => { e.stopPropagation(); onCancel(); }}
             disabled={isCancelling}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
             title="İptal Et"
@@ -365,7 +489,7 @@ function AdminJobRow({
         )}
         {isTerminal && (
           <button
-            onClick={onDelete}
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
             disabled={isDeleting}
             className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
             title="Sil"
@@ -383,10 +507,9 @@ function AdminJobRow({
 
 function formatShortDate(isoDate: string): string {
   try {
-    const d = new Date(isoDate);
+    const d   = new Date(isoDate);
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
-
     if (isToday) {
       return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
     }

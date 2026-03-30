@@ -1,22 +1,17 @@
 /**
  * JobList — Tüm işlerin filtrelenebilir listesi.
  *
- * Özellikler:
- *   • Durum filtresi (Tümü / Kuyrukta / Çalışıyor / Tamamlandı / Başarısız / İptal)
- *   • Modül filtresi (Tümü / Standard Video / Haber Bülteni / Ürün İnceleme)
- *   • Sayfalama
- *   • Renk kodlu durum badge'leri
- *   • Progress bar (aktif işler için)
- *   • Tıklama → JobDetail sayfasına yönlendirme
+ * UX: Hibrit Navigasyon (Klavye + Fare Kusursuz Uyumu)
+ *   • ArrowUp/ArrowDown → satır odaklanması (focus state)
+ *   • Fare hover → klavye odağını otomatik o satıra taşır
+ *   • Space → Quick Look (Dialog önizleme)
+ *   • Enter veya Sol Tık → Deep Dive (Sağ Çekmece detay paneli)
+ *   • ESC → açık pencereyi kapar, odağı listeye döndürür
  *
- * Gerçek Zamanlı Güncelleme:
- *   Global SSE stream'e (GET /api/jobs/stream) bağlanır.
- *   Herhangi bir job değiştiğinde liste sayfayı yenilemeden güncellenir.
- *   Polling (setInterval) kullanılmaz.
+ * Klavye event listener'ları useEffect cleanup ile bellek sızıntısı önlenir.
  */
 
-import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ListVideo,
   RefreshCw,
@@ -28,6 +23,8 @@ import {
 import { useJobStore, type Job } from "@/stores/jobStore";
 import { STATUS_CONFIG, MODULE_INFO, STATUS_FILTERS, MODULE_FILTERS, getModuleIcon } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { JobQuickLook } from "@/components/jobs/JobQuickLook";
+import { JobDetailSheet } from "@/components/jobs/JobDetailSheet";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
@@ -36,12 +33,19 @@ const PAGE_SIZE = 15;
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function JobList() {
-  const navigate = useNavigate();
   const { jobs, totalJobs, loading, error, fetchJobs, connectGlobalStream } = useJobStore();
 
-  const [page, setPage] = useState(1);
+  const [page, setPage]               = useState(1);
   const [statusFilter, setStatusFilter] = useState("");
   const [moduleFilter, setModuleFilter] = useState("");
+
+  // ── Hibrit Navigasyon State ──────────────────────────────────────────────
+  const [focusedIdx, setFocusedIdx]     = useState<number>(-1);
+  const [quickLookJob, setQuickLookJob] = useState<Job | null>(null);
+  const [sheetJob, setSheetJob]         = useState<Job | null>(null);
+  const listRef                         = useRef<HTMLDivElement>(null);
+  // Quick Look'tan Deep Dive'a geçişte seçili işi korumak için
+  const pendingSheetJobRef              = useRef<Job | null>(null);
 
   const loadData = useCallback(() => {
     fetchJobs({
@@ -57,20 +61,97 @@ export default function JobList() {
   }, [loadData]);
 
   // Global SSE stream — mount'ta bağlan, unmount'ta kapat
-  // Polling yok: herhangi bir job değiştiğinde store güncellenir → liste reaktif yenilenir
   useEffect(() => {
     const closeStream = connectGlobalStream();
-    return () => {
-      closeStream();
-    };
+    return () => closeStream();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Filtre değiştiğinde sayfayı sıfırla
+  // Filtre değiştiğinde sayfayı sıfırla + odağı temizle
   function handleFilterChange(type: "status" | "module", value: string) {
     setPage(1);
+    setFocusedIdx(-1);
     if (type === "status") setStatusFilter(value);
     else setModuleFilter(value);
+  }
+
+  // ── Klavye Navigasyonu ───────────────────────────────────────────────────
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Eğer odak bir input/textarea/button içindeyse klavye navigasyonunu atlat
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // Quick Look veya Sheet açıkken sadece ESC işle
+      if (quickLookJob || sheetJob) {
+        if (e.key === "Escape") {
+          setQuickLookJob(null);
+          setSheetJob(null);
+        }
+        return;
+      }
+
+      if (jobs.length === 0) return;
+
+      switch (e.key) {
+        case "ArrowDown": {
+          e.preventDefault();
+          setFocusedIdx((prev) => Math.min(prev + 1, jobs.length - 1));
+          break;
+        }
+        case "ArrowUp": {
+          e.preventDefault();
+          setFocusedIdx((prev) => Math.max(prev - 1, 0));
+          break;
+        }
+        case " ": {
+          // Space → Quick Look
+          if (focusedIdx >= 0 && focusedIdx < jobs.length) {
+            e.preventDefault();
+            setQuickLookJob(jobs[focusedIdx]);
+          }
+          break;
+        }
+        case "Enter": {
+          // Enter → Deep Dive
+          if (focusedIdx >= 0 && focusedIdx < jobs.length) {
+            e.preventDefault();
+            setSheetJob(jobs[focusedIdx]);
+          }
+          break;
+        }
+        case "Escape": {
+          setFocusedIdx(-1);
+          break;
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [jobs, focusedIdx, quickLookJob, sheetJob]);
+
+  // Odaklanan satırı görünüme kaydır
+  useEffect(() => {
+    if (focusedIdx < 0 || !listRef.current) return;
+    const rows = listRef.current.querySelectorAll("[data-job-row]");
+    const row = rows[focusedIdx] as HTMLElement | undefined;
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [focusedIdx]);
+
+  // Quick Look'tan "Tüm Detayları Gör" → Sheet aç
+  function handleOpenDeepDiveFromQuickLook() {
+    const job = pendingSheetJobRef.current;
+    if (job) {
+      setSheetJob(job);
+      pendingSheetJobRef.current = null;
+    }
+  }
+
+  // Quick Look açılırken pending job'ı kaydet
+  function openQuickLook(job: Job) {
+    pendingSheetJobRef.current = job;
+    setQuickLookJob(job);
   }
 
   const totalPages = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
@@ -86,19 +167,29 @@ export default function JobList() {
             {totalJobs}
           </span>
         </div>
-        <button
-          onClick={loadData}
-          disabled={loading}
-          className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          Yenile
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Klavye kısayolları ipucu */}
+          <span className="hidden md:flex items-center gap-1 text-[10px] text-muted-foreground/60">
+            <kbd className="rounded border border-border px-1 font-mono">↑↓</kbd>
+            <span>seç</span>
+            <kbd className="rounded border border-border px-1 font-mono ml-1">Space</kbd>
+            <span>önizle</span>
+            <kbd className="rounded border border-border px-1 font-mono ml-1">Enter</kbd>
+            <span>detay</span>
+          </span>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+            Yenile
+          </button>
+        </div>
       </div>
 
       {/* Filtreler */}
       <div className="flex flex-wrap gap-2">
-        {/* Durum filtresi */}
         <div className="flex rounded-lg border border-border overflow-hidden">
           {STATUS_FILTERS.map((f) => (
             <button
@@ -116,7 +207,6 @@ export default function JobList() {
           ))}
         </div>
 
-        {/* Modül filtresi */}
         <div className="flex rounded-lg border border-border overflow-hidden">
           {MODULE_FILTERS.map((f) => (
             <button
@@ -167,9 +257,23 @@ export default function JobList() {
             </div>
 
             {/* Satırlar */}
-            <div className="divide-y divide-border">
-              {jobs.map((job) => (
-                <JobRow key={job.id} job={job} onClick={() => navigate(`/jobs/${job.id}`)} />
+            <div ref={listRef} className="divide-y divide-border">
+              {jobs.map((job, idx) => (
+                <JobRow
+                  key={job.id}
+                  job={job}
+                  isFocused={focusedIdx === idx}
+                  onHover={() => setFocusedIdx(idx)}
+                  onMouseLeave={() => {/* Fare ayrılınca odak korunur — klavye devamlılığı için */}}
+                  onClick={() => {
+                    setFocusedIdx(idx);
+                    setSheetJob(job);
+                  }}
+                  onSpaceClick={() => {
+                    setFocusedIdx(idx);
+                    openQuickLook(job);
+                  }}
+                />
               ))}
             </div>
           </>
@@ -184,14 +288,14 @@ export default function JobList() {
           </p>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => { setPage((p) => Math.max(1, p - 1)); setFocusedIdx(-1); }}
               disabled={page <= 1}
               className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:opacity-30 transition-colors"
             >
               <ChevronLeft size={14} />
             </button>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); setFocusedIdx(-1); }}
               disabled={page >= totalPages}
               className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:opacity-30 transition-colors"
             >
@@ -200,27 +304,62 @@ export default function JobList() {
           </div>
         </div>
       )}
+
+      {/* ── Quick Look Modal ── */}
+      <JobQuickLook
+        job={quickLookJob}
+        open={quickLookJob !== null}
+        onClose={() => setQuickLookJob(null)}
+        onOpenDeepDive={handleOpenDeepDiveFromQuickLook}
+      />
+
+      {/* ── Deep Dive Sheet ── */}
+      <JobDetailSheet
+        job={sheetJob}
+        open={sheetJob !== null}
+        onClose={() => setSheetJob(null)}
+      />
     </div>
   );
 }
 
 // ─── İş satırı ──────────────────────────────────────────────────────────────
 
-function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
+interface JobRowProps {
+  job: Job;
+  isFocused: boolean;
+  onHover: () => void;
+  onMouseLeave: () => void;
+  onClick: () => void;
+  onSpaceClick: () => void;
+}
+
+function JobRow({ job, isFocused, onHover, onMouseLeave, onClick, onSpaceClick }: JobRowProps) {
   const statusCfg = STATUS_CONFIG[job.status];
-  const modMeta = MODULE_INFO[job.module_key];
-  const modLabel = modMeta?.label ?? job.module_key;
+  const modMeta   = MODULE_INFO[job.module_key];
+  const modLabel  = modMeta?.label ?? job.module_key;
 
   const completedSteps = job.steps.filter((s) => s.status === "completed").length;
-  const totalSteps = job.steps.length;
-  const pct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
-
-  const dateStr = formatShortDate(job.created_at);
+  const totalSteps     = job.steps.length;
+  const pct            = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+  const dateStr        = formatShortDate(job.created_at);
 
   return (
     <button
+      data-job-row
       onClick={onClick}
-      className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-accent/50 transition-colors sm:grid sm:grid-cols-[1fr_140px_120px_100px_80px] sm:gap-2"
+      onMouseEnter={onHover}
+      onMouseLeave={onMouseLeave}
+      // Sağ tık → Quick Look (context menu yerine özel davranış)
+      onContextMenu={(e) => { e.preventDefault(); onSpaceClick(); }}
+      className={cn(
+        "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
+        "sm:grid sm:grid-cols-[1fr_140px_120px_100px_80px] sm:gap-2",
+        isFocused
+          ? "bg-muted ring-1 ring-inset ring-primary/30"
+          : "hover:bg-accent/50"
+      )}
+      aria-selected={isFocused}
     >
       {/* Başlık */}
       <div className="min-w-0 flex-1 sm:flex-none">
@@ -240,7 +379,7 @@ function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
           <div
             className={cn(
               "h-full rounded-full transition-all duration-500",
-              job.status === "failed" ? "bg-red-400" :
+              job.status === "failed"    ? "bg-red-400" :
               job.status === "completed" ? "bg-emerald-400" : "bg-primary"
             )}
             style={{ width: `${pct}%` }}
@@ -250,7 +389,13 @@ function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
       </div>
 
       {/* Durum */}
-      <span className={cn("shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium", statusCfg.color, statusCfg.bg)}>
+      <span
+        className={cn(
+          "shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium",
+          statusCfg.color,
+          statusCfg.bg
+        )}
+      >
         <span className="hidden sm:inline">{statusCfg.label}</span>
       </span>
 
@@ -264,10 +409,9 @@ function JobRow({ job, onClick }: { job: Job; onClick: () => void }) {
 
 function formatShortDate(isoDate: string): string {
   try {
-    const d = new Date(isoDate);
+    const d   = new Date(isoDate);
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
-
     if (isToday) {
       return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
     }
