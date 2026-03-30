@@ -23,7 +23,8 @@ import {
   Trash2,
   Eraser,
 } from "lucide-react";
-import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
+import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
+import { useRovingTabindex } from "@/hooks/useRovingTabindex";
 import { useJobStore, type Job } from "@/stores/jobStore";
 import { useAdminStore } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -31,6 +32,8 @@ import { STATUS_CONFIG, MODULE_INFO, STATUS_FILTERS, getModuleIcon } from "@/lib
 import { cn } from "@/lib/utils";
 import { JobQuickLook } from "@/components/jobs/JobQuickLook";
 import { JobDetailSheet } from "@/components/jobs/JobDetailSheet";
+
+const ADMIN_LIST_ID = "admin-job-list-listbox";
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
@@ -58,20 +61,27 @@ export default function AdminJobs() {
 
   const anyPanelOpen = quickLookJob !== null || sheetJob !== null;
 
-  const { focusedIdx, setFocusedIdx } = useKeyboardNavigation({
+  const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: jobs.length,
     disabled: anyPanelOpen,
     scrollRef: listRef as React.RefObject<HTMLElement | null>,
-    onSpace: (idx) => {
-      openQuickLook(jobs[idx]);
-    },
+    homeEnd: true,
+    onSpace: (idx) => openQuickLook(jobs[idx]),
     onEnter: (idx) => {
+      setFocusedIdx(idx);
       setSheetJob(jobs[idx]);
     },
     onEscape: () => {
       setQuickLookJob(null);
       setSheetJob(null);
     },
+  });
+
+  const { getTabIndex } = useRovingTabindex({
+    focusedIdx,
+    itemCount: jobs.length,
+    autoFocus: false,
+    containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
 
   const loadData = useCallback(() => {
@@ -279,19 +289,32 @@ export default function AdminJobs() {
               <span className="text-right">İşlemler</span>
             </div>
 
-            {/* Satırlar */}
-            <div ref={listRef} className="divide-y divide-border">
+            {/* Satırlar — ARIA listbox */}
+            <div
+              ref={listRef}
+              id={ADMIN_LIST_ID}
+              role="listbox"
+              aria-label="Tüm İşler"
+              aria-activedescendant={
+                focusedIdx >= 0 ? `${scopeId}-opt-${focusedIdx}` : undefined
+              }
+              className="divide-y divide-border"
+            >
               {jobs.map((job, idx) => (
                 <AdminJobRow
                   key={job.id}
                   job={job}
+                  idx={idx}
+                  total={jobs.length}
+                  scopeId={scopeId}
                   isFocused={focusedIdx === idx}
+                  tabIndex={getTabIndex(idx)}
                   onHover={() => setFocusedIdx(idx)}
                   onClick={() => {
                     setFocusedIdx(idx);
                     setSheetJob(job);
                   }}
-                  onSpaceClick={() => {
+                  onQuickLook={() => {
                     setFocusedIdx(idx);
                     openQuickLook(job);
                   }}
@@ -355,10 +378,14 @@ export default function AdminJobs() {
 
 interface AdminJobRowProps {
   job: Job;
+  idx: number;
+  total: number;
+  scopeId: string;
   isFocused: boolean;
+  tabIndex: 0 | -1;
   onHover: () => void;
   onClick: () => void;
-  onSpaceClick: () => void;
+  onQuickLook: () => void;
   onCancel: () => void;
   onDelete: () => void;
   isDeleting: boolean;
@@ -367,10 +394,14 @@ interface AdminJobRowProps {
 
 function AdminJobRow({
   job,
+  idx,
+  total,
+  scopeId,
   isFocused,
+  tabIndex,
   onHover,
   onClick,
-  onSpaceClick,
+  onQuickLook,
   onCancel,
   onDelete,
   isDeleting,
@@ -390,32 +421,40 @@ function AdminJobRow({
 
   return (
     <div
+      id={`${scopeId}-opt-${idx}`}
       data-nav-row
+      role="option"
+      aria-selected={isFocused}
+      aria-setsize={total}
+      aria-posinset={idx + 1}
+      tabIndex={tabIndex}
       onMouseEnter={onHover}
-      onContextMenu={(e) => { e.preventDefault(); onSpaceClick(); }}
+      onContextMenu={(e) => { e.preventDefault(); onQuickLook(); }}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        // div'e tabIndex=0 verildiğinde Enter/Space olayları için
+        if (e.key === "Enter") { e.preventDefault(); onClick(); }
+      }}
       className={cn(
-        "flex w-full items-center gap-3 px-4 py-3 transition-colors",
+        "flex w-full items-center gap-3 px-4 py-3 transition-colors cursor-pointer",
         "sm:grid sm:grid-cols-[1fr_120px_100px_90px_70px_100px] sm:gap-2",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset",
         isFocused ? "bg-muted ring-1 ring-inset ring-primary/30" : "hover:bg-accent/30"
       )}
-      aria-selected={isFocused}
     >
-      {/* Başlık — tıklanınca Deep Dive açılır */}
-      <button
-        onClick={onClick}
-        className="min-w-0 flex-1 sm:flex-none text-left group"
-      >
+      {/* Başlık */}
+      <div className="min-w-0 flex-1 sm:flex-none text-left">
         <p className={cn(
           "truncate text-sm font-medium transition-colors",
-          isFocused ? "text-primary" : "text-foreground group-hover:text-primary"
+          isFocused ? "text-primary" : "text-foreground"
         )}>
           {job.title}
         </p>
         <p className="truncate text-xs text-muted-foreground sm:hidden">{modInfo.label}</p>
-      </button>
+      </div>
 
       {/* Modül */}
-      <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+      <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground" aria-hidden="true">
         {modInfo.icon}
         <span className="truncate">{modInfo.label}</span>
       </div>

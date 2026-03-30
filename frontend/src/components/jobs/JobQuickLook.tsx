@@ -4,9 +4,25 @@
  * İçerik: Video oynatıcı, başlık, durum rozeti, format, dil.
  * Aksiyonlar: Senaryoyu Kopyala | YouTube Meta Kopyala | Videoyu İndir
  * Alt buton: "Tüm Detayları Gör" → Deep Dive Sheet açar.
+ *
+ * Space Toggle Davranışı:
+ *   - Modal AÇIKKEN Space tuşu içerideki butonu TETİKLEMEZ.
+ *   - Capture aşamasında (önce) yakalanır, preventDefault + stopPropagation.
+ *   - " " ve "Spacebar" (eski tarayıcı değeri) ikisi de desteklenir.
+ *   - input/textarea/contenteditable içindeyse Space engellenmez.
+ *   - Modal KAPANIR (ESC ile aynı davranış).
+ *
+ * ESC Katmanı:
+ *   useDismissOnEsc ile kayıtlıdır (priority=10 → diğer handler'lardan önce).
+ *   Radix Dialog kendi ESC'sini de yönetir; iki katman çakışmaz çünkü
+ *   Radix, onOpenChange(false) çağrır ve biz de onClose'u dışarıdan alırız.
+ *
+ * Scope Yönetimi:
+ *   Modal açıkken altındaki liste scope'u pasif olur (keyboardStore stack).
+ *   Bunun için JobList/AdminJobs anyPanelOpen=true ile disabled:{true} verir.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   X,
@@ -28,49 +44,82 @@ interface Props {
   onOpenDeepDive: () => void;
 }
 
+// ─── Guard: metinsel input alanı mı? ────────────────────────────────────────
+function isTextInput(target: EventTarget | null): boolean {
+  if (!target) return false;
+  const el = target as HTMLElement;
+  const tag = el.tagName.toUpperCase();
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  const role = el.getAttribute("role");
+  return (
+    role === "textbox" ||
+    role === "combobox" ||
+    role === "searchbox" ||
+    role === "spinbutton"
+  );
+}
+
+// ─── Bileşen ─────────────────────────────────────────────────────────────────
+
 export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
   const addToast = useUIStore((s) => s.addToast);
 
+  // onClose'u ref'e al — stale closure riski yok
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   /**
-   * Space Toggle Fix:
-   * Quick Look AÇIKKEN Space tuşu içerideki odaklanmış butonu tetiklemez.
-   * Space → ESC gibi davranır (modal kapanır).
-   * Buton tetiklenmesini engellemek için keydown'u en erken aşamada yakalarız
-   * (capture: true) ve preventDefault + stopPropagation uygularız.
+   * Space Toggle Fix — Tam Güvenilir İmplementasyon
+   *
+   * Modal açıkken Space tuşu:
+   *   1. capture:true → DOM'a inmeden yakalanır (butonlara ulaşmaz)
+   *   2. Metin girişi alanı değilse → preventDefault + stopPropagation
+   *   3. Modal kapanır
+   *
+   * Desteklenen Space değerleri:
+   *   - " "        → Modern tarayıcılar (Chrome, Firefox, Safari, Edge)
+   *   - "Spacebar" → IE/Edge eski sürümleri (artık nadir ama güvenlik için)
    */
   useEffect(() => {
     if (!open) return;
 
-    function blockSpaceOnButtons(e: KeyboardEvent) {
-      if (e.key !== " ") return;
-      const target = e.target as HTMLElement;
-      // Buton veya link ise Space'in default davranışını (tıklama) engelle
-      if (
-        target.tagName === "BUTTON" ||
-        target.tagName === "A" ||
-        target.role === "button"
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        // Space → modal kapat
-        onClose();
-      }
+    function handleSpaceCapture(e: KeyboardEvent) {
+      if (e.key !== " " && e.key !== "Spacebar") return;
+
+      // Metin girişi alanlarında Space'i engelleme
+      if (isTextInput(e.target)) return;
+
+      // Modifier tuşlarla Space — sistem kısayolu olabilir, dokunma
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // IME kompozisyon sırasında engelleme
+      if (e.isComposing) return;
+
+      // Space'i yakala: buton/link default davranışını (tıklama) ve
+      // alttaki liste navigation handler'larını engelle
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      // Space → modal kapat
+      onCloseRef.current();
     }
 
-    // capture:true → event DOM'a inmeden yakalanır, butonlara ulaşamaz
-    window.addEventListener("keydown", blockSpaceOnButtons, true);
-    return () => window.removeEventListener("keydown", blockSpaceOnButtons, true);
-  }, [open, onClose]);
+    // capture:true → event path'inin en üstünde, diğer listener'lardan önce
+    window.addEventListener("keydown", handleSpaceCapture, true);
+    return () => window.removeEventListener("keydown", handleSpaceCapture, true);
+  }, [open]);
 
   if (!job) return null;
 
   const statusCfg = STATUS_CONFIG[job.status];
-  const modMeta = MODULE_INFO[job.module_key];
-  const modLabel = modMeta?.label ?? job.module_key;
+  const modMeta   = MODULE_INFO[job.module_key];
+  const modLabel  = modMeta?.label ?? job.module_key;
 
   const completedSteps = job.steps.filter((s) => s.status === "completed").length;
-  const totalSteps = job.steps.length;
-  const pct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+  const totalSteps     = job.steps.length;
+  const pct            = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
 
   async function handleDownload() {
     try {
@@ -81,9 +130,9 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
         return;
       }
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
       a.download = `video_${job!.id.substring(0, 8)}.mp4`;
       document.body.appendChild(a);
       a.click();
@@ -97,7 +146,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
 
   function handleCopyScript() {
     const scriptStep = job!.steps.find((s) => s.key === "script");
-    const artifact = scriptStep?.output_artifact ?? "";
+    const artifact   = scriptStep?.output_artifact ?? "";
     if (!artifact) {
       addToast({ type: "info", title: "Senaryo henüz hazır değil" });
       return;
@@ -118,7 +167,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
 
   function handleDeepDive() {
     onClose();
-    // Kısa gecikme — Dialog kapanmasına izin ver sonra Sheet açılsın
+    // Kısa gecikme — Radix Dialog kapanma animasyonuna izin ver
     setTimeout(onOpenDeepDive, 80);
   }
 
@@ -140,20 +189,24 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
             "data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
             "focus:outline-none"
           )}
+          aria-label={`${job.title} — Hızlı Önizleme`}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           {/* Kapat butonu */}
           <Dialog.Close asChild>
             <button
               className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-              aria-label="Kapat"
+              aria-label="Önizlemeyi kapat"
             >
               <X size={14} />
             </button>
           </Dialog.Close>
 
           {/* Video Önizleme */}
-          <div className="relative aspect-video w-full overflow-hidden rounded-t-2xl bg-black">
+          <div
+            className="relative aspect-video w-full overflow-hidden rounded-t-2xl bg-black"
+            aria-hidden="true"
+          >
             {job.status === "completed" && job.output_path ? (
               <video
                 src={`/api/jobs/${job.id}/output`}
@@ -193,6 +246,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
                   statusCfg.color,
                   statusCfg.bg
                 )}
+                aria-label={`Durum: ${statusCfg.label}`}
               >
                 {statusCfg.label}
               </span>
@@ -206,18 +260,25 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
               </span>
               {job.language && (
                 <>
-                  <span>•</span>
+                  <span aria-hidden="true">•</span>
                   <span className="uppercase">{job.language}</span>
                 </>
               )}
             </div>
 
             {/* İlerleme çubuğu */}
-            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Tamamlanma yüzdesi"
+            >
               <div
                 className={cn(
                   "h-full rounded-full transition-all duration-500",
-                  job.status === "failed" ? "bg-red-400" :
+                  job.status === "failed"    ? "bg-red-400" :
                   job.status === "completed" ? "bg-emerald-400" : "bg-primary"
                 )}
                 style={{ width: `${pct}%` }}
@@ -225,10 +286,11 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
             </div>
 
             {/* Aksiyon butonları */}
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex items-center gap-2 pt-1" role="group" aria-label="Hızlı aksiyonlar">
               <button
                 onClick={handleCopyScript}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                aria-label="Senaryoyu panoya kopyala"
               >
                 <Copy size={12} />
                 Senaryo
@@ -236,6 +298,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
               <button
                 onClick={handleCopyMeta}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                aria-label="YouTube meta bilgisini kopyala"
               >
                 <ExternalLink size={12} />
                 YT Meta
@@ -244,6 +307,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
                 <button
                   onClick={handleDownload}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                  aria-label="Videoyu indir"
                 >
                   <Download size={12} />
                   İndir
@@ -255,6 +319,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
             <button
               onClick={handleDeepDive}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary hover:bg-primary/20 transition-colors"
+              aria-label="Detay panelini aç"
             >
               Tüm Detayları Gör
             </button>

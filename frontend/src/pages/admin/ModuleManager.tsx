@@ -27,7 +27,8 @@ import {
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
-import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
+import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
+import { useRovingTabindex } from "@/hooks/useRovingTabindex";
 
 // ─── Modül tanımları ─────────────────────────────────────────────────────────
 
@@ -76,16 +77,40 @@ export default function ModuleManager() {
   // ── Klavye Navigasyonu ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null);
 
-  const { focusedIdx, setFocusedIdx } = useKeyboardNavigation({
+  const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: MODULES.length,
     scrollRef: listRef as React.RefObject<HTMLElement | null>,
+    homeEnd: true,
     onEnter: (idx) => {
+      // Enter → toggle accordion
+      handleSelectModule(MODULES[idx].key);
+    },
+    onArrowRight: (idx) => {
+      // ArrowRight → open accordion (eğer kapalıysa)
       const mod = MODULES[idx];
-      handleSelectModule(mod.key);
+      if (expandedModule !== mod.key) {
+        handleSelectModule(mod.key);
+      }
+    },
+    onArrowLeft: (idx) => {
+      // ArrowLeft → close accordion (eğer açıksa)
+      const mod = MODULES[idx];
+      if (expandedModule === mod.key) {
+        setExpandedModule(null);
+      }
     },
     onEscape: () => {
-      setExpandedModule(null);
+      if (expandedModule !== null) {
+        setExpandedModule(null);
+      }
     },
+  });
+
+  const { getTabIndex } = useRovingTabindex({
+    focusedIdx,
+    itemCount: MODULES.length,
+    autoFocus: false,
+    containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
 
   const loadModuleSettings = useCallback(
@@ -174,20 +199,39 @@ export default function ModuleManager() {
       )}
 
       {/* Modül kartları */}
-      <div ref={listRef} className="space-y-3">
+      <div
+        ref={listRef}
+        role="tree"
+        aria-label="Modül listesi"
+        className="space-y-3"
+      >
         {MODULES.map((mod, idx) => {
           const moduleSettings = moduleSettingsMap[mod.key] ?? [];
-          const enabled = isModuleEnabled(mod.key);
+          const enabled    = isModuleEnabled(mod.key);
           const isExpanded = expandedModule === mod.key;
-          const isFocused = focusedIdx === idx;
+          const isFocused  = focusedIdx === idx;
+          const itemId     = `${scopeId}-mod-${idx}`;
+          const panelId    = `${scopeId}-mod-panel-${idx}`;
 
           return (
             <div
               key={mod.key}
+              id={itemId}
               data-nav-row
+              role="treeitem"
+              aria-expanded={isExpanded}
+              aria-selected={isFocused}
+              tabIndex={getTabIndex(idx)}
               onMouseEnter={() => setFocusedIdx(idx)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleSelectModule(mod.key);
+                }
+              }}
               className={cn(
                 "rounded-xl border bg-card overflow-hidden transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
                 isExpanded ? mod.borderColor : "border-border",
                 isFocused && !isExpanded && "ring-1 ring-inset ring-primary/30 bg-accent/20"
               )}
@@ -225,7 +269,10 @@ export default function ModuleManager() {
 
                 {/* Genişlet/Daralt */}
                 <button
-                  onClick={() => handleSelectModule(mod.key)}
+                  onClick={(e) => { e.stopPropagation(); handleSelectModule(mod.key); }}
+                  aria-expanded={isExpanded}
+                  aria-controls={panelId}
+                  aria-label={isExpanded ? `${mod.label} ayarlarını gizle` : `${mod.label} ayarlarını göster`}
                   className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -234,12 +281,14 @@ export default function ModuleManager() {
 
               {/* Modül ayarları */}
               {isExpanded && (
+                <div id={panelId} role="group" aria-label={`${mod.label} ayarları`}>
                 <ModuleSettingsPanel
                   moduleKey={mod.key}
                   settings={selectedModule === mod.key ? settings : moduleSettings}
                   loading={loading && selectedModule === mod.key}
                   onReload={() => loadModuleSettings(mod.key)}
                 />
+                </div>
               )}
             </div>
           );

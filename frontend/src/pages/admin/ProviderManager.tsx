@@ -26,7 +26,8 @@ import {
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
-import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
+import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
+import { useRovingTabindex } from "@/hooks/useRovingTabindex";
 
 // ─── Provider tanımları ──────────────────────────────────────────────────────
 
@@ -159,15 +160,33 @@ export default function ProviderManager() {
   // ── Klavye Navigasyonu ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null);
 
-  const { focusedIdx, setFocusedIdx } = useKeyboardNavigation({
+  const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
     itemCount: PROVIDERS.length,
     scrollRef: listRef as React.RefObject<HTMLElement | null>,
+    homeEnd: true,
     onEnter: (idx) => {
       handleToggleExpand(PROVIDERS[idx].key);
     },
-    onEscape: () => {
-      setExpandedProvider(null);
+    onArrowRight: (idx) => {
+      const key = PROVIDERS[idx].key;
+      if (expandedProvider !== key) handleToggleExpand(key);
     },
+    onArrowLeft: (idx) => {
+      const key = PROVIDERS[idx].key;
+      if (expandedProvider === key) setExpandedProvider(null);
+    },
+    onEscape: () => {
+      if (expandedProvider !== null) {
+        setExpandedProvider(null);
+      }
+    },
+  });
+
+  const { getTabIndex } = useRovingTabindex({
+    focusedIdx,
+    itemCount: PROVIDERS.length,
+    autoFocus: false,
+    containerRef: listRef as React.RefObject<HTMLElement | null>,
   });
 
   const loadProviderSettings = useCallback(
@@ -249,40 +268,54 @@ export default function ProviderManager() {
       )}
 
       {/* Kategoriler */}
-      <div ref={listRef}>
+      <div ref={listRef} role="tree" aria-label="Provider listesi">
       {categories.map((cat) => {
         const catConfig = CATEGORY_CONFIG[cat];
         const catProviders = PROVIDERS.filter((p) => p.category === cat);
 
         return (
           <div key={cat} className="space-y-2 mb-5">
-            <div className="flex items-center gap-2 px-1">
+            <div className="flex items-center gap-2 px-1" aria-hidden="true">
               <span className={catConfig.color}>{catConfig.icon}</span>
               <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                 {catConfig.label}
               </p>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2" role="group" aria-label={catConfig.label}>
               {catProviders.map((provider) => {
                 const isExpanded = expandedProvider === provider.key;
                 const provSettings = providerSettingsMap[provider.key] ?? [];
                 const globalIdx = PROVIDERS.findIndex((p) => p.key === provider.key);
                 const isFocused = focusedIdx === globalIdx;
+                const itemId    = `${scopeId}-prov-${globalIdx}`;
+                const panelId   = `${scopeId}-prov-panel-${globalIdx}`;
 
                 return (
                   <div
                     key={provider.key}
+                    id={itemId}
                     data-nav-row
+                    role="treeitem"
+                    aria-expanded={isExpanded}
+                    aria-selected={isFocused}
+                    tabIndex={getTabIndex(globalIdx)}
                     onMouseEnter={() => setFocusedIdx(globalIdx)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); handleToggleExpand(provider.key); }
+                    }}
                     className={cn(
                       "rounded-xl border bg-card overflow-hidden transition-colors",
+                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
                       isExpanded ? "border-primary/30" : "border-border",
                       isFocused && !isExpanded && "ring-1 ring-inset ring-primary/30 bg-accent/20"
                     )}
                   >
                     <button
                       onClick={() => handleToggleExpand(provider.key)}
+                      aria-expanded={isExpanded}
+                      aria-controls={panelId}
+                      aria-label={`${provider.label} ${isExpanded ? "ayarlarını gizle" : "ayarlarını göster"}`}
                       className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-accent/30 transition-colors"
                     >
                       <div className="min-w-0 flex-1">
@@ -304,12 +337,14 @@ export default function ProviderManager() {
                     </button>
 
                     {isExpanded && (
-                      <ProviderSettingsPanel
-                        provider={provider}
-                        settings={selectedProvider === provider.key ? settings : provSettings}
-                        loading={loading && selectedProvider === provider.key}
-                        onReload={() => loadProviderSettings(provider.key)}
-                      />
+                      <div id={panelId} role="group" aria-label={`${provider.label} ayarları`}>
+                        <ProviderSettingsPanel
+                          provider={provider}
+                          settings={selectedProvider === provider.key ? settings : provSettings}
+                          loading={loading && selectedProvider === provider.key}
+                          onReload={() => loadProviderSettings(provider.key)}
+                        />
+                      </div>
                     )}
                   </div>
                 );
