@@ -293,9 +293,6 @@ def _register_all_providers() -> None:
     from backend.providers.llm.kie_ai import KieAIProvider
     provider_registry.register(KieAIProvider())
 
-    from backend.providers.llm.gemini import GeminiProvider
-    provider_registry.register(GeminiProvider())
-
     # ── TTS Providers ───────────────────────────────────────────────────────
     from backend.providers.tts.edge_tts_provider import EdgeTTSProvider
     provider_registry.register(EdgeTTSProvider())
