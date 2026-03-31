@@ -197,6 +197,62 @@ Tüm backend testleri: geçen toplam artı 19 yeni → temiz
 
 ---
 
+## 2026-03-31 — KRİTİK: Subtitle/Scene Off-by-One Render Bug — Root Cause + Fix
+
+### Önceki Trace Neden Yetersizdi
+
+Önceki doğrulama turları (aynı gün) sadece JSON artifact'ları karşılaştırdı (`step_script.json`, `step_tts.json`, `step_subtitles.json`). Bu katmanlarda metin eşleşmesi 10/10 doğruydu. Ancak **composition/render katmanı incelenmemişti**. Kullanıcı final videoda farklı altyazı gördüğünü bildirdi — ve haklıydı.
+
+### Root Cause
+
+`remotion/src/compositions/StandardVideo.tsx:256-257` — 1-based `scene.index` (scene_number) doğrudan 0-based `subtitles[]` array index'i olarak kullanılıyordu.
+
+```typescript
+// BUGGY: scene.index = 1 → subtitles[1] = Scene 2'nin altyazısı
+const subtitleChunk = subtitles[scene.index];
+```
+
+Sonuç: **10/10 sahne yanlış altyazı gösteriyor.** Her sahne bir sonraki sahnenin altyazısını gösteriyor. Son sahne hiç altyazı göstermiyor (array overflow).
+
+### Video Frame Kanıtı
+
+Session: `c2261ada354448c7b2153a36dfb246a0` ("Ateş Nasıl Bulundu?")
+
+| Frame | TTS Okuyor | Ekrandaki Altyazı | Doğru mu |
+|-------|-----------|-------------------|----------|
+| t=1s (Scene 1) | "Bugün internetimiz..." | "Ateş yokken hayat gerçekten acımasızdı / Soğuk" | YANLIŞ (Scene 2) |
+| t=184s (Scene 10) | "Bugün bile..." | (altyazı yok) | YANLIŞ (overflow) |
+
+Sağ üst köşe: "2 / 10" yazıyor Scene 1'de — olması gereken "1 / 10" (aynı bug).
+
+### Fix
+
+| Dosya | Değişiklik |
+|---|---|
+| `remotion/src/compositions/StandardVideo.tsx` | `subtitles[scene.index]` → `subtitles[arrayIndex]` (0-based map index) |
+| Aynı dosya | `sceneIndex={scene.index}` → `sceneIndex={arrayIndex}` |
+| Aynı dosya | `Sahne ${scene.index + 1}` → `Sahne ${arrayIndex + 1}` |
+| `docs/TTS_SUBTITLE_RENDER_MISMATCH.md` | Yeni: tam root cause analizi + frame kanıtları |
+
+### Etkilenmeyen Dosyalar
+
+- `NewsBulletin.tsx`: zaten `map((item, idx))` → 0-based `idx` kullanıyor
+- `ProductReview.tsx`: zaten `map((section, idx))` → 0-based `idx` kullanıyor
+
+### Çalıştırılan Testler
+
+```
+python3 -m pytest backend/tests/ -q → 100 passed, 1 skipped
+npx tsc --noEmit (frontend) → clean
+npx tsc --noEmit (remotion) → clean
+```
+
+### Kalan Adım
+
+Yeni video render edilerek fix doğrulanmalı (mevcut final.mp4 eski kodla render edilmiş).
+
+---
+
 ## 2026-03-31 — Output Picker UI E2E Doğrulama + TTS Subtitle Zinciri Doğrulama
 
 ### Değişiklik Özeti

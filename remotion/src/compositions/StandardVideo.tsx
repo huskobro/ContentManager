@@ -252,20 +252,20 @@ export const StandardVideo: React.FC<StandardVideoProps> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {sceneFrames.map(({ scene, from, durationFrames }) => {
+      {sceneFrames.map(({ scene, from, durationFrames }, arrayIndex) => {
         const subtitleChunk: SubtitleChunk | undefined =
-          subtitles && subtitles[scene.index] ? subtitles[scene.index] : undefined;
+          subtitles && subtitles[arrayIndex] ? subtitles[arrayIndex] : undefined;
 
         return (
           <Sequence
             key={scene.index}
             from={from}
             durationInFrames={durationFrames}
-            name={`Sahne ${scene.index + 1}`}
+            name={`Sahne ${arrayIndex + 1}`}
           >
             <SceneContent
               scene={scene}
-              sceneIndex={scene.index}
+              sceneIndex={arrayIndex}
               totalScenes={scenes.length}
               sceneDurationFrames={durationFrames}
               subtitleChunk={subtitleChunk}
