@@ -1675,3 +1675,173 @@ npx tsc -p tsconfig.app.json --noEmit
 |---|---|---|
 | Kategori/hook override'ları session-level `_category_overrides` dict'inde | Düşük | Override'lar process restart'ta kaybolmaz (DB'den yüklenir) ancak her pipeline başlamadan önce taze yükleme yapılıyor |
 | `general` kategorisinin enabled toggle'ı UI'da var | Bilgi | Pipeline `general` kategorisi için hiçbir zaman enhancement eklemez (`if category != "general"`) — enabled/disabled durumu etkisiz |
+
+---
+
+## 2026-03-31 — Kategori/Hook CRUD Tam Doğrulama Raporu
+
+### Kapsam
+
+Bu rapor aşağıdaki 4 alanın eksiksiz ve dürüst doğrulamasını kapsar:
+1. **Kategori CRUD** — oluştur/düzenle/sil/builtin koruma/disabled runtime/yeni kategori pipeline'da
+2. **Hook CRUD** — aynı
+3. **UI doğrulaması** — gerçek tarayıcı, ağ logu kanıtlı
+4. **Dürüst rapor** — sadece kanıtlanmış bulgular, spekülasyon yok
+
+---
+
+### 1. Kategori CRUD — Kanıtlar
+
+#### 1a. Kategori Oluşturma (POST /api/admin/categories → 201)
+
+**Network logu kanıtı:**
+```
+POST http://localhost:5174/api/admin/categories → 201 Created   [#58732.639]
+POST http://localhost:5174/api/admin/categories → 201 Created   [#58732.645]
+```
+Hem UI formu üzerinden hem direkt API çağrısıyla oluşturma çalışıyor. Duplicate key için 409, geçersiz format için 422 döner (backend test suite'inde kanıtlı).
+
+#### 1b. Kategori Düzenleme (PUT /api/admin/categories/{key} → 200)
+
+**Network logu kanıtı:**
+```
+PUT http://localhost:5174/api/admin/categories/ui_test_cat → 200 OK   [#58732.641]
+```
+UI'da genişletip "Ton" alanı değiştirip "Kaydet" tıklandı → PUT 200 döndü → liste yenilendi.
+
+#### 1c. Kategori Silme — custom (DELETE /api/admin/categories/{key} → 200)
+
+**Network logu kanıtı:**
+```
+DELETE http://localhost:5174/api/admin/categories/ui_test_cat → 200 OK   [#58732.643]
+DELETE http://localhost:5174/api/admin/categories/del_test → 200 OK     [#58732.712]
+```
+UI'da "Sil" butonu tıklandı (window.confirm mock ile), DELETE 200 döndü, öğe listeden kayboldu.
+
+**DOM doğrulaması:** `document.body.innerText.includes('del_test')` → `false` (silme sonrası)
+
+#### 1d. Builtin Kategori Silme Koruması
+
+**UI kanıtı:** Builtin `science` kategorisi genişletildi:
+- `"silinemez" text: true` — "Yerleşik — silinemez" metni görünüyor
+- `Sil buttons: 0` — hiç "Sil" butonu yok
+
+**Backend koruması:** `DELETE /api/admin/categories/science` → 403 Forbidden (test suite'inde kanıtlı)
+
+#### 1e. Pasif Kategori Runtime'da Atlanıyor
+
+**Unit test kanıtı** (`backend/tests/test_category_hook_crud.py`):
+```python
+def test_disabled_category_excluded_from_prompt():
+    # DB'de science enabled=False yapıldı
+    # _get_effective_category("science", db=db) → {"enabled": False}
+    # build_enhanced_prompt() → science enhancement eklenmedi
+```
+19 CRUD testi + 81 mevcut test = 100/100 geçiyor.
+
+#### 1f. Yeni Kategori Pipeline'da Kullanılıyor
+
+`config["_db"] = db` runner.py:137'de inject ediliyor. `build_enhanced_prompt()` `_get_effective_category(key, db=config.get("_db"))` çağırıyor. DB'de yeni kategori oluşturulduğunda bir sonraki job o kategoriyi DB'den okur — config reload gerekmez.
+
+---
+
+### 2. Hook CRUD — Kanıtlar
+
+#### 2a. Hook Oluşturma (POST /api/admin/hooks → 201)
+
+**Network logu kanıtı:**
+```
+POST http://localhost:5174/api/admin/hooks → 422 Unprocessable Content  [#58732.714]  (lang eksikti)
+POST http://localhost:5174/api/admin/hooks → 201 Created                [#58732.715]  (düzeltildi)
+```
+422 validation hatası beklenen davranış. Doğru payload ile 201 döndü.
+
+#### 2b. Hook Düzenleme (PUT /api/admin/hooks/{type}/{lang} → 200)
+
+Backend test suite'inde kanıtlı:
+```python
+def test_update_hook_ok()  # PUT → 200
+def test_update_hook_not_found()  # PUT → 404
+```
+
+#### 2c. Hook Silme — custom (DELETE /api/admin/hooks/{type}/{lang} → 200)
+
+**Network logu kanıtı:**
+```
+DELETE http://localhost:5174/api/admin/hooks/del_hook_test/tr → 200 OK   [#58732.722]
+GET http://localhost:5174/api/admin/hooks/tr → 200 OK                    [#58732.723]
+```
+UI'da Sil tıklandı → DELETE 200 → GET ile liste yenilendi.
+
+**DOM doğrulaması:** `document.body.innerText.includes('del_hook_test')` → `false`
+
+#### 2d. Builtin Hook Silme Koruması
+
+**UI kanıtı:** Builtin `shocking_fact` genişletildi:
+- `silinemez text: true` — "Yerleşik — silinemez" görünüyor
+- `Sil buttons: 0` — hiç Sil butonu yok
+
+**Backend koruması:** `DELETE /api/admin/hooks/shocking_fact/tr` → 403 (test suite'inde kanıtlı)
+
+#### 2e. Pasif Hook Seçim Havuzundan Çıkıyor
+
+`_get_effective_hooks(language, db=db)` sadece `enabled=True` hook'ları döndürür:
+```python
+hooks = db.query(Hook).filter(Hook.lang == language, Hook.enabled == True).all()
+```
+Test: `test_disabled_hook_excluded_from_selection` — pasif hook `select_opening_hook()`'ta seçilemiyor.
+
+---
+
+### 3. UI Doğrulaması — Özet
+
+| Test | Kanıt | Sonuç |
+|---|---|---|
+| Kategoriler tab'ı yükleniyor | Screenshot + GET /api/admin/categories 200 | ✓ |
+| Yeni Kategori formu açılıyor | Snapshot'ta form alanları görünüyor | ✓ |
+| Kategori oluşturuluyor | POST 201, listede göründü | ✓ |
+| Kategori düzenleniyor | PUT 200, değişiklik kaydedildi | ✓ |
+| Custom kategori siliniyor | DELETE 200, DOM'dan kayboldu | ✓ |
+| Builtin kategori "silinemez" gösteriyor | DOM'da text var, Sil butonu yok | ✓ |
+| Hook'lar tab'ı yükleniyor | Screenshot + GET /api/admin/hooks/tr 200 | ✓ |
+| Custom hook oluşturuluyor | POST 201 | ✓ |
+| Custom hook siliniyor | DELETE 200, DOM'dan kayboldu | ✓ |
+| Builtin hook "silinemez" gösteriyor | DOM'da text var, Sil butonu yok | ✓ |
+
+**Not:** `window.confirm()` dialog'u preview_eval'i bloke ettiği için Sil tıklamaları
+`window.confirm = () => true` mock ile test edildi. Bu production davranışını değiştirmez;
+sadece otomasyon için onayı simüle eder. DELETE request'in gerçekten gittiği network
+logundan kanıtlanmıştır.
+
+---
+
+### 4. Test Suite Durumu
+
+```
+backend/tests/test_category_hook_crud.py   19 test  ✓ PASS
+backend/tests/ (tüm)                      100 test  ✓ PASS
+frontend tsc                               0 error   ✓ PASS
+```
+
+---
+
+### 5. Kalan Riskler / Kısıtlamalar
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| Hook edit UI (PUT) tarayıcıda test edilmedi | Düşük | PUT endpoint unit test'te kanıtlı; UI akışı Kaydet butonuyla category ile aynı pattern |
+| `window.confirm` gerçek dialog'u preview araçlarında test edilemiyor | Bilgi | Sadece otomasyon kısıtlaması; üretimde kullanıcı confirm dialog'unu görür |
+| Hook "Yeni Hook" UI formu (POST from UI) tarayıcıda test edilmedi | Düşük | POST API kanıtlı; form category formuyla aynı pattern |
+
+---
+
+### Sonuç
+
+Kategori ve Hook CRUD sisteminin **tüm kritik yolları** gerçek network loglarıyla veya unit testlerle kanıtlanmıştır:
+- Oluştur: POST 201 ✓
+- Düzenle: PUT 200 ✓  
+- Sil (custom): DELETE 200 + DOM'dan kayboldu ✓
+- Builtin koruma: 403 backend + "silinemez" UI ✓
+- Pasif runtime atlanma: unit test ✓
+- Pipeline wiring: config["_db"] inject + DB-aware functions ✓
+
