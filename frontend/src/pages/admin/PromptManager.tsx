@@ -334,7 +334,7 @@ export default function PromptManager() {
     loadAll();
   }, [loadAll]);
 
-  async function handleSavePrompt(def: PromptDef, value: string) {
+  async function handleSavePrompt(def: PromptDef, value: string): Promise<boolean> {
     const existing = settingsMap[activeModule].find((s) => s.key === def.key);
 
     if (value.trim() === "") {
@@ -346,11 +346,13 @@ export default function PromptManager() {
             [activeModule]: prev[activeModule].filter((s) => s.key !== def.key),
           }));
           addToast({ type: "info", title: "Prompt sıfırlandı", description: `${def.label} — sistem varsayılanı kullanılacak.` });
+          return true;
         } else {
           addToast({ type: "error", title: "Silinemedi", description: def.label });
+          return false;
         }
       }
-      return;
+      return true; // boştu zaten, kayıt yok — başarı say
     }
 
     if (existing) {
@@ -363,8 +365,10 @@ export default function PromptManager() {
           ),
         }));
         addToast({ type: "success", title: "Prompt güncellendi", description: def.label });
+        return true;
       } else {
         addToast({ type: "error", title: "Güncellenemedi", description: def.label });
+        return false;
       }
     } else {
       const result = await createSetting({
@@ -381,8 +385,10 @@ export default function PromptManager() {
           [activeModule]: [...prev[activeModule], result],
         }));
         addToast({ type: "success", title: "Prompt kaydedildi", description: def.label });
+        return true;
       } else {
         addToast({ type: "error", title: "Kaydedilemedi", description: def.label });
+        return false;
       }
     }
   }
@@ -890,7 +896,7 @@ function PromptEditor({
 }: {
   def: PromptDef;
   dbRecord: SettingRecord | null;
-  onSave: (def: PromptDef, value: string) => Promise<void>;
+  onSave: (def: PromptDef, value: string) => Promise<boolean>;
   accentColor: string;
 }) {
   function getDbValue(record: SettingRecord | null): string {
@@ -914,10 +920,13 @@ function PromptEditor({
 
   async function handleSave() {
     setSaving(true);
-    await onSave(def, value);
+    const ok = await onSave(def, value);
     setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    if (ok) {
+      setSavedValue(value);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }
   }
 
   return (
@@ -1028,8 +1037,7 @@ function CategoryEditor({
     focus !== cat.focus ||
     styleInstruction !== cat.style_instruction ||
     nameTr !== cat.name_tr ||
-    nameEn !== cat.name_en ||
-    enabled !== cat.enabled;
+    nameEn !== cat.name_en;
 
   async function handleSave() {
     setSaving(true);
@@ -1037,6 +1045,12 @@ function CategoryEditor({
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function handleToggleEnabled() {
+    const next = !enabled;
+    setEnabled(next);
+    await onSave(cat, { enabled: next });
   }
 
   const isGeneral = cat.key === "general";
@@ -1075,10 +1089,10 @@ function CategoryEditor({
           </span>
         </button>
 
-        {/* Enabled toggle */}
+        {/* Enabled toggle — anında kaydet */}
         <button
           type="button"
-          onClick={() => setEnabled((v) => !v)}
+          onClick={handleToggleEnabled}
           title={enabled ? "Pasif yap" : "Aktif yap"}
           className={cn(
             "flex items-center gap-1 text-xs transition-colors shrink-0",
@@ -1186,7 +1200,7 @@ function HookEditor({
     setEnabled(hook.enabled);
   }, [hook]);
 
-  const isDirty = name !== hook.name || template !== hook.template || enabled !== hook.enabled;
+  const isDirty = name !== hook.name || template !== hook.template;
 
   async function handleSave() {
     setSaving(true);
@@ -1194,6 +1208,12 @@ function HookEditor({
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function handleToggleEnabled() {
+    const next = !enabled;
+    setEnabled(next);
+    await onSave(hook, lang, { enabled: next });
   }
 
   return (
@@ -1232,10 +1252,10 @@ function HookEditor({
           </span>
         </button>
 
-        {/* Enabled toggle */}
+        {/* Enabled toggle — anında kaydet */}
         <button
           type="button"
-          onClick={() => setEnabled((v) => !v)}
+          onClick={handleToggleEnabled}
           title={enabled ? "Pasif yap" : "Aktif yap"}
           className={cn(
             "flex items-center gap-1 text-xs transition-colors shrink-0",

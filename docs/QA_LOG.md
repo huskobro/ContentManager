@@ -5,6 +5,69 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Faz 11 Öncesi: Sistem Geneli Save Standardizasyonu
+
+### Envanter ve Sorun Tespiti
+
+Tüm ayar/prompt/CRUD yüzeyleri tarandı. Tespit edilen tutarsızlıklar:
+
+| Yüzey | Sorun |
+|---|---|
+| `PromptManager` → `CategoryEditor` | `enabled` toggle `isDirty` flagını tetikliyordu, anında kaydetmiyordu |
+| `PromptManager` → `HookEditor` | Aynı sorun: toggle dirty flag → Kaydet butonu gerekliydi |
+| `PromptManager` → `PromptEditor` | `handleSave()` başarısız olsa da `setSaved(true)` çalışıyor, `savedValue` güncellenmiyordu |
+
+### Yapılan Düzeltmeler
+
+**`PromptManager.tsx`:**
+- `CategoryEditor`: `isDirty` hesabından `enabled` çıkarıldı. `handleToggleEnabled()` eklendi — toggle tıklanınca anında `onSave(cat, { enabled: next })` çağırır
+- `HookEditor`: Aynı pattern — `handleToggleEnabled()` + anında kayıt
+- `handleSavePrompt`: Dönüş tipi `void → Promise<boolean>` — başarı/başarısızlık açık bildirir
+- `PromptEditor.handleSave()`: `ok = await onSave(...)` sonucuna göre `setSaved(true)` ve `setSavedValue(value)` sadece başarıda çalışır
+
+### Nihai Save Standardı — Tüm Yüzeyler
+
+| Yüzey | Toggle/Select | Text/Textarea/Number | CRUD Formu | Toast |
+|---|---|---|---|---|
+| `ModuleManager` → `AdminSettingRow` | Anında auto-save | 800ms debounce + blur | — | Dolaylı (saveState) |
+| `ModuleManager` → NewsSource/Mapping | Anında (toggle) | Manuel Kaydet | Create/Update/Delete | ✅ Her işlemde |
+| `GlobalSettings` → `SettingRow` | Anında auto-save | 800ms debounce + blur | — | Dolaylı (saveState) |
+| `UserSettings` | Anında auto-save | 800ms debounce + blur | — | Manuel save'de toast |
+| `PromptManager` → Kategoriler | **Anında** (düzeltildi) | Manuel Kaydet | Create/Delete | ✅ Her işlemde |
+| `PromptManager` → Hook'lar | **Anında** (düzeltildi) | Manuel Kaydet | Create/Delete | ✅ Her işlemde |
+| `PromptManager` → Promptlar | — | Manuel Kaydet | — | ✅ Başarı/hata |
+
+### Auto-Save Toggle Kapsamı
+
+`uiStore.autoSaveEnabled` şu yüzeyleri etkiler:
+- `GlobalSettings` → `SettingRow` (tüm alan tipleri)
+- `ModuleManager` → `AdminSettingRow` (tüm alan tipleri)
+- `UserSettings` (select ve toggle alanları)
+
+Bu yüzeyleri **etkilemez** (toggle'dan bağımsız, her zaman manuel):
+- `PromptManager` — büyük textarea, kısmi değişiklik riski; kasıtlı manuel
+- NewsSource/Mapping CRUD — form tabanlı entity işlemi; kasıtlı manuel
+
+### Gerçek UI Doğrulama
+
+| Yüzey | İşlem | Sonuç |
+|---|---|---|
+| PromptManager → Kategoriler | `true_crime` toggle → Pasif | ✅ Anında API çağrısı, toggle state değişti |
+| PromptManager → Kategoriler | toggle → geri Aktif | ✅ Anında kayıt, toast görüldü |
+| GlobalSettings | Otomatik kayıt toggle görünümü | ✅ Yeşil badge + info banner güncel metin |
+| UserSettings | Otomatik kayıt toggle görünümü | ✅ Yeşil badge |
+
+### Test Sonuçları
+
+| Test Türü | Sonuç | Detay |
+|---|---|---|
+| `frontend tsc --noEmit` | ✅ PASS | Hata yok |
+| `pytest backend/tests/` | ✅ PASS | 124 geçti, 1 atlandı |
+
+---
+
+---
+
 ## 2026-03-31 — Admin Panel: Haber Kaynakları + Kategori→Stil Sistemi
 
 ### Değişiklik Özeti

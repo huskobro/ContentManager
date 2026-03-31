@@ -126,12 +126,25 @@ Auto-save **kapalıyken**:
 
 ## Kapsam — Hangi Yüzeyler Auto-Save Kullanıyor
 
-| Yüzey | Durum | Notlar |
-|---|---|---|
-| `ModuleManager` → `AdminSettingRow` | ✅ Aktif | toggle/select=anında, text/number=blur+debounce |
-| `GlobalSettings` → `SettingRow` | ✅ Aktif | toggle/select=anında, text/number=blur+debounce, multiselect=manuel |
-| `UserSettings` | ✅ Aktif | select=anında, text/number=blur+debounce |
-| `PromptManager` | ⏳ Değerlendirilecek | Büyük textarea — manuel kayıt daha uygun olabilir |
+| Yüzey | Auto-Save | Toggle | Text/Number | Notlar |
+|---|---|---|---|---|
+| `ModuleManager` → `AdminSettingRow` | ✅ `useAutoSave` | Anında | 800ms debounce + blur | `autoSaveEnabled` tarafından kontrol edilir |
+| `GlobalSettings` → `SettingRow` | ✅ `useAutoSave` | Anında | 800ms debounce + blur | multiselect = her zaman manuel |
+| `UserSettings` | ✅ `useAutoSave` | Anında | 800ms debounce + blur | `autoSaveEnabled` tarafından kontrol edilir |
+| `PromptManager` → Prompt textarea | ❌ Manuel | — | Manuel Kaydet butonu | Kasıtlı: büyük textarea, kısmi değişiklik riski |
+| `PromptManager` → Kategori toggle | ✅ Anında | **Anında** | — | `autoSaveEnabled`'dan bağımsız, her zaman anında |
+| `PromptManager` → Hook toggle | ✅ Anında | **Anında** | — | `autoSaveEnabled`'dan bağımsız, her zaman anında |
+| `PromptManager` → Kategori/Hook metin | ❌ Manuel | — | Manuel Kaydet butonu | Kasıtlı: entity edit formu |
+| `ModuleManager` → NewsSource/Mapping CRUD | ✅ (toggle only) | Anında | Manuel Kaydet | Form submit = manuel; toggle = anında |
+
+**`autoSaveEnabled` toggle'ının etkilediği yüzeyler:**
+- `GlobalSettings` → `SettingRow`
+- `ModuleManager` → `AdminSettingRow`
+- `UserSettings`
+
+**`autoSaveEnabled`'dan bağımsız (her zaman anında):**
+- `PromptManager` Kategori/Hook `enabled` toggle'ları
+- `ModuleManager` NewsSource/Mapping `enabled` toggle'ları
 
 ---
 
