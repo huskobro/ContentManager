@@ -19,10 +19,37 @@ import {
   interpolate,
 } from "remotion";
 import { Subtitles } from "../components/Subtitles";
-import type { StandardVideoProps, SceneData, SubtitleChunk } from "../types";
+import { VideoEffectOverlay } from "../components/VideoEffects";
+import { useLayout } from "../components/useLayout";
+import type {
+  StandardVideoProps,
+  SceneData,
+  SubtitleChunk,
+  SubtitleAnimation,
+  SubtitleFont,
+  KenBurnsDirection,
+  VideoEffect,
+  SubtitleBg,
+} from "../types";
 
 const CROSSFADE_FRAMES = 10;
 const DEFAULT_SCENE_DURATION_SECONDS = 5;
+
+/**
+ * Ken Burns pan yönüne göre transform-origin belirler.
+ * YTRobot-v3/Scene.tsx::getTransformOrigin port'u.
+ */
+function getTransformOrigin(
+  direction: KenBurnsDirection | undefined,
+  sceneIndex: number,
+): string {
+  if (!direction || direction === "center") return "center center";
+  if (direction === "pan-left") return "left center";
+  if (direction === "pan-right") return "right center";
+  // "random" — sahne indeksine göre köşe döngüsü
+  const corners = ["top left", "top right", "bottom right", "bottom left"];
+  return corners[sceneIndex % corners.length];
+}
 
 const getSafeDuration = (durationInSeconds: number | undefined): number => {
   if (!durationInSeconds || isNaN(durationInSeconds) || durationInSeconds <= 0) {
@@ -51,8 +78,9 @@ const SceneVisual: React.FC<{
   sceneDurationFrames: number;
   kenBurnsEnabled: boolean;
   kenBurnsZoom: number;
+  kenBurnsDirection?: KenBurnsDirection;
   fps: number;
-}> = ({ scene, sceneIndex, sceneDurationFrames, kenBurnsEnabled, kenBurnsZoom, fps }) => {
+}> = ({ scene, sceneIndex, sceneDurationFrames, kenBurnsEnabled, kenBurnsZoom, kenBurnsDirection, fps }) => {
   const frame = useCurrentFrame();
 
   const isZoomOut = sceneIndex % 2 === 1;
@@ -65,6 +93,8 @@ const SceneVisual: React.FC<{
         extrapolateRight: "clamp",
       })
     : 1;
+
+  const transformOrigin = getTransformOrigin(kenBurnsDirection, sceneIndex);
 
   const visualStyle: React.CSSProperties = {
     width: "100%",
@@ -85,7 +115,7 @@ const SceneVisual: React.FC<{
     width: "100%",
     height: "100%",
     transform: `scale(${scale})`,
-    transformOrigin: "center center",
+    transformOrigin,
   };
 
   if (!hasValidSrc(scene.visualSrc)) {
@@ -114,8 +144,13 @@ const SceneContent: React.FC<{
   sceneStartFrame: number;
   kenBurnsEnabled: boolean;
   kenBurnsZoom: number;
+  kenBurnsDirection?: KenBurnsDirection;
   fps: number;
   subtitleStyle: StandardVideoProps["subtitleStyle"];
+  subtitleAnimation?: SubtitleAnimation;
+  subtitleFont?: SubtitleFont;
+  videoEffect?: VideoEffect;
+  subtitleBg?: SubtitleBg;
 }> = ({
   scene,
   sceneIndex,
@@ -125,10 +160,16 @@ const SceneContent: React.FC<{
   sceneStartFrame,
   kenBurnsEnabled,
   kenBurnsZoom,
+  kenBurnsDirection,
   fps,
   subtitleStyle,
+  subtitleAnimation,
+  subtitleFont,
+  videoEffect = "none",
+  subtitleBg = "none",
 }) => {
   const frame = useCurrentFrame();
+  const layout = useLayout();
 
   const crossfadeOpacity =
     sceneIndex > 0
@@ -138,6 +179,10 @@ const SceneContent: React.FC<{
         })
       : 1;
 
+  const subtitleBottom = videoEffect === "cinematic"
+    ? layout.subtitle.bottomOffsetCinematic
+    : layout.subtitle.bottomOffset;
+
   return (
     <AbsoluteFill style={{ opacity: crossfadeOpacity }}>
       <SceneVisual
@@ -146,26 +191,77 @@ const SceneContent: React.FC<{
         sceneDurationFrames={sceneDurationFrames}
         kenBurnsEnabled={kenBurnsEnabled}
         kenBurnsZoom={kenBurnsZoom}
+        kenBurnsDirection={kenBurnsDirection}
         fps={fps}
       />
 
       {hasValidSrc(scene.audioSrc) && <Audio src={scene.audioSrc} volume={1} />}
 
-      {subtitleChunk && (
-        <Subtitles
-          subtitleChunk={subtitleChunk}
-          style={subtitleStyle}
-          sceneStartFrame={sceneStartFrame}
-          sceneDurationFrames={sceneDurationFrames}
+      {/* Video renk efekti overlay */}
+      <VideoEffectOverlay effect={videoEffect} />
+
+      {/* Subtitle background yok iken alt gradient (okunabilirlik) */}
+      {subtitleBg === "none" && (
+        <AbsoluteFill
+          style={{
+            background: layout.isVertical
+              ? "linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.78) 100%)"
+              : "linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.72) 100%)",
+            pointerEvents: "none",
+          }}
         />
+      )}
+
+      {subtitleChunk && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: subtitleBottom,
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            style={
+              subtitleBg === "box"
+                ? {
+                    backgroundColor: "rgba(0,0,0,0.65)",
+                    padding: `${Math.round(10 * layout.scale)}px ${Math.round(20 * layout.scale)}px`,
+                    borderRadius: 4,
+                    display: "inline-block",
+                    maxWidth: layout.subtitle.containerWidth,
+                  }
+                : subtitleBg === "pill"
+                ? {
+                    backgroundColor: "rgba(0,0,0,0.65)",
+                    padding: `${Math.round(10 * layout.scale)}px ${Math.round(28 * layout.scale)}px`,
+                    borderRadius: 40,
+                    display: "inline-block",
+                    maxWidth: layout.subtitle.containerWidth,
+                  }
+                : { width: layout.subtitle.containerWidth, textAlign: "center" as const }
+            }
+          >
+            <Subtitles
+              subtitleChunk={subtitleChunk}
+              style={subtitleStyle}
+              sceneStartFrame={sceneStartFrame}
+              sceneDurationFrames={sceneDurationFrames}
+              animation={subtitleAnimation}
+              font={subtitleFont}
+            />
+          </div>
+        </div>
       )}
 
       <div
         style={{
           position: "absolute",
-          top: 20,
-          right: 24,
-          fontSize: 13,
+          top: layout.overlay.counterTop,
+          right: layout.overlay.counterRight,
+          fontSize: layout.overlay.counterFontSize,
           color: "rgba(255, 255, 255, 0.5)",
           fontFamily: "Inter, system-ui, sans-serif",
           fontVariantNumeric: "tabular-nums",
@@ -186,6 +282,11 @@ export const StandardVideo: React.FC<StandardVideoProps> = ({
   settings,
   kenBurnsEnabled,
   kenBurnsZoom,
+  subtitleAnimation,
+  subtitleFont,
+  kenBurnsDirection,
+  videoEffect = "none",
+  subtitleBg = "none",
 }) => {
   const { fps } = useVideoConfig();
 
@@ -272,20 +373,28 @@ export const StandardVideo: React.FC<StandardVideoProps> = ({
               sceneStartFrame={from}
               kenBurnsEnabled={kenBurnsEnabled}
               kenBurnsZoom={kenBurnsZoom}
+              kenBurnsDirection={kenBurnsDirection}
               fps={fps}
               subtitleStyle={subtitleStyle}
+              subtitleAnimation={subtitleAnimation}
+              subtitleFont={subtitleFont}
+              videoEffect={videoEffect}
+              subtitleBg={subtitleBg}
             />
           </Sequence>
         );
       })}
 
-      <AbsoluteFill
-        style={{
-          background:
-            "radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.45) 100%)",
-          pointerEvents: "none",
-        }}
-      />
+      {/* Global vignette — videoEffect ile ayrı kontrol edilir, bu hafif vignette her zaman */}
+      {videoEffect !== "vignette" && (
+        <AbsoluteFill
+          style={{
+            background:
+              "radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.45) 100%)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </AbsoluteFill>
   );
 };

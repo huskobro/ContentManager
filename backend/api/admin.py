@@ -576,3 +576,298 @@ def delete_hook(
     db.delete(hook)
     db.commit()
     return {"status": "deleted", "type": hook_type, "lang": lang}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Haber Kaynakları Yönetimi — Tam CRUD
+# ─────────────────────────────────────────────────────────────────────────────
+
+class NewsSourceCreateRequest(BaseModel):
+    name: str
+    url: str
+    category_key: str = ""
+    lang: str = "tr"
+    enabled: bool = True
+    sort_order: int = 0
+
+
+class NewsSourceUpdateRequest(BaseModel):
+    name: str | None = None
+    url: str | None = None
+    category_key: str | None = None
+    lang: str | None = None
+    enabled: bool | None = None
+    sort_order: int | None = None
+
+
+@router.get(
+    "/admin/news-sources",
+    summary="Haber kaynakları listesi",
+    description=(
+        "Tüm haber/RSS kaynaklarını döndürür (aktif + pasif, sort_order sırasıyla). "
+        "Admin PIN gereklidir."
+    ),
+    response_model=list[dict],
+)
+def list_news_sources(
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> list[dict]:
+    from backend.models.news_source import NewsSource
+    sources = db.query(NewsSource).order_by(NewsSource.sort_order, NewsSource.id).all()
+    return [s.to_dict() for s in sources]
+
+
+@router.post(
+    "/admin/news-sources",
+    summary="Yeni haber kaynağı ekle",
+    description="Yeni haber/RSS kaynağı oluşturur. URL benzersiz olmalıdır; çakışma 409 döner.",
+    response_model=dict,
+    status_code=201,
+)
+def create_news_source(
+    body: NewsSourceCreateRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.models.news_source import NewsSource
+    from datetime import datetime, timezone
+
+    # URL format kontrolü
+    if not body.url.strip().startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=422,
+            detail="URL 'http://' veya 'https://' ile başlamalıdır.",
+        )
+
+    existing = db.query(NewsSource).filter(NewsSource.url == body.url.strip()).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bu URL zaten kayıtlı: {body.url}. Güncellemek için PUT kullanın.",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    source = NewsSource(
+        name=body.name.strip(),
+        url=body.url.strip(),
+        category_key=body.category_key.strip(),
+        lang=body.lang.strip() or "tr",
+        enabled=body.enabled,
+        sort_order=body.sort_order,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    return {**source.to_dict(), "status": "created"}
+
+
+@router.put(
+    "/admin/news-sources/{source_id}",
+    summary="Haber kaynağı güncelle",
+    description="Belirtilen kaynağın alanlarını günceller.",
+    response_model=dict,
+)
+def update_news_source(
+    source_id: int,
+    body: NewsSourceUpdateRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.models.news_source import NewsSource
+    from datetime import datetime, timezone
+
+    source = db.query(NewsSource).filter(NewsSource.id == source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Kaynak bulunamadı: id={source_id}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    if body.name is not None:
+        source.name = body.name.strip()
+    if body.url is not None:
+        url = body.url.strip()
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail="URL 'http://' veya 'https://' ile başlamalıdır.")
+        # URL değişiyorsa çakışma kontrolü
+        if url != source.url:
+            existing = db.query(NewsSource).filter(NewsSource.url == url).first()
+            if existing:
+                raise HTTPException(status_code=409, detail=f"Bu URL zaten kayıtlı: {url}")
+        source.url = url
+    if body.category_key is not None:
+        source.category_key = body.category_key.strip()
+    if body.lang is not None:
+        source.lang = body.lang.strip() or "tr"
+    if body.enabled is not None:
+        source.enabled = body.enabled
+    if body.sort_order is not None:
+        source.sort_order = body.sort_order
+    source.updated_at = now
+
+    db.commit()
+    db.refresh(source)
+    return {**source.to_dict(), "status": "updated"}
+
+
+@router.delete(
+    "/admin/news-sources/{source_id}",
+    summary="Haber kaynağı sil",
+    description="Belirtilen haber kaynağını siler.",
+    response_model=dict,
+)
+def delete_news_source(
+    source_id: int,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.models.news_source import NewsSource
+
+    source = db.query(NewsSource).filter(NewsSource.id == source_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Kaynak bulunamadı: id={source_id}")
+    db.delete(source)
+    db.commit()
+    return {"status": "deleted", "id": source_id}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kategori→Stil Eşleşme Yönetimi — Tam CRUD
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CategoryStyleMappingCreateRequest(BaseModel):
+    category_key: str
+    bulletin_style: str
+    description: str = ""
+    enabled: bool = True
+
+
+class CategoryStyleMappingUpdateRequest(BaseModel):
+    bulletin_style: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+
+
+@router.get(
+    "/admin/category-style-mappings",
+    summary="Kategori→stil eşleşmeleri listesi",
+    description=(
+        "Tüm kategori→BulletinStyle eşleşmelerini döndürür. "
+        "Admin PIN gereklidir."
+    ),
+    response_model=list[dict],
+)
+def list_category_style_mappings(
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> list[dict]:
+    from backend.models.category_style_mapping import CategoryStyleMapping
+    mappings = db.query(CategoryStyleMapping).order_by(CategoryStyleMapping.category_key).all()
+    return [m.to_dict() for m in mappings]
+
+
+@router.post(
+    "/admin/category-style-mappings",
+    summary="Yeni kategori→stil eşleşmesi ekle",
+    description="Yeni kategori→BulletinStyle eşleşmesi oluşturur. category_key benzersiz olmalıdır.",
+    response_model=dict,
+    status_code=201,
+)
+def create_category_style_mapping(
+    body: CategoryStyleMappingCreateRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.models.category_style_mapping import CategoryStyleMapping, VALID_BULLETIN_STYLES
+    from datetime import datetime, timezone
+
+    cat_key = body.category_key.strip().lower()
+    if not cat_key:
+        raise HTTPException(status_code=422, detail="category_key boş olamaz.")
+
+    if body.bulletin_style not in VALID_BULLETIN_STYLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Geçersiz bulletin_style: {body.bulletin_style}. Geçerli değerler: {sorted(VALID_BULLETIN_STYLES)}",
+        )
+
+    existing = db.query(CategoryStyleMapping).filter(CategoryStyleMapping.category_key == cat_key).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bu category_key zaten eşleştirilmiş: {cat_key}. Güncellemek için PUT kullanın.",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    mapping = CategoryStyleMapping(
+        category_key=cat_key,
+        bulletin_style=body.bulletin_style,
+        description=body.description.strip(),
+        enabled=body.enabled,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(mapping)
+    db.commit()
+    db.refresh(mapping)
+    return {**mapping.to_dict(), "status": "created"}
+
+
+@router.put(
+    "/admin/category-style-mappings/{mapping_id}",
+    summary="Kategori→stil eşleşmesi güncelle",
+    description="Belirtilen eşleşmenin alanlarını günceller.",
+    response_model=dict,
+)
+def update_category_style_mapping(
+    mapping_id: int,
+    body: CategoryStyleMappingUpdateRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.models.category_style_mapping import CategoryStyleMapping, VALID_BULLETIN_STYLES
+    from datetime import datetime, timezone
+
+    mapping = db.query(CategoryStyleMapping).filter(CategoryStyleMapping.id == mapping_id).first()
+    if not mapping:
+        raise HTTPException(status_code=404, detail=f"Eşleşme bulunamadı: id={mapping_id}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    if body.bulletin_style is not None:
+        if body.bulletin_style not in VALID_BULLETIN_STYLES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Geçersiz bulletin_style: {body.bulletin_style}",
+            )
+        mapping.bulletin_style = body.bulletin_style
+    if body.description is not None:
+        mapping.description = body.description.strip()
+    if body.enabled is not None:
+        mapping.enabled = body.enabled
+    mapping.updated_at = now
+
+    db.commit()
+    db.refresh(mapping)
+    return {**mapping.to_dict(), "status": "updated"}
+
+
+@router.delete(
+    "/admin/category-style-mappings/{mapping_id}",
+    summary="Kategori→stil eşleşmesi sil",
+    description="Belirtilen eşleşmeyi siler.",
+    response_model=dict,
+)
+def delete_category_style_mapping(
+    mapping_id: int,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.models.category_style_mapping import CategoryStyleMapping
+
+    mapping = db.query(CategoryStyleMapping).filter(CategoryStyleMapping.id == mapping_id).first()
+    if not mapping:
+        raise HTTPException(status_code=404, detail=f"Eşleşme bulunamadı: id={mapping_id}")
+    db.delete(mapping)
+    db.commit()
+    return {"status": "deleted", "id": mapping_id}

@@ -1,4 +1,4 @@
-# Timing Comparison: Edge TTS vs Whisper
+# Zamanlama Karşılaştırması: Edge TTS ve Whisper
 
 **Date:** 2026-03-31
 **Question:** Whisper senkron için birincil kaynak olmalı mı?

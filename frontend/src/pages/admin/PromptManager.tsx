@@ -102,6 +102,26 @@ const PROMPTS_BY_MODULE: Record<ModuleKey, PromptDef[]> = {
         "- tags (15 etiket, kısa ve alakalı)\n- category (YouTube kategori ID)\n\nTürkçe içerik üret.",
       rows: 8,
     },
+    {
+      key: "narration_enhance_prompt",
+      label: "Narration Enhancement Promptu",
+      description:
+        "TTS öncesi narasyon iyileştirme talimatı. narration_humanize_enabled ve/veya narration_enhance_enabled " +
+        "aktif olduğunda kullanılır. Boş bırakılırsa varsayılan combined prompt kullanılır. " +
+        "(YTRobot-v3'ten port edilmiştir)",
+      placeholder:
+        "Sen hem senaryo editörü hem TTS ses koçusun.\n" +
+        "Verilen narasyon metnini iki adımda düzenle:\n\n" +
+        "BÖLÜM 1 — Doğallaştırma:\n" +
+        "1. Kısa ve uzun cümleleri karıştır, değişken ritim kullan\n" +
+        "2. AI klişelerini kaldır\n" +
+        "3. Retorik sorular ve doğal duraklamalar ekle\n\n" +
+        "BÖLÜM 2 — TTS Vurguları:\n" +
+        "6. Her cümlede 1-2 anahtar kelimeyi BÜYÜK HARF yap\n" +
+        "7. Etkileyici ifadelerden önce ... ekle\n\n" +
+        "SADECE düzenlenmiş metni döndür.",
+      rows: 10,
+    },
   ],
   news_bulletin: [
     {

@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 
 from backend.pipeline.cache import CacheManager
+from backend.providers.tts.capabilities import get_tts_capabilities
 from backend.utils.logger import get_logger
 from backend.utils.text import normalize_narration
 
@@ -320,9 +321,27 @@ async def step_subtitles_enhanced(
     style_config = get_style_config(style_name)
     font_size = config.get("subtitle_font_size", 48)
 
-    # Whisper kullanılacak mı?
+    # ── TTS Capability-Aware Zamanlama Kararı ──
+    # Provider capability modeli üzerinden otomatik strateji belirleme.
+    # Config flag (subtitle_use_whisper) hâlâ geçerli — capability modeli
+    # sadece provider'ın yeteneklerine göre ek bilgi sağlar.
+    tts_provider_name = tts_data.get("provider", "unknown")
+    tts_caps = get_tts_capabilities(tts_provider_name)
+
     use_whisper = config.get("subtitle_use_whisper", False)
     openai_api_key = config.get("openai_api_key", "")
+
+    # Capability modeli: provider word timing desteklemiyorsa ve
+    # Whisper API key mevcutsa, config flag'e bakmaksızın Whisper'ı
+    # kullanılabilir yap — yine de config flag'e saygı duy.
+    if tts_caps.requires_alignment_fallback and bool(openai_api_key) and not use_whisper:
+        log.info(
+            "TTS provider word timing desteklemiyor, Whisper otomatik etkinleştiriliyor",
+            provider=tts_provider_name,
+            recommended_strategy=tts_caps.recommended_subtitle_strategy,
+        )
+        use_whisper = True
+
     whisper_available = use_whisper and bool(openai_api_key)
 
     subtitle_entries = []
@@ -402,7 +421,7 @@ async def step_subtitles_enhanced(
 
         current_offset_sec += duration_sec
 
-    # Çıktı JSON — stil metadata'sı gömülü
+    # Çıktı JSON — stil metadata'sı ve capability bilgisi gömülü
     subtitles_output = {
         "style": style_name,
         "style_config": style_config,
@@ -410,6 +429,9 @@ async def step_subtitles_enhanced(
         "total_duration": round(current_offset_sec, 3),
         "entry_count": len(subtitle_entries),
         "timing_source": timing_source,
+        "tts_provider": tts_provider_name,
+        "tts_timing_quality": tts_caps.timing_quality,
+        "tts_recommended_strategy": tts_caps.recommended_subtitle_strategy,
         "entries": subtitle_entries,
     }
 

@@ -5,6 +5,457 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Admin Panel: Haber Kaynakları + Kategori→Stil Sistemi
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/models/news_source.py` | **YENİ** — NewsSource ORM modeli (news_sources tablosu) |
+| `backend/models/category_style_mapping.py` | **YENİ** — CategoryStyleMapping ORM modeli + VALID_BULLETIN_STYLES |
+| `backend/api/admin.py` | NewsSource CRUD + CategoryStyleMapping CRUD endpoint'leri eklendi |
+| `backend/database.py` | Yeni modeller import edildi (tablo oluşturma için) |
+| `backend/main.py` | `_seed_category_style_mappings()` lifespan'a eklendi (19 varsayılan eşleşme) |
+| `backend/pipeline/steps/composition.py` | `_resolve_bulletin_style_for_category()` + dominant kategori hesabı |
+| `backend/modules/news_bulletin/pipeline.py` | DB kaynak fallback zinciri + LLM şemasına `category` alanı eklendi |
+| `backend/modules/news_bulletin/config.py` | `bulletin_breaking_enabled`, `bulletin_breaking_text`, `category_style_mapping_enabled` eklendi |
+| `frontend/src/pages/admin/NewsSourceManager.tsx` | **YENİ** — Haber kaynakları CRUD admin sayfası |
+| `frontend/src/pages/admin/CategoryStyleMappingManager.tsx` | **YENİ** — Kategori→Stil eşleşme admin sayfası |
+| `frontend/src/App.tsx` | `/admin/news-sources` ve `/admin/category-style-mappings` route'ları eklendi |
+| `frontend/src/components/layout/Sidebar.tsx` | "Haber Kaynakları" ve "Kategori→Stil" nav linkleri eklendi |
+| `frontend/src/lib/constants.ts` | 3 yeni ayar + review feature flag'lerinden `adminOnly` kaldırıldı |
+| `frontend/src/pages/user/CreateVideo.tsx` | Product Review + News Bulletin modül form alanları eklendi |
+| `docs/NEWS_STYLE_MAPPING.md` | **YENİ** — Kategori→stil sistemi tam dokümantasyonu |
+| `docs/NEWS_SOURCE_MANAGEMENT.md` | **YENİ** — Haber kaynağı yönetim sistemi dokümantasyonu |
+| Tüm İngilizce docs | İçerik Türkçeleştirildi (başlıklar + gövde metni) |
+
+### Yeni Özellikler
+
+**Haber Kaynağı Yönetimi:**
+- `news_sources` DB tablosu — ad, URL, kategori, dil, etkin/pasif, sıralama
+- Admin CRUD: GET/POST/PUT/DELETE `/api/admin/news-sources`
+- Pipeline fallback zinciri: kullanıcı URL'si → admin config → DB kaynakları
+- Admin UI: `/admin/news-sources` — listeleme, ekleme, düzenleme, toggle, silme
+
+**Kategori → BulletinStyle Eşleşme Sistemi:**
+- `category_style_mappings` DB tablosu — 19 varsayılan eşleşme tohumlandı
+- Admin CRUD: GET/POST/PUT/DELETE `/api/admin/category-style-mappings`
+- Pipeline entegrasyonu: dominant sahne kategorisi → DB lookup → otomatik stil
+- Global toggle: `category_style_mapping_enabled` ayarıyla sistem kapanabilir
+- Admin UI: `/admin/category-style-mappings` — listeleme, düzenleme, toggle, silme
+
+**CreateVideo Form İyileştirmeleri:**
+- Product Review: ürün adı, fiyat grubu, yıldız puanı grubu, yorum grubu
+- News Bulletin: ağ adı, breaking overlay toggle + metin
+- Tüm değerler `settings_overrides` ile pipeline'a geçiyor
+
+**Bug Düzeltmeleri (Önceki Oturum):**
+- `source` key mismatch: LLM `news_source` → kod artık `news_source` öncelikli okuyor
+- `overallScore` LLM değerini yok sayıyordu → `script_data.get("overall_score")` öncelikli
+- `category` LLM şemasında yoktu → `_BULLETIN_SYSTEM_INSTRUCTION`'a eklendi
+
+### Test Sonuçları
+
+| Test Türü | Sonuç | Detay |
+|---|---|---|
+| `frontend tsc --noEmit` | ✅ PASS | Hata yok |
+| `remotion tsc --noEmit` | ✅ PASS | Hata yok |
+| `pytest backend/tests/` | ✅ PASS | 124 geçti, 1 atlandı |
+
+---
+
+## 2026-03-31 — YTRobot-v3 Controlled Port (Phase 1)
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/utils/text.py` | `clean_for_tts()` ve `trim_silence()` eklendi (YTRobot-v3/providers/tts/base.py'den port) |
+| `backend/modules/standard_video/pipeline.py` | TTS step'e clean_for_tts + trim_silence entegrasyonu; 3 narration enhancement prompt sabiti eklendi |
+| `backend/modules/standard_video/config.py` | 6 yeni config key: tts_clean_apostrophes, tts_trim_silence, narration_humanize_enabled, narration_enhance_enabled, subtitle_animation, subtitle_font |
+| `backend/pipeline/steps/composition.py` | subtitleAnimation + subtitleFont tüm 3 props builder'a eklendi |
+| `backend/pipeline/runner.py` | narration_enhance_prompt alias eklendi |
+| `remotion/src/types.ts` | SubtitleAnimation, SubtitleFont tipleri + tüm composition props'lara optional alanlar |
+| `remotion/src/components/Subtitles.tsx` | 5 karaoke animasyon preset, 7 font, @remotion/google-fonts entegrasyonu |
+| `remotion/src/compositions/StandardVideo.tsx` | subtitleAnimation + subtitleFont prop pass-through |
+| `remotion/src/compositions/NewsBulletin.tsx` | Spring-animated 3-phase lower third, pulsing CANLI badge, fade-out |
+| `remotion/src/compositions/ProductReview.tsx` | Spring-based SectionBadge, dynamic ScoreRing color, glow pulse |
+| `remotion/package.json` | @remotion/google-fonts dependency eklendi |
+| `frontend/src/pages/admin/PromptManager.tsx` | narration_enhance_prompt prompt tanımı eklendi |
+| `backend/tests/test_text_processing.py` | 11 yeni unit test (clean_for_tts + entegrasyon) |
+| `docs/YTROBOT_PORT_PLAN.md` | Port planı ve karar dokümantasyonu |
+
+### Port Edilen Özellikler
+
+| Özellik | Kaynak | Hedef | Güvenlik |
+|---|---|---|---|
+| TTS apostrof temizleme | YTRobot-v3/providers/tts/base.py | backend/utils/text.py → `clean_for_tts()` | Config flag: `tts_clean_apostrophes` (default: true) |
+| Leading silence kırpma | YTRobot-v3/providers/tts/base.py | backend/utils/text.py → `trim_silence()` | Config flag: `tts_trim_silence` (default: true) |
+| Karaoke animasyon presetleri (5) | YTRobot-v3/remotion/Scene.tsx:116-256 | remotion/src/components/Subtitles.tsx | Default: "none" — mevcut davranış korunur |
+| Font seçim sistemi (7) | YTRobot-v3/remotion/Scene.tsx:11-34 | remotion/src/components/Subtitles.tsx | Default: "inter" — mevcut davranış korunur |
+| Narration humanize/enhance prompt | YTRobot-v3/pipeline/script.py:323-426 | backend/modules/standard_video/pipeline.py | Default: off — pipeline değişmez |
+| Spring-animated lower third | YTRobot-v3/LowerThird.tsx | remotion/compositions/NewsBulletin.tsx | Mevcut layout korundu, animasyon eklendi |
+| Pulsing CANLI badge | YTRobot-v3/LowerThird.tsx | remotion/compositions/NewsBulletin.tsx | Yeni UI element, mevcut yapıyı bozmaz |
+| Dynamic score ring color + glow | YTRobot-v3/ScoreCard.tsx | remotion/compositions/ProductReview.tsx | Mevcut ScoreRing genişletildi |
+| Spring-based SectionBadge | YTRobot-v3/ScoreCard.tsx | remotion/compositions/ProductReview.tsx | Mevcut interpolate → spring değiştirildi |
+
+### Port Edilmeyen Özellikler (Bilinçli Kararla)
+
+| Özellik | Neden |
+|---|---|
+| 9:16 dikey kompozisyonlar | Henüz gerekli değil |
+| News bulletin ticker bar | Kapsam dışı, sequence restructuring gerektirir |
+| Product review floating comments | topComments verisi pipeline'da yok |
+| Whisper greedy alignment | Mevcut TTS word timing daha iyi |
+| `apply_speed()` audio post-processing | `tts_speed` zaten Edge TTS rate param ile pre-synthesis |
+| pycaps subtitle burning | Remotion kullanıyoruz |
+| Video effects (warm/cool/cinematic) | Düşük öncelik, vignette yeterli |
+
+### Ortogonallik Tasarımı
+
+**SubtitleStyle** (standard/neon_blue/gold/minimal/hormozi) → renkler/pozisyon kontrolü
+**SubtitleAnimation** (hype/explosive/vibrant/minimal_anim/none) → giriş/scale efektleri
+İki eksen bağımsız çalışır. Herhangi bir stil + herhangi bir animasyon kombinasyonu geçerli.
+
+### Word Timing Korunma Kanıtı
+
+`clean_for_tts()` sadece TTS input'unu etkiler, subtitle text'ini değiştirmez:
+- Subtitle hâlâ `normalize_narration()` çıktısını kullanır
+- TTS provider `clean_for_tts()` çıktısını alır
+- Word timing alignment bozulmaz çünkü Whisper orijinal sese göre çalışır
+
+Unit test kanıtı: `test_altyazi_tts_text_divergence` — aynı girdi için subtitle ve TTS text'lerinin bilinçli olarak farklılaştığını doğrular.
+
+### Backward Compatibility
+
+Tüm yeni prop'lar optional + default değerli:
+- `subtitleAnimation` → default `"none"` (animasyon yok, mevcut davranış)
+- `subtitleFont` → default `"inter"` (mevcut font)
+- `tts_clean_apostrophes` → default `true` (güvenli iyileştirme)
+- `tts_trim_silence` → default `true` (güvenli iyileştirme)
+- `narration_humanize_enabled` → default `false` (pipeline değişmez)
+- `narration_enhance_enabled` → default `false` (pipeline değişmez)
+
+### Test Sonuçları
+
+```
+Backend: 111 passed, 1 skipped (0.53s)
+  - test_text_processing.py: 11/11 passed (clean_for_tts + entegrasyon)
+  - Tüm mevcut testler geçti — regresyon yok
+
+Remotion tsc: ✓ Clean (0 error)
+Frontend tsc: ✓ Clean (0 error)
+```
+
+### Açık Konular
+
+| Konu | Öncelik | Not |
+|---|---|---|
+| Admin UI'da subtitle_animation ve subtitle_font dropdown'u yok | Orta | Config key'leri mevcut, GlobalSettings'e eklenebilir |
+| trim_silence ffmpeg dependency | Düşük | ffmpeg zaten Remotion pipeline için gerekli |
+| @remotion/google-fonts package install | Düşük | package.json'a eklendi, `npm install` gerekli |
+
+---
+
+## 2026-03-31 — YTRobot-v3 Controlled Port (Phase 2)
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `remotion/src/types.ts` | TickerItem, BulletinStyle, ProductReviewStyle, KenBurnsDirection, VideoEffect, SubtitleBg tipleri; NewsBulletin/ProductReview/StandardVideo props genişletildi |
+| `remotion/src/components/NewsTicker.tsx` | YENİ — Kayan haber ticker bar (3x tekrar, 9 stil rengi, kenar fade) |
+| `remotion/src/components/BreakingNewsOverlay.tsx` | YENİ — SON DAKİKA flash overlay (spring badge, network name, 3 flash pulse) |
+| `remotion/src/components/PriceBadge.tsx` | YENİ — Animated fiyat counter (0→price, indirim badge, strikethrough orijinal fiyat) |
+| `remotion/src/components/StarRating.tsx` | YENİ — 5 SVG yıldız, sequential fill, fractional clip desteği |
+| `remotion/src/components/FloatingComments.tsx` | YENİ — Floating speech bubble kartları (5 pozisyon, pop-in spring, sin-wave float) |
+| `remotion/src/components/VideoEffects.tsx` | YENİ — Video renk efektleri: vignette, warm, cool, cinematic letterbox |
+| `remotion/src/compositions/NewsBulletin.tsx` | Ticker + BreakingNewsOverlay entegrasyonu (Sequence tabanlı) |
+| `remotion/src/compositions/ProductReview.tsx` | PriceBadge + StarRating + FloatingComments entegrasyonu (feature flag + veri kontrollü) |
+| `remotion/src/compositions/StandardVideo.tsx` | Ken Burns pan yönleri + VideoEffectOverlay + subtitle arka plan (box/pill) |
+| `backend/utils/text.py` | `apply_speed()` eklendi — ffmpeg atempo zinciri ile post-synthesis hız |
+| `backend/providers/tts/capabilities.py` | YENİ — TTS provider capability model (word timing, hız, alignment fallback) |
+| `backend/modules/standard_video/config.py` | ken_burns_direction, video_effect, subtitle_bg, tts_apply_speed_post eklendi |
+| `backend/modules/news_bulletin/config.py` | bulletin_style, bulletin_network_name, bulletin_ticker_enabled + TTS processing keys |
+| `backend/modules/product_review/config.py` | review_style, review_price_enabled, review_star_rating_enabled, review_comments_enabled + TTS processing keys |
+| `backend/pipeline/steps/composition.py` | 3 props builder güncellendi: KB direction, video effect, subtitle bg, ticker, bulletin style, review conditionals |
+| `backend/modules/standard_video/pipeline.py` | Post-synthesis speed block (tts_apply_speed_post flag kontrollü) |
+| `frontend/src/lib/constants.ts` | pipelineStage + adminOnly alanları; 4 yeni kategori; ~15 yeni setting tanımı |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | pipelineStage render; 3 yeni kategori (tts_processing, module_news, module_review) |
+| `backend/tests/test_text_processing.py` | 13 yeni test: apply_speed (6) + TTS capabilities (7) |
+
+### Port Edilen Özellikler
+
+| Özellik | Kaynak | Hedef | Güvenlik |
+|---|---|---|---|
+| News ticker bar | YTRobot-v3/NewsTicker | remotion/components/NewsTicker.tsx | Config: `bulletin_ticker_enabled` (default: true) |
+| Breaking news overlay | YTRobot-v3/BreakingOverlay | remotion/components/BreakingNewsOverlay.tsx | Yalnızca `bulletinStyle === "breaking"` |
+| Product price badge | YTRobot-v3/PriceBadge | remotion/components/PriceBadge.tsx | Feature flag: `review_price_enabled` + veri kontrolü |
+| Star rating | YTRobot-v3/StarRating | remotion/components/StarRating.tsx | Feature flag: `review_star_rating_enabled` + veri kontrolü |
+| Floating comments | YTRobot-v3/FloatingComments | remotion/components/FloatingComments.tsx | Feature flag: `review_comments_enabled` + veri kontrolü |
+| Video effects overlay | YTRobot-v3/VideoEffects | remotion/components/VideoEffects.tsx | Config: `video_effect` (default: "none") |
+| Ken Burns pan yönleri | YTRobot-v3/Scene.tsx | remotion/compositions/StandardVideo.tsx | Config: `ken_burns_direction` (default: "center") |
+| Subtitle arka planları | YTRobot-v3/SubtitleBg | remotion/compositions/StandardVideo.tsx | Config: `subtitle_bg` (default: "none") |
+| apply_speed() | YTRobot-v3/tts/base.py | backend/utils/text.py | Config: `tts_apply_speed_post` (default: false) |
+| TTS capability model | YENİ tasarım | backend/providers/tts/capabilities.py | Frozen dataclass, safe default fallback |
+| Pipeline stage labels | YENİ tasarım | frontend/src/lib/constants.ts | Her ayar hangi pipeline aşamasında çalıştığını gösterir |
+| Settings pipelineStage UI | YENİ tasarım | GlobalSettings.tsx | Label altında mavi etiket olarak render |
+
+### Phase 1'den Phase 2'ye Taşınan (Artık Port Edildi)
+
+| Özellik | Phase 1 Durumu | Phase 2 Durumu |
+|---|---|---|
+| News ticker bar | "Kapsam dışı" | ✅ Port edildi |
+| Breaking news overlay | "Niş" | ✅ Port edildi |
+| Floating comments | "Veri yok" | ✅ Feature flag ile port edildi |
+| Price badge / star rating | "Veri yok" | ✅ Feature flag ile port edildi |
+| apply_speed() | "Pre-synthesis yeterli" | ✅ Post-synthesis seçenek olarak eklendi |
+| Ken Burns directions | "Center yeterli" | ✅ 4 yön eklendi |
+| Video effects | "Düşük öncelik" | ✅ 5 efekt eklendi |
+| Subtitle backgrounds | "Mevcut sistem yeterli" | ✅ box/pill eklendi |
+
+### Bilinçli Olarak Port Edilmeyen
+
+| Özellik | Neden |
+|---|---|
+| 9:16 dikey kompozisyon dosyaları | Tipler eklendi, ancak ayrı composition dosyaları henüz gerekli değil. Mevcut video_resolution "1080x1920" seçimi yeterli. |
+| Whisper greedy alignment algoritması | Capability model var, Edge TTS word timing birincil. İhtiyaç duyulduğunda subtitles.py'ye eklenebilir. |
+| MoviePy fallback | Remotion tek compositor |
+| pycaps subtitle burning | Remotion kullanıyoruz |
+
+### Feature Flag Tasarımı (Veri Bağımlı Özellikler)
+
+Product review price badge, star rating ve floating comments **çift güvenlik** ile çalışır:
+1. **Admin toggle** (`review_price_enabled`, `review_star_rating_enabled`, `review_comments_enabled`) — default: false
+2. **Veri kontrolü** — Toggle açık olsa bile, script çıktısında ilgili veri yoksa render edilmez
+
+Bu sayede:
+- Mevcut pipeline'lar etkilenmez (togglelar kapalı)
+- Toggle açıldığında bile eksik veri sorun yaratmaz
+- Admin hangi özellikleri aktifleştireceğini kontrol eder
+
+### Backward Compatibility
+
+Tüm yeni prop'lar optional + default değerli. Phase 1'de oluşturulan mevcut videolar / konfigürasyonlar değişmeden çalışır.
+
+### Test Sonuçları
+
+```
+Backend: 124 passed, 1 skipped (0.74s)
+  - test_text_processing.py: 24/24 passed
+    - TestCleanForTTS: 9 test (Phase 1)
+    - TestCleanForTTSIntegration: 2 test (Phase 1)
+    - TestApplySpeed: 6 test (Phase 2 — yeni)
+    - TestTTSCapabilities: 7 test (Phase 2 — yeni)
+  - Tüm mevcut testler geçti — regresyon yok
+
+Frontend tsc: ✓ Clean (0 error)
+Remotion tsc: ✓ Clean (0 error)
+```
+
+### Açık Konular
+
+| Konu | Öncelik | Not |
+|---|---|---|
+| 9:16 ayrı composition dosyaları | Düşük | Tipler mevcut, ihtiyaç olduğunda oluşturulacak |
+| Whisper greedy alignment implementasyonu | Düşük | Capability model hazır, subtitles.py'ye eklenebilir |
+| ~~UserSettings.tsx yeni ayarlar~~ | ~~Orta~~ | ✅ Phase 2 Doğrulamada çözüldü |
+| ~~adminOnly dekoratif~~ | ~~Yüksek~~ | ✅ Mimari düzeltme ile çözüldü |
+| ~~TTS capability pipeline'a bağlı değil~~ | ~~Yüksek~~ | ✅ Mimari düzeltme ile çözüldü |
+
+---
+
+## 2026-03-31 — Mimari Düzeltme: adminOnly + TTS Capability Entegrasyonu
+
+### Amaç
+
+İki dekoratif/bekleme modundaki mimari bileşeni gerçek çalışan sisteme bağlama.
+
+### 1. adminOnly Gerçek Filtreleme
+
+**Sorun:** `adminOnly: true` alanı constants.ts'de tanımlıydı ama frontend'de hiçbir yerde filtreleme için kullanılmıyordu. User paneli tamamen hardcoded SettingRow'larla oluşturulmuştu.
+
+**Çözüm:**
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/lib/constants.ts` | `isSettingAdminOnly(key)` ve `getUserVisibleSettings()` helper fonksiyonları eklendi |
+| `frontend/src/pages/user/UserSettings.tsx` | Her SettingRow `{!isHiddenFromUser(key) && (...)}` guard ile sarıldı |
+| `frontend/src/pages/user/UserSettings.tsx` | Save payload `allUserSettings.filter(s => !isSettingAdminOnly(s.key))` ile filtreleniyor |
+
+**Davranış:**
+- Schema'da `adminOnly: true` olan bir ayar → user panelde görünmez
+- Schema'da `adminOnly: true` olan bir ayar → user save payload'dan çıkarılır
+- Gelecekte yeni ayar eklenince `adminOnly: true` koyulursa otomatik gizlenir
+- Mevcut 11 user-facing ayar değişmeden görünüyor (hiçbiri adminOnly değil)
+
+**Yeni adminOnly ayarlar (16 toplam):**
+- max_concurrent_jobs, output_dir (sistem)
+- llm/tts/visuals_fallback_order (pipeline — fallback sırası admin kararı)
+- job_timeout_seconds (sistem)
+- subtitle_use_whisper (capability-aware otomatik, admin fine-tuning)
+- tts_clean_apostrophes, tts_trim_silence, tts_apply_speed_post (TTS iç işleme)
+- narration_humanize_enabled, narration_enhance_enabled (LLM post-processing)
+- review_price_enabled, review_star_rating_enabled, review_comments_enabled (feature flags)
+
+### 2. TTS Capability Model → Pipeline Entegrasyonu
+
+**Sorun:** `TTSCapability` modeli test edilmiş ama pipeline kodu tarafından hiç kullanılmıyordu. Subtitle timing ve post-synthesis hız kararları yalnızca config flag'lere dayanıyordu.
+
+**Çözüm:**
+| Dosya | Değişiklik |
+|---|---|
+| `backend/pipeline/steps/subtitles.py` | `get_tts_capabilities()` import + capability-aware Whisper otomatik etkinleştirme |
+| `backend/modules/standard_video/pipeline.py` | `get_tts_capabilities()` import + capability-aware post-synthesis hız kararı |
+
+**Subtitle Timing Kararı (subtitles.py):**
+```python
+tts_caps = get_tts_capabilities(tts_provider_name)
+if tts_caps.requires_alignment_fallback and bool(openai_api_key) and not use_whisper:
+    use_whisper = True  # Otomatik etkinleştir
+```
+- Edge TTS: word_timings döner → Strateji 1 tetiklenir → capability kontrolüne ulaşılmaz → **mevcut davranış bozulmaz**
+- ElevenLabs/OpenAI TTS: word_timings boş → capability `requires_alignment_fallback=True` → Whisper otomatik açılır (API key varsa)
+- Bilinmeyen provider: safe default → `requires_alignment_fallback=True` → Whisper açılır
+
+**Post-Synthesis Hız Kararı (step_tts):**
+```python
+provider_caps = get_tts_capabilities(provider_used)
+should_apply_speed = tts_apply_speed_post or (
+    provider_caps.requires_post_synthesis_speed
+    and not provider_caps.supports_pre_synthesis_speed
+)
+```
+- Edge TTS: `supports_pre_synthesis_speed=True`, `requires_post_synthesis_speed=False` → **otomatik tetiklenmez**
+- Bilinmeyen provider: `requires_post_synthesis_speed=True` → otomatik tetiklenir
+- Config flag açıksa: her zaman tetiklenir (override)
+
+### 3. pipelineStage Tamamlama
+
+40/44 ayarda pipelineStage etiketi var (önceki: 28/44). Kalan 4 ayar için açıklama metni yeterli.
+
+Yeni eklenen etiketler:
+- llm_provider, visuals_provider, subtitle_style, scene_count, category, use_hook_variety, script_temperature, script_max_tokens, job_timeout_seconds, tts_voice, tts_speed, subtitle_font_size, subtitle_use_whisper, ken_burns_enabled, llm/tts/visuals_fallback_order
+
+### Test Sonuçları
+
+```
+Backend: 124 passed, 1 skipped (0.69s)
+Frontend tsc: ✓ Clean (0 error)
+Remotion tsc: ✓ Clean (0 error)
+```
+
+### Doğrulama
+
+| Kontrol | Sonuç |
+|---|---|
+| adminOnly=true ayar user panelde görünmüyor mu | ✓ isHiddenFromUser guard aktif |
+| adminOnly=true ayar user save payload'dan çıkarılıyor mu | ✓ filter aktif |
+| User-facing ayarlar (11) doğru panelde mi | ✓ Hiçbiri adminOnly değil |
+| Capability model subtitle kararına etkili mi | ✓ requires_alignment_fallback → Whisper auto-enable |
+| Capability model post-synthesis hıza etkili mi | ✓ requires_post_synthesis_speed → apply_speed auto |
+| Edge TTS mevcut davranışı bozuldu mu | ✓ HAYIR — word_timings birincil, pre-synthesis hız |
+| Fallback mantığı bozuldu mu | ✓ HAYIR — config flag'ler hâlâ override olarak çalışıyor |
+
+---
+
+## 2026-03-31 — Phase 2 Doğrulama ve Yüzey Kontrolü
+
+### Doğrulama Amacı
+
+Phase 2 portu sonrası tüm yeni ayarların, bileşenlerin ve entegrasyonların gerçekten çalıştığını doğrulama. Fake ayar avı, admin/user yüzey ayrımı kontrolü, TTS capability model değerlendirmesi.
+
+### 1. Admin/User Panel Ayrımı Doğrulaması
+
+**SORUN TESPİT EDİLDİ:** Phase 2'de eklenen 5 kullanıcıya açık ayar (ken_burns_direction, video_effect, subtitle_bg, subtitle_animation, subtitle_font) UserSettings panelinde görünmüyordu. Yalnızca admin panelde erişilebilirdi.
+
+**DÜZELTME:**
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/stores/settingsStore.ts` | UserVideoDefaults interface'e 5 yeni alan eklendi + mapResolvedToDefaults güncellendi |
+| `frontend/src/pages/user/UserSettings.tsx` | 5 yeni dropdown + seçenek dizileri + save payload'a 5 key eklendi |
+
+**Sonuç:**
+- Admin panelde 44 ayar (7 kategori)
+- User panelde 11 aktif ayar + 3 disabled (yakında)
+- Phase 2 öncesi user panelde 6, sonrası 11 ayar
+
+### 2. Fake Ayar Avı — Sonuç
+
+**17 Phase 2 ayarının tamamı GERÇEK ve BAĞLI.**
+
+Her ayar:
+1. Config default'ta tanımlı (config.py)
+2. Pipeline step'te OKUNUYOR (composition.py veya pipeline.py)
+3. Remotion props'a geçiriliyor VEYA ses işleme yapıyor
+4. Remotion bileşeninde kullanılıyor VEYA ffmpeg çağrısı yapıyor
+
+Sahte/bağlı olmayan ayar: **SIFIR**
+
+### 3. Remotion Bileşen Entegrasyonu
+
+| Bileşen | Import | Render | Props Akışı |
+|---|---|---|---|
+| NewsTicker.tsx | NewsBulletin:14 ✓ | Sequence(168-173) ✓ | ticker→items, bulletinStyle→style, lang ✓ |
+| BreakingNewsOverlay.tsx | NewsBulletin:15 ✓ | Sequence(154-163) ✓ | networkName, bulletinStyle→style, lang ✓ |
+| PriceBadge.tsx | ProductReview:14 ✓ | SectionRenderer(453-459) ✓ | price, originalPrice, currency ✓ |
+| StarRating.tsx | ProductReview:15 ✓ | SectionRenderer(444-450) ✓ | starRating→rating, reviewCount ✓ |
+| FloatingComments.tsx | ProductReview:16 ✓ | SectionRenderer(487-495) ✓ | topComments→comments, reviewStyle→style ✓ |
+| VideoEffectOverlay | StandardVideo:22 ✓ | SceneContent(195) ✓ | videoEffect→effect ✓ |
+
+### 4. TTS Capability Model Değerlendirmesi
+
+**Durum: YARDIMCI MODEL — Pipeline otomasyonuna BAĞLI DEĞİL**
+
+- Model doğru ve test edilmiş (7 test, frozen dataclass)
+- Pipeline kodu bu modeli tüketmiyor
+- Subtitle timing kararı config-driven (`subtitle_use_whisper` flag)
+- Post-synthesis hız kararı config-driven (`tts_apply_speed_post` flag)
+- **Yanlış değil, sadece henüz bağlanmamış**
+
+Detaylı analiz: `docs/TTS_PROVIDER_CAPABILITIES.md`
+
+### 5. pipelineStage Render Doğrulaması
+
+- GlobalSettings.tsx satır 535-542'de pipelineStage alanı render ediliyor ✓
+- Mavi 10px micro-text, küçük yuvarlak bullet ile ✓
+- 28/44 ayarda pipelineStage tanımlı
+- 16 ayarda pipelineStage eksik (pipeline geneli ayarlar — acil değil)
+
+### 6. `adminOnly` Flag Değerlendirmesi
+
+`adminOnly` alanı constants.ts'de 13 ayar için tanımlı ama frontend'de **filtreleme için kullanılmıyor**. Admin/user ayrımı fiilen şu şekilde sağlanıyor:
+- Admin paneli: GlobalSettings.tsx → SYSTEM_SETTINGS_SCHEMA'dan tüm ayarları gösteriyor
+- User paneli: UserSettings.tsx → hardcoded ayar listesi ile sadece belirlenen ayarları gösteriyor
+- Bu yaklaşım çalışıyor ve güvenli — adminOnly alanı intent belgeleme olarak duruyor
+
+### Değiştirilen Dosyalar
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/stores/settingsStore.ts` | UserVideoDefaults + 5 yeni alan, DEFAULT_USER_SETTINGS + 5 default, mapResolvedToDefaults + 5 mapping |
+| `frontend/src/pages/user/UserSettings.tsx` | 5 yeni seçenek dizisi, 5 yeni SettingRow, save payload'a 5 key |
+| `docs/SETTINGS_SURFACE_MAP.md` | YENİ — Tam ayar yüzey matrisi |
+| `docs/TTS_PROVIDER_CAPABILITIES.md` | YENİ — Capability model durum ve analiz raporu |
+| `docs/QA_LOG.md` | Bu doğrulama girişi |
+
+### Test Sonuçları
+
+```
+Backend: 124 passed, 1 skipped (0.79s)
+Frontend tsc: ✓ Clean (0 error)
+Remotion tsc: ✓ Clean (0 error)
+```
+
+### Kalan Açık Konular
+
+| Konu | Öncelik | Not |
+|---|---|---|
+| TTS capability model pipeline entegrasyonu | Düşük | 3 provider için config-flag yeterli, 4+ provider olduğunda değerlendirilecek |
+| 16 ayar için pipelineStage eksik | Düşük | Pipeline geneli ayarlar, aciklama metninden anlasilabilir |
+| 9:16 ayrı composition dosyaları | Düşük | Tipler mevcut, resolution seçimi yeterli |
+
+---
+
 ## 2026-03-31 — Kategori/Hook Override Runtime Doğrulaması + Bug Fix
 
 ### Değişiklik Özeti
@@ -2027,9 +2478,280 @@ frontend tsc                               0 error   ✓ PASS
 
 Kategori ve Hook CRUD sisteminin **tüm kritik yolları** gerçek network loglarıyla veya unit testlerle kanıtlanmıştır:
 - Oluştur: POST 201 ✓
-- Düzenle: PUT 200 ✓  
+- Düzenle: PUT 200 ✓
 - Sil (custom): DELETE 200 + DOM'dan kayboldu ✓
 - Builtin koruma: 403 backend + "silinemez" UI ✓
 - Pasif runtime atlanma: unit test ✓
 - Pipeline wiring: config["_db"] inject + DB-aware functions ✓
+
+---
+
+## 2026-03-31 — 9:16 Vertical / Shorts Composition Destegi
+
+### Mimari Karar
+
+**Ayri composition dosyasi yerine responsive shared layout secildi.**
+
+Gerekce:
+1. Tum 3 composition ayni icerik yapisini paylasir (scene, audio, subtitle)
+2. Sadece CSS pozisyonlama ve font boyutlari degisiyor
+3. 6 dosya yerine 3 dosya + 1 layout hook = daha az kod tekrari
+4. Remotion render pipeline zaten `--width/--height` parametrelerini dogru iletiyor
+
+### Degisiklik Ozeti
+
+| Dosya | Degisiklik |
+|---|---|
+| `remotion/src/components/useLayout.ts` | **YENI** — Aspect-ratio-aware responsive layout hook. 14 layout alt-sistemi (subtitle, overlay, lowerThird, ticker, scoreRing, floatingComments, proCon, breakingOverlay, priceBadge, starRating, safeArea). `isVertical = height > width` tespiti, `scale = width / refWidth` olceklemesi. |
+| `remotion/src/components/Subtitles.tsx` | `useLayout()` entegrasyonu: font boyutu, container genisligi, kelime arasi bosluk layout'tan alinir. Vertical modda altyazi pozisyon ayarlama (`adjustTopForVertical`). |
+| `remotion/src/compositions/StandardVideo.tsx` | `useLayout()` entegrasyonu: subtitle bottom offset, counter pozisyonu, subtitle container genisligi, box/pill padding, gradient genisligi layout'tan alinir. |
+| `remotion/src/compositions/NewsBulletin.tsx` | `useLayout()` entegrasyonu: top bar badge boyutlari, live indicator, counter, subtitle pozisyonu (55%→45% vertical), lower-third panel padding/font/accent bar, headline/category/source font boyutlari layout'tan alinir. |
+| `remotion/src/compositions/ProductReview.tsx` | `useLayout()` entegrasyonu: section badge/info pozisyonlari, pro/con heading boyut/pozisyon, verdict score ring/star/price pozisyonlari, non-verdict heading bottom offset layout'tan alinir. ScoreRing SVG boyutlari dinamik. |
+| `remotion/src/components/NewsTicker.tsx` | `useLayout()` entegrasyonu: ticker yuksekligi, font boyutu, badge boyutu, fade genislikleri, karakter genisligi, scroll hizi layout'tan alinir. Sabitler (`TICKER_HEIGHT`, `CHAR_WIDTH`, `SPEED`) kaldirildi. |
+| `remotion/src/components/BreakingNewsOverlay.tsx` | `useLayout()` entegrasyonu: ust pozisyon, badge yuksekligi/font/padding, network adi font boyutu, clipPath arrow boyutu layout'tan alinir. |
+| `remotion/src/components/FloatingComments.tsx` | `useLayout()` entegrasyonu: kart maks genislik, padding, avatar boyutu, font boyutu, maks yorum sayisi (5→3 vertical), pozisyon seti (5 landscape → 3 vertical). |
+| `remotion/src/components/PriceBadge.tsx` | `useLayout()` entegrasyonu: orijinal fiyat, guncel fiyat, indirim badge font boyutlari, badge padding/radius layout'tan alinir. |
+| `remotion/src/components/StarRating.tsx` | Yildiz arasi gap orantili yapildi (`starSize * 0.15`), starSize zaten parent'tan layout-aware alinir. |
+
+### Pipeline Zinciri Dogrulamasi
+
+```
+Frontend (video_format: "shorts")
+  → resolveResolution() → "1080x1920"
+  → POST /api/jobs { settings_overrides: { video_resolution: "1080x1920" } }
+  → SettingsResolver (5-layer) → resolved config
+  → composition.py: width=1080, height=1920 → props.settings + --width/--height
+  → Remotion: useVideoConfig() → width=1080, height=1920
+  → useLayout(): isVertical=true, scale=1.0 → tum layout degerleri vertical
+```
+
+**Sonuc:** Pipeline degisikligi gereksiz — mevcut `video_format` → `video_resolution` → `--width/--height` zinciri zaten calisiyor.
+
+### Vertical Modda Degisen Layout Degerleri (1080x1920 vs 1920x1080)
+
+| Parametre | Landscape (1920x1080) | Vertical (1080x1920) |
+|---|---|---|
+| Subtitle font | 48px | 40px |
+| Subtitle bottom | 60px | 160px |
+| Subtitle container | 92% | 88% |
+| Safe area top | 20px | 80px |
+| Counter font | 13px | 11px |
+| Lower-third headline | 26px | 22px |
+| Ticker height | 64px | 52px |
+| Ticker font | 28px | 22px |
+| Score ring size | 180px | 140px |
+| Floating comments max | 5 | 3 |
+| Float card maxWidth | 280px | 220px |
+| Breaking badge height | 56px | 44px |
+| Price font | 72px | 56px |
+| Star size | 40px | 28px |
+| Pro/Con top | 35% | 30% |
+| Breaking overlay top | 38% | 30% |
+
+### Render Dogrulama
+
+| Test | Sonuc |
+|---|---|
+| StandardVideo 1080x1920 (vertical) | BASARILI — 30 frame render, ffprobe 1080x1920 dogruladi |
+| StandardVideo 1920x1080 (landscape) | BASARILI — regresyon yok |
+| NewsBulletin 1080x1920 (vertical + ticker) | BASARILI — ticker ve lower-third dogru olceklendi |
+
+### Test Sonuclari
+
+| Test Turu | Sonuc |
+|---|---|
+| Python backend testleri | 124 passed, 1 skipped |
+| Remotion tsc --noEmit | Clean (hata yok) |
+| Frontend tsc --noEmit | Clean (hata yok) |
+| Remotion vertical render | 1080x1920 MP4 basarili |
+| Remotion horizontal render | 1920x1080 MP4 basarili (regresyon yok) |
+
+### Hangi Moduller Icin Vertical Destegi Eklendi
+
+| Modul | Vertical Destegi | Notlar |
+|---|---|---|
+| StandardVideo | EVET | Subtitle, counter, gradient, Ken Burns tam uyumlu |
+| NewsBulletin | EVET | Lower-third, ticker, breaking overlay, live badge tam uyumlu |
+| ProductReview | EVET | ScoreRing, StarRating, PriceBadge, FloatingComments, ProCon tam uyumlu |
+
+### Acik Konular
+
+- Vertical modda Ken Burns "pan-left" / "pan-right" yonleri landscape icin optimize — vertical'de "pan-up" / "pan-down" eklenebilir (dusuk oncelik)
+- Remotion Studio'da vertical preview icin ayri bir test composition eklenebilir (dusuk oncelik)
+
+---
+
+## 2026-03-31 — Vertical Composition Kapanis Dogrulamasi
+
+### 1. ProductReview Vertical Render Dogrulamasi
+
+**Render komutu:** `npx remotion render ... ProductReview --width=1080 --height=1920`
+
+**Test props:** 4 bolum (hook, pros, cons, verdict) + price (2499 TL, orijinal 3999 TL) + starRating (4.5) + reviewCount (1247) + topComments (3 adet) + reviewStyle "modern"
+
+**Render sonucu:** 360 frame, 12 saniye, 1.3 MB MP4 — BASARILI
+
+**ffprobe boyut dogrulamasi:** `1080,1920` — DOGRU
+
+**Gorsel frame dogrulamasi (3 frame still render):**
+
+| Frame | Bolum | Kontrol Edilen | Sonuc |
+|---|---|---|---|
+| frame 5 | hook | SectionBadge sol ust, productName+score sag ust, counter sag ust, "Giris" basligi alt bolge | UYGUN — hicbir eleman tasiyor/kesiliyor degil |
+| frame 100 | pros | SectionBadge sol ust, FloatingComments sag ust (1 kart gorundur, max 3 vertical), "Artilar" basligi top:30% | UYGUN — kartlar 1080px genislige sigiyor |
+| frame 290 | verdict | ScoreRing 140px merkezi, StarRating 28px altta, PriceBadge (orijinal 28px, guncel 56px) altta | UYGUN — tum elemanlar dikey eksende ustuste, tasiyor yok |
+
+**Score ring vertical boyut:** 140x140px SVG (landscape'te 180x180) — 1080px genislikte oransal ✅
+**FloatingComments vertical:** max 3 yorum, 220px maxWidth, 3 pozisyon (landscape: 5 yorum, 280px, 5 pozisyon) ✅
+**PriceBadge vertical:** 56px font (landscape: 72px) — 1080px genislikte oransal ✅
+**StarRating vertical:** 28px yildiz (landscape: 40px) — oransal ✅
+**Subtitle alani:** bottom: 160px (landscape: 60px) — vertical safe area icin uygun ✅
+
+### 2. Vertical Ayar Yuzeyi Kontrolu
+
+#### User Panel — CreateVideo.tsx
+
+| Kontrol | Sonuc |
+|---|---|
+| Video format secimi (long/shorts) | DOGRU YERDE — CreateVideo formunda iki butonlu kart UI (MonitorPlay + Smartphone ikonlu) |
+| Default kaynak | `userDefaults.videoFormat` — admin'in belirledigi default ile baslar |
+| Kullanici degistirebilir mi | EVET — secim serbestce degistirilebilir, kilitli degil |
+| `resolveResolution()` | "shorts" → "1080x1920", "long" → "1920x1080" — job override olarak POST edilir |
+
+#### User Panel — UserSettings.tsx
+
+| Kontrol | Sonuc |
+|---|---|
+| `video_resolution` | GORUNDUR — "Video Cozunurlugu" olarak, 1920x1080 / 1080x1920 / 1280x720 secenekleri |
+| `video_format` | YOK — user settings'te bulunmuyor, sadece CreateVideo'da is bazli secim |
+| Gereksiz teknik ayar acilmis mi | HAYIR — resolution secimi kullanicinin isteyecegi bir tercih |
+
+#### Admin Panel — GlobalSettings.tsx (constants.ts schema'dan)
+
+| Ayar | Kategori | adminOnly | Sonuc |
+|---|---|---|---|
+| `video_format` | system | HAYIR | Admin varsayilan formati ayarlar, kullanici CreateVideo'da degistirebilir |
+| `video_resolution` | video_audio | HAYIR | Admin varsayilan cozunurlugu ayarlar, kullanici override edebilir |
+
+#### Ek UI Gerektiriyor mu?
+
+**HAYIR.** Mevcut yapiyla vertical destegin tam UI yolculugu:
+
+1. Admin → GlobalSettings'te `video_format` default'u "shorts" yapabilir
+2. Kullanici → CreateVideo'da format secimini gorunur sekilde yapar (iki butonlu kart)
+3. Pipeline → `resolveResolution()` → `video_resolution: "1080x1920"` → backend → Remotion `--width=1080 --height=1920`
+4. Remotion → `useLayout()` → `isVertical=true` → tum layout otomatik vertical
+
+Ek UI gerektirmeyen neden: `useLayout()` hook'u composition icinde runtime'da cozunurluge bakarak layout'u otomatik belirliyor. Kullanicinin "vertical layout'u ac/kapa" gibi ayri bir ayara ihtiyaci yok — format secimi zaten bunu dolayisiyla kontrol ediyor.
+
+### Test Sonuclari
+
+| Test | Sonuc |
+|---|---|
+| Python backend testleri | 124 passed, 1 skipped |
+| Remotion tsc --noEmit | Clean |
+| Frontend tsc --noEmit | Clean |
+| ProductReview 1080x1920 render | BASARILI (360 frame, 1.3 MB, ffprobe 1080x1920) |
+| ProductReview 3 frame still render | BASARILI (hook, pros, verdict goruntuler uygun) |
+
+### Degisen Dosyalar
+
+Sadece `docs/QA_LOG.md` — dogrulama kaydı eklendi. Kod degisikligi yapilmadi.
+
+---
+
+## 2026-03-31 — Port Özellik Veri Zinciri Doğrulaması + Bug Fix
+
+### Amaç
+
+News bulletin ve product review modüllerindeki port edilmiş görsel özelliklerin veri zincirini ve runtime doluluğunu doğrulama. Eksik veri mapping'leri bul, küçük düzeltme yap.
+
+### Tespit Edilen Bug'lar
+
+#### Bug 1 — `source` Key Mismatch (News Bulletin)
+
+**Dosya:** `backend/pipeline/steps/composition.py` → `_build_news_bulletin_props()`
+
+**Sorun:** Props builder `scene.get("source", "")` okuyordu. Ancak `news_bulletin/pipeline.py` LLM şemasında alan adı `"news_source"`. Sonuç: lower-third kaynak etiketi daima boş kalıyordu.
+
+**Fix:**
+```python
+# Önce:
+"source": scene.get("source", ""),
+# Sonra:
+"source": scene.get("news_source", scene.get("source", "")),
+```
+
+**Etki:** LLM `news_source` ürettiğinde kaynak etiketi artık gösterilecek.
+
+#### Bug 2 — `overallScore` LLM Çıktısını Görmezden Geliyordu (Product Review)
+
+**Dosya:** `backend/pipeline/steps/composition.py` → `_build_product_review_props()`
+
+**Sorun:** `"overallScore": config.get("review_score", 0)` kullanılıyordu. `step_script_review` LLM `overall_score` üretiyor ve `script_data.setdefault("overall_score", 7.0)` ile 7.0 default koyuluyor. Admin `review_score` config'de ayarlamadıysa ScoreRing 0/10 gösteriyordu.
+
+**Fix:**
+```python
+# Önce:
+"overallScore": config.get("review_score", 0),
+# Sonra:
+"overallScore": script_data.get("overall_score") or config.get("review_score", 0),
+```
+
+**Etki:** LLM değeri artık öncelikli. Admin `review_score` override edebilir. İkisi de yoksa 0.
+
+#### Eksik Alan — `category` LLM Şemasında Yoktu (News Bulletin)
+
+**Dosya:** `backend/modules/news_bulletin/pipeline.py` → `_BULLETIN_SYSTEM_INSTRUCTION`
+
+**Sorun:** LLM JSON şemasında `category` alanı yoktu. Lower-third kategori badge'i daima boş kalıyordu.
+
+**Çözüm:** Şemaya `"category": "Ekonomi"` örneği eklendi + kural metni güncellendi.
+
+**Etki:** LLM artık her sahne için Ekonomi/Siyaset/Teknoloji/Spor/Sağlık/Kültür/Dünya/Gündem kategorilerinden birini üretir.
+
+### Değiştirilen Dosyalar
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/pipeline/steps/composition.py` | `source` key fix, `overallScore` LLM fix |
+| `backend/modules/news_bulletin/pipeline.py` | `category` LLM şemasına eklendi, kural metni güncellendi |
+| `docs/NEWS_BULLETIN_DATA_FLOW.md` | YENİ — her bulletin bileşeninin veri kaynağı |
+| `docs/PRODUCT_REVIEW_DATA_FLOW.md` | YENİ — her review bileşeninin veri kaynağı |
+| `docs/PORT_FEATURE_STATUS.md` | YENİ — port özellik durumu tablosu |
+
+### Feature Flag Durumu (Tasarım Gereği Kapalı)
+
+Aşağıdaki product review özellikleri varsayılan olarak `False`. Bu tasarım gereği. Runtime veri var ama gösterilmez.
+
+| Özellik | Flag | Varsayılan | Aktifleştirme |
+|---------|------|-----------|---------------|
+| Fiyat rozeti | `review_price_enabled` | False | `_product_price` + flag açma |
+| Yıldız puanı | `review_star_rating_enabled` | False | `_product_star_rating` + flag açma |
+| Yüzen yorumlar | `review_comments_enabled` | False | Yorumlar + flag açma |
+
+Breaking news overlay da kapalı (`bulletin_breaking_enabled=False`).
+
+### Runtime Render Doğrulama
+
+Üç bağımsız render:
+
+| Render | Boyut | Frame | Sonuç | Boyut |
+|--------|-------|-------|-------|-------|
+| NewsBulletin (landscape) | 1920×1080 | 0-5 | ✅ Başarılı | 27 kB |
+| ProductReview (landscape) | 1920×1080 | 0-5 | ✅ Başarılı | 34.8 kB |
+| ProductReview (vertical) | 1080×1920 | 0-5 | ✅ Başarılı | 34.6 kB |
+
+**NewsBulletin test props:** ticker + 2 sahne, category="Ekonomi", source="Anadolu Ajansı"
+**ProductReview test props:** overallScore=8.7, price=8499, starRating=4.7, 3 yorum
+**Vertical test:** Tüm opsiyonel özellikler açık, ScoreRing/StarRating/FloatingComments vertical konumlarında
+
+### Çalıştırılan Testler
+
+```
+Backend pytest:    124 passed, 1 skipped (0.76s) — regresyon yok
+Remotion render:   3/3 başarılı (news_bulletin ×1, product_review landscape ×1, vertical ×1)
+Remotion tsc:      ✓ Clean (0 error)
+Frontend tsc:      ✓ Clean (0 error)
+```
 

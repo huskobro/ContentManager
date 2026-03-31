@@ -35,7 +35,8 @@ from backend.pipeline.steps.script import build_enhanced_prompt
 from backend.pipeline.steps.subtitles import step_subtitles_enhanced
 from backend.providers.registry import provider_registry
 from backend.utils.logger import get_logger
-from backend.utils.text import normalize_narration
+from backend.providers.tts.capabilities import get_tts_capabilities
+from backend.utils.text import apply_speed, clean_for_tts, normalize_narration, trim_silence
 
 log = get_logger(__name__)
 
@@ -82,6 +83,66 @@ YouTube için optimize edilmiş metadata üret.
 }}
 
 SADECE JSON döndür."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Narration Humanize & TTS Enhance Prompt Şablonları
+# (YTRobot-v3/pipeline/script.py'den port edildi)
+#
+# Bu promptlar senaryo üretiminden SONRA, TTS'e göndermeden ÖNCE
+# narasyonları iyileştirmek için kullanılır:
+#   - humanize: Doğal konuşma dili, AI-isms temizleme
+#   - enhance: TTS vurgu işaretleri (BÜYÜK HARF, ..., !)
+#   - combined: Tek LLM çağrısında ikisi birden
+#
+# PromptManager'dan override edilebilir:
+#   key: narration_enhance_prompt (scope: module)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TTS_ENHANCE_PROMPT = """Sen bir TTS ses koçusun. Verilen narasyon metnine SADECE konuşma vurguları ekle.
+KELİMELERİ DEĞİŞTİRME, sadece biçim ekle.
+
+KURALLAR:
+1. Her cümlede 1-2 anahtar kelimeyi BÜYÜK HARF yap (vurgu için)
+2. Etkileyici ifadelerden önce ... ekle (dramatik duraklama)
+3. Heyecan veren cümlelerde ! kullan
+4. Nefes duraklamaları için virgül ekle
+5. / işaretini "veya" ile değiştir
+6. Orijinal kelimeleri DEĞİŞTİRME, sadece vurgulama işaretleri ekle
+
+SADECE düzenlenmiş metni döndür, başka bir şey yazma."""
+
+_SCRIPT_HUMANIZE_PROMPT = """Sen bir senaryo editörüsün. Verilen narasyon metnini doğal insan konuşmasına çevir.
+
+KURALLAR:
+1. Kısa ve uzun cümleleri karıştır, değişken ritim kullan
+2. AI klişelerini kaldır ("önemli", "dikkat çekici", "ilginç bir şekilde" vb.)
+3. Retorik sorular ve doğal duraklamalar ekle
+4. İzleyiciye "sen" diye hitap et
+5. Mevcut TTS işaretlerini (BÜYÜK HARF, ..., !) koru
+6. Yeni TTS işareti EKLEME
+7. / işaretini "veya" ile değiştir
+
+SADECE düzenlenmiş metni döndür, başka bir şey yazma."""
+
+_COMBINED_HUMANIZE_ENHANCE_PROMPT = """Sen hem senaryo editörü hem TTS ses koçusun.
+Verilen narasyon metnini iki adımda düzenle:
+
+BÖLÜM 1 — Doğallaştırma:
+1. Kısa ve uzun cümleleri karıştır, değişken ritim kullan
+2. AI klişelerini kaldır
+3. Retorik sorular ve doğal duraklamalar ekle
+4. İzleyiciye "sen" diye hitap et
+5. / işaretini "veya" ile değiştir
+
+BÖLÜM 2 — TTS Vurguları:
+6. Her cümlede 1-2 anahtar kelimeyi BÜYÜK HARF yap
+7. Etkileyici ifadelerden önce ... ekle
+8. Heyecan veren cümlelerde ! kullan
+9. Nefes duraklamaları için virgül ekle
+
+SADECE düzenlenmiş metni döndür, başka bir şey yazma."""
+
 
 _LANGUAGE_MAP = {
     "tr": "Türkçe",
@@ -288,6 +349,68 @@ async def step_tts(
     if not scenes:
         raise RuntimeError("Script'te sahne bulunamadı.")
 
+    # ── Narration Enhancement (YTRobot-v3 port) ──
+    # Senaryo narasyonlarını LLM ile iyileştir (opsiyonel).
+    # Hem humanize hem enhance aktifse tek combined çağrı yapılır.
+    humanize_on = config.get("narration_humanize_enabled", False)
+    enhance_on = config.get("narration_enhance_enabled", False)
+
+    if humanize_on or enhance_on:
+        # PromptManager override kontrolü
+        custom_prompt = (config.get("narration_enhance_prompt") or "").strip()
+
+        if custom_prompt:
+            enhancement_prompt = custom_prompt
+        elif humanize_on and enhance_on:
+            enhancement_prompt = _COMBINED_HUMANIZE_ENHANCE_PROMPT
+        elif humanize_on:
+            enhancement_prompt = _SCRIPT_HUMANIZE_PROMPT
+        else:
+            enhancement_prompt = _TTS_ENHANCE_PROMPT
+
+        log.info(
+            "Narration enhancement başlatılıyor",
+            humanize=humanize_on,
+            enhance=enhance_on,
+            scene_count=len(scenes),
+        )
+
+        for scene in scenes:
+            raw_narration = scene.get("narration", "").strip()
+            if not raw_narration:
+                continue
+
+            try:
+                enhance_result = await provider_registry.execute_with_fallback(
+                    category="llm",
+                    input_data={
+                        "prompt": raw_narration,
+                        "system_instruction": enhancement_prompt,
+                        "response_format": "text",
+                        "temperature": 0.4,
+                        "max_output_tokens": 2048,
+                    },
+                    config=config,
+                )
+
+                if enhance_result.success:
+                    enhanced_text = enhance_result.data.get("text", "").strip()
+                    if enhanced_text and len(enhanced_text) > 20:
+                        scene["narration"] = enhanced_text
+                        log.info(
+                            "Narration enhanced",
+                            scene=scene.get("scene_number"),
+                            original_len=len(raw_narration),
+                            enhanced_len=len(enhanced_text),
+                        )
+            except Exception as exc:
+                # Enhancement başarısız olursa orijinal narasyonla devam et
+                log.warning(
+                    "Narration enhancement atlandı",
+                    scene=scene.get("scene_number"),
+                    error=str(exc)[:200],
+                )
+
     voice = config.get("tts_voice") or _app_settings.default_tts_voice
 
     tts_results = []
@@ -307,10 +430,17 @@ async def step_tts(
         # özel karakterleri temizle. Subtitle ile aynı string gönderilmeli.
         tts_text = normalize_narration(narration)
 
+        # TTS'e özgü ek temizlik: apostrof kaldırma, akıllı tırnak düzeltme,
+        # üç nokta birleştirme. clean_for_tts sadece TTS girdisine uygulanır,
+        # altyazı metni hâlâ normalize_narration çıktısını kullanır.
+        # (YTRobot-v3/providers/tts/base.py::clean_for_tts port'u)
+        tts_clean_enabled = config.get("tts_clean_apostrophes", True)
+        tts_input_text = clean_for_tts(tts_text, remove_apostrophes=tts_clean_enabled)
+
         result = await provider_registry.execute_with_fallback(
             category="tts",
             input_data={
-                "text": tts_text,
+                "text": tts_input_text,
                 "voice": voice,
             },
             config=config,
@@ -330,6 +460,42 @@ async def step_tts(
         audio_filename = f"scene_{scene_num}.{audio_format}"
 
         cache.save_binary(step_key, audio_bytes, audio_filename)
+
+        # Baştaki sessizliği kırp — TTS motorları bazen baş kısma
+        # kısa sessizlik ekler, bu sahne geçişlerinde birikerek timing
+        # kaymasına neden olur. (YTRobot-v3/providers/tts/base.py::trim_silence port'u)
+        tts_trim_enabled = config.get("tts_trim_silence", True)
+        if tts_trim_enabled:
+            audio_file_path = cache.get_output_path(step_key, audio_filename)
+            if audio_file_path and audio_file_path.exists():
+                trim_silence(str(audio_file_path))
+
+        # Post-synthesis hız ayarı — Capability-aware karar.
+        # 1. Config flag (tts_apply_speed_post) açıksa → uygula
+        # 2. Config flag kapalı ama provider pre-synthesis hız desteklemiyorsa
+        #    → capability modeli üzerinden otomatik uygula
+        # Edge TTS pre-synthesis desteklediği için otomatik tetiklenmez.
+        provider_caps = get_tts_capabilities(provider_used)
+
+        tts_apply_speed_post = config.get("tts_apply_speed_post", False)
+        tts_speed = config.get("tts_speed", 1.0)
+        should_apply_speed = tts_apply_speed_post or (
+            provider_caps.requires_post_synthesis_speed
+            and not provider_caps.supports_pre_synthesis_speed
+        )
+
+        if should_apply_speed and abs(tts_speed - 1.0) >= 0.01:
+            audio_file_path = cache.get_output_path(step_key, audio_filename)
+            if audio_file_path and audio_file_path.exists():
+                applied = apply_speed(str(audio_file_path), tts_speed)
+                if applied:
+                    log.info(
+                        "Post-synthesis hız uygulandı",
+                        scene=scene_num,
+                        speed=tts_speed,
+                        reason="config_flag" if tts_apply_speed_post else "capability_auto",
+                        provider=provider_used,
+                    )
 
         # Word-timing verisi
         word_timings = tts_data.get("word_timings", [])

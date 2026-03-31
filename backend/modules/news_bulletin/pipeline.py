@@ -51,7 +51,8 @@ KURALLAR:
 - Senaryoyu tam olarak {scene_count} sahneye bol.
 - Ilk sahne bultene guclu bir acilis yapmali (giris + gundem ozeti).
 - Her sahne 12-20 saniyelik bir narasyon icermeli.
-- Her haber icin kaynak belirt.
+- Her haber icin kaynak belirt (news_source alani).
+- Her sahne icin uygun bir kategori belirt (category alani). Ornek kategoriler: Ekonomi, Siyaset, Teknoloji, Spor, Saglik, Kultur, Dunya, Gundem.
 - Her sahne icin uygun bir gorsel anahtar kelime oner (Ingilizce, stok video aramaya uygun).
 - Haberleri onem sirasina gore sirala.
 - Son sahne kapanis ve ozet olmali.
@@ -67,7 +68,8 @@ CIKTI FORMATI (JSON):
       "narration": "Sahne metni...",
       "visual_keyword": "keyword for stock video search",
       "duration_hint_seconds": 15,
-      "news_source": "kaynak adi veya URL"
+      "news_source": "kaynak adi veya URL",
+      "category": "Ekonomi"
     }}
   ]
 }}
@@ -163,9 +165,26 @@ async def step_script_bulletin(
     language_name = _LANGUAGE_MAP.get(language, language)
 
     # ---- URL listesini config'den al -----------------------------------
-    news_urls: list[str] = config.get("_news_urls", []) or config.get(
-        "news_sources", []
-    )
+    # Öncelik: job-level _news_urls > config news_sources > DB'deki aktif kaynaklar
+    news_urls: list[str] = config.get("_news_urls", []) or config.get("news_sources", [])
+
+    # Hiç URL yoksa DB'deki aktif haber kaynaklarını kullan
+    if not news_urls:
+        db = config.get("_db")
+        if db is not None:
+            try:
+                from backend.models.news_source import NewsSource
+                db_sources = (
+                    db.query(NewsSource)
+                    .filter(NewsSource.enabled == True)  # noqa: E712
+                    .order_by(NewsSource.sort_order, NewsSource.id)
+                    .all()
+                )
+                news_urls = [s.url for s in db_sources]
+                if news_urls:
+                    log.info("DB'den aktif haber kaynakları yüklendi", count=len(news_urls))
+            except Exception as exc:
+                log.warning("DB haber kaynakları yüklenemedi", error=str(exc))
 
     # ---- URL'lerden icerik cek -----------------------------------------
     fetched_articles: list[dict[str, str]] = []

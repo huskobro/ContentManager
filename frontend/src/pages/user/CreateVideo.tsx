@@ -6,10 +6,16 @@
  *   2. Konu/konular girer (her satır = bir video → batch üretim)
  *   3. Video formatını seçer (long 16:9 / shorts 9:16)
  *   4. Dil seçer
- *   5. (Opsiyonel) Gelişmiş ayarlar
- *   6. "Başlat" → her satır için POST /api/jobs → JobList'e yönlendirilir
+ *   5. Modüle özgü alanlar (product_review: fiyat/puan/yorumlar; news_bulletin: breaking/network)
+ *   6. (Opsiyonel) Gelişmiş ayarlar
+ *   7. "Başlat" → her satır için POST /api/jobs → JobList'e yönlendirilir
  *
  * URL query parametresi: ?module=standard_video → modülü önceden seçer
+ *
+ * Admin default → user override zinciri:
+ *   - fetchResolvedSettings(moduleKey) backend'den 5-katmanlı çözümlenmiş değerleri çeker
+ *   - userDefaults ile form state'i önceden dolar
+ *   - Kullanıcı değiştirirse settings_overrides payload'a eklenir
  */
 
 import { useState, useEffect } from "react";
@@ -27,6 +33,11 @@ import {
   MonitorPlay,
   Smartphone,
   Lock,
+  DollarSign,
+  Star,
+  MessageSquare,
+  AlertTriangle,
+  Tv2,
 } from "lucide-react";
 import { useJobStore } from "@/stores/jobStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -97,12 +108,33 @@ export default function CreateVideo() {
   const [ttsProvider, setTtsProvider] = useState(userDefaults.ttsProvider || "edge_tts");
   const [subtitleStyle, setSubtitleStyle] = useState(userDefaults.subtitleStyle || "standard");
 
+  // ── Product Review modül alanları ──────────────────────────────────────────
+  // Fiyat Grubu
+  const [reviewPriceEnabled, setReviewPriceEnabled] = useState(false);
+  const [productPrice, setProductPrice] = useState("");
+  const [productOriginalPrice, setProductOriginalPrice] = useState("");
+  const [productCurrency, setProductCurrency] = useState("TL");
+  // Puan Grubu
+  const [reviewStarEnabled, setReviewStarEnabled] = useState(false);
+  const [productStarRating, setProductStarRating] = useState("");
+  const [productReviewCount, setProductReviewCount] = useState("");
+  // Yorumlar Grubu
+  const [reviewCommentsEnabled, setReviewCommentsEnabled] = useState(false);
+  const [productTopComments, setProductTopComments] = useState("");
+  // Ürün bilgisi
+  const [productName, setProductName] = useState("");
+
+  // ── News Bulletin modül alanları ───────────────────────────────────────────
+  const [breakingEnabled, setBreakingEnabled] = useState(false);
+  const [breakingText, setBreakingText] = useState("");
+  const [networkName, setNetworkName] = useState("");
+
   // UI state
   const [submitting, setSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState<{ done: number; total: number } | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Ayarları backend'den yükle; her modül değişiminde yenile (stale localStorage sorununu önler)
+  // Ayarları backend'den yükle; her modül değişiminde yenile
   useEffect(() => {
     fetchResolvedSettings(selectedModule);
   }, [selectedModule]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -148,6 +180,50 @@ export default function CreateVideo() {
     };
     if (ttsProvider !== userDefaults.ttsProvider) overrides.tts_provider = ttsProvider;
     if (subtitleStyle !== userDefaults.subtitleStyle) overrides.subtitle_style = subtitleStyle;
+
+    // ── Product Review overrides ──────────────────────────────────────────
+    if (selectedModule === "product_review") {
+      if (productName.trim()) {
+        overrides._product_name = productName.trim();
+      }
+      overrides.review_price_enabled = reviewPriceEnabled;
+      if (reviewPriceEnabled && productPrice.trim()) {
+        const priceNum = parseFloat(productPrice.replace(/,/g, "."));
+        if (!isNaN(priceNum)) overrides._product_price = priceNum;
+        const origNum = productOriginalPrice.trim()
+          ? parseFloat(productOriginalPrice.replace(/,/g, "."))
+          : null;
+        if (origNum !== null && !isNaN(origNum)) overrides._product_original_price = origNum;
+        overrides._product_currency = productCurrency.trim() || "TL";
+      }
+      overrides.review_star_rating_enabled = reviewStarEnabled;
+      if (reviewStarEnabled && productStarRating.trim()) {
+        const starNum = parseFloat(productStarRating.replace(/,/g, "."));
+        if (!isNaN(starNum)) overrides._product_star_rating = Math.min(5, Math.max(0, starNum));
+        const countNum = productReviewCount.trim() ? parseInt(productReviewCount, 10) : null;
+        if (countNum !== null && !isNaN(countNum)) overrides._product_review_count = countNum;
+      }
+      overrides.review_comments_enabled = reviewCommentsEnabled;
+      if (reviewCommentsEnabled && productTopComments.trim()) {
+        const lines = productTopComments
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0)
+          .slice(0, 5);
+        if (lines.length > 0) overrides._product_top_comments = lines;
+      }
+    }
+
+    // ── News Bulletin overrides ───────────────────────────────────────────
+    if (selectedModule === "news_bulletin") {
+      overrides.bulletin_breaking_enabled = breakingEnabled;
+      if (breakingEnabled && breakingText.trim()) {
+        overrides.bulletin_breaking_text = breakingText.trim();
+      }
+      if (networkName.trim()) {
+        overrides.bulletin_network_name = networkName.trim();
+      }
+    }
 
     let successCount = 0;
     let lastJobId: string | null = null;
@@ -359,6 +435,274 @@ export default function CreateVideo() {
             ))}
           </select>
         </div>
+
+        {/* ── Ürün İnceleme Modül Alanları ────────────────────────────────── */}
+        {selectedModule === "product_review" && (
+          <div className="space-y-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+            <div className="flex items-center gap-2">
+              <ShoppingBag size={16} className="text-emerald-400" />
+              <span className="text-sm font-semibold text-foreground">Ürün Bilgileri</span>
+              <span className="text-xs text-muted-foreground">(opsiyonel — video görsellerini zenginleştirir)</span>
+            </div>
+
+            {/* Ürün adı */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground">Ürün Adı</label>
+              <input
+                type="text"
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                placeholder="Örn: Sony WH-1000XM5"
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="text-[11px] text-muted-foreground">Score ring ve bölüm etiketlerinde gösterilir.</p>
+            </div>
+
+            {/* Pricing grubu */}
+            <div className="space-y-2 rounded-lg border border-border bg-background/50 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <DollarSign size={14} className="text-emerald-400" />
+                  <span className="text-xs font-semibold text-foreground">Fiyat Badge'i</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewPriceEnabled(!reviewPriceEnabled)}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                    reviewPriceEnabled ? "bg-emerald-500" : "bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                      reviewPriceEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                    )}
+                  />
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Verdict sahnesinde animasyonlu fiyat sayacı gösterir.
+              </p>
+              {reviewPriceEnabled && (
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-muted-foreground">Fiyat *</label>
+                    <input
+                      type="number"
+                      value={productPrice}
+                      onChange={(e) => setProductPrice(e.target.value)}
+                      placeholder="8499"
+                      min={0}
+                      className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-muted-foreground">Eski Fiyat</label>
+                    <input
+                      type="number"
+                      value={productOriginalPrice}
+                      onChange={(e) => setProductOriginalPrice(e.target.value)}
+                      placeholder="10999"
+                      min={0}
+                      className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-muted-foreground">Para Birimi</label>
+                    <select
+                      value={productCurrency}
+                      onChange={(e) => setProductCurrency(e.target.value)}
+                      className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="TL">TL</option>
+                      <option value="USD">USD</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Rating grubu */}
+            <div className="space-y-2 rounded-lg border border-border bg-background/50 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Star size={14} className="text-amber-400" />
+                  <span className="text-xs font-semibold text-foreground">Yıldız Puanı</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewStarEnabled(!reviewStarEnabled)}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                    reviewStarEnabled ? "bg-amber-500" : "bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                      reviewStarEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                    )}
+                  />
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Verdict sahnesinde 5 yıldızlı animasyonlu puan gösterir.
+              </p>
+              {reviewStarEnabled && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-muted-foreground">Puan (0–5) *</label>
+                    <input
+                      type="number"
+                      value={productStarRating}
+                      onChange={(e) => setProductStarRating(e.target.value)}
+                      placeholder="4.7"
+                      min={0}
+                      max={5}
+                      step={0.1}
+                      className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-muted-foreground">Yorum Sayısı</label>
+                    <input
+                      type="number"
+                      value={productReviewCount}
+                      onChange={(e) => setProductReviewCount(e.target.value)}
+                      placeholder="2341"
+                      min={0}
+                      className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Comments grubu */}
+            <div className="space-y-2 rounded-lg border border-border bg-background/50 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MessageSquare size={14} className="text-blue-400" />
+                  <span className="text-xs font-semibold text-foreground">Yüzen Yorumlar</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewCommentsEnabled(!reviewCommentsEnabled)}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                    reviewCommentsEnabled ? "bg-blue-500" : "bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                      reviewCommentsEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                    )}
+                  />
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Overview/Pros sahnelerinde yüzen yorum kartları. Boş bırakılırsa LLM üretmeye çalışır.
+              </p>
+              {reviewCommentsEnabled && (
+                <div className="mt-2 space-y-1">
+                  <label className="text-[11px] text-muted-foreground">
+                    Yorumlar (her satır = bir yorum, maks 5)
+                  </label>
+                  <textarea
+                    value={productTopComments}
+                    onChange={(e) => setProductTopComments(e.target.value)}
+                    placeholder={"Gürültü engelleme inanılmaz!\nPil ömrü çok uzun.\nFiyatına değer kesinlikle."}
+                    rows={3}
+                    className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring resize-none"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Haber Bülteni Modül Alanları ─────────────────────────────────── */}
+        {selectedModule === "news_bulletin" && (
+          <div className="space-y-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+            <div className="flex items-center gap-2">
+              <Newspaper size={16} className="text-amber-400" />
+              <span className="text-sm font-semibold text-foreground">Bülten Ayarları</span>
+              <span className="text-xs text-muted-foreground">(opsiyonel)</span>
+            </div>
+
+            {/* Yayın ağı adı */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <Tv2 size={13} className="text-amber-400" />
+                <label className="text-xs font-medium text-foreground">Yayın Ağı Adı</label>
+              </div>
+              <input
+                type="text"
+                value={networkName}
+                onChange={(e) => setNetworkName(e.target.value)}
+                placeholder="Örn: ContentManager Haber"
+                maxLength={60}
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Breaking news overlay badge'inde ve bülten ekranında gösterilir. Boş bırakılabilir.
+              </p>
+            </div>
+
+            {/* Son dakika overlay grubu */}
+            <div className="space-y-2 rounded-lg border border-border bg-background/50 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-red-400" />
+                  <span className="text-xs font-semibold text-foreground">Son Dakika Overlay</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBreakingEnabled(!breakingEnabled)}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                    breakingEnabled ? "bg-red-500" : "bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                      breakingEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                    )}
+                  />
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Videonun başında kırmızı SON DAKİKA flash overlay gösterir.
+              </p>
+              {breakingEnabled && (
+                <div className="mt-2 space-y-1">
+                  <label className="text-[11px] text-muted-foreground">Son Dakika Başlığı *</label>
+                  <input
+                    type="text"
+                    value={breakingText}
+                    onChange={(e) => setBreakingText(e.target.value)}
+                    placeholder="Örn: ACİL HABER"
+                    maxLength={80}
+                    className="w-full rounded border border-border bg-input px-2 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Kısa ve vurucu bir başlık girin. Aşırı uzun başlıklar composition'da kesilebilir.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <p className="text-[11px] text-muted-foreground/70">
+              💡 Kategori→stil eşleşmesi aktifse bülten görsel stili sahne kategorilerine göre otomatik seçilir.
+              Admin paneli → Kategori Stil Eşleşmeleri'nden özelleştirilebilir.
+            </p>
+          </div>
+        )}
 
         {/* Gelişmiş ayarlar toggle */}
         <button

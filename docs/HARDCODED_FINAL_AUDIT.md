@@ -1,18 +1,17 @@
-# Hardcoded Final Audit
+# Sabit Kodlu Değerler — Final Denetimi
 _Created: 2026-03-31 — Comprehensive inventory of all hardcoded values and their wiring status._
 _Covers backend pipeline, module configs, provider defaults, and frontend schema defaults._
 
 ---
 
-## Purpose
+## Amaç
 
-This document is the authoritative record of every value in the system that is either:
-- **hardcoded** (not reachable via admin panel or `.env`)
-- **stale/wrong** (was hardcoded incorrectly and has since been fixed)
-- **technically valid fallback** (hardcoded as a last resort, correct value, but not configurable)
+Bu doküman, sistemdeki şu durumlardaki her değerin yetkili kaydıdır:
+- **sabit kodlu** (admin paneli veya `.env` üzerinden erişilemeyen)
+- **eski/hatalı** (yanlış sabit kodlanmış ve o zamandan beri düzeltilmiş)
+- **teknik açıdan geçerli geri dönüş** (son çare olarak sabit kodlanmış, doğru değer, ancak yapılandırılamaz)
 
-It supplements `ADMIN_CONTROLS_MAP.md` (which maps wired admin controls) and
-`SYSTEM_CHAINS_MAP.md` (which documents pipeline data flows).
+`ADMIN_CONTROLS_MAP.md`'yi (bağlı admin kontrollerini eşler) ve `SYSTEM_CHAINS_MAP.md`'yi (pipeline veri akışlarını belgeler) tamamlar.
 
 ---
 
@@ -29,13 +28,13 @@ It supplements `ADMIN_CONTROLS_MAP.md` (which maps wired admin controls) and
 
 ---
 
-## Part 1: TTS Voice Resolution Chain
+## Bölüm 1: TTS Ses Çözümleme Zinciri
 
-The voice resolution was audited and fixed in two passes (2026-03-31).
+Ses çözümleme iki geçişte denetlendi ve düzeltildi (2026-03-31).
 
-### Current State (post-fix)
+### Mevcut Durum (düzeltme sonrası)
 
-**Resolution order (highest priority wins):**
+**Çözümleme sırası (en yüksek öncelik kazanır):**
 
 ```
 1. input_data["voice"]     — direct caller override (per-request)
@@ -62,11 +61,11 @@ The voice resolution was audited and fixed in two passes (2026-03-31).
 
 ---
 
-## Part 2: Admin Panel Controls — Full Inventory
+## Bölüm 2: Admin Paneli Kontrolleri — Tam Envanter
 
-All controls listed in `SYSTEM_SETTINGS_SCHEMA` and `PROMPT_SETTINGS_SCHEMA` in `constants.ts`.
+`constants.ts` içindeki `SYSTEM_SETTINGS_SCHEMA` ve `PROMPT_SETTINGS_SCHEMA`'da listelenen tüm kontroller.
 
-### System Settings
+### Sistem Ayarları
 
 | Key | Admin UI | DB Saved | Resolver | Pipeline | Status |
 |-----|----------|----------|----------|----------|--------|
@@ -76,7 +75,7 @@ All controls listed in `SYSTEM_SETTINGS_SCHEMA` and `PROMPT_SETTINGS_SCHEMA` in 
 | `language` | ✓ | ✓ | ✓ | ✓ (script, tts, subtitles) | ✅ WIRED |
 | `job_timeout_seconds` | ✓ | ✓ | ✓ | ✓ (job_manager) | ✅ WIRED |
 
-### Pipeline Defaults
+### Pipeline Varsayılanları
 
 | Key | Admin UI | DB Saved | Resolver | Pipeline | Status |
 |-----|----------|----------|----------|----------|--------|
@@ -88,7 +87,7 @@ All controls listed in `SYSTEM_SETTINGS_SCHEMA` and `PROMPT_SETTINGS_SCHEMA` in 
 | `tts_fallback_order` | ✓ | ✓ | ✓ | ✓ | ✅ WIRED |
 | `visuals_fallback_order` | ✓ | ✓ | ✓ | ✓ | ✅ WIRED |
 
-### Script Settings
+### Senaryo Ayarları
 
 | Key | Admin UI | DB Saved | Resolver | Pipeline | Status |
 |-----|----------|----------|----------|----------|--------|
@@ -98,7 +97,7 @@ All controls listed in `SYSTEM_SETTINGS_SCHEMA` and `PROMPT_SETTINGS_SCHEMA` in 
 | `script_temperature` | ✓ | ✓ | ✓ | ✓ | ✅ WIRED |
 | `script_max_tokens` | ✓ | ✓ | ✓ | ✓ | ✅ WIRED |
 
-### Video & Audio Settings
+### Video & Ses Ayarları
 
 | Key | Admin UI | DB Saved | Resolver | Pipeline | Status |
 |-----|----------|----------|----------|----------|--------|
@@ -111,7 +110,7 @@ All controls listed in `SYSTEM_SETTINGS_SCHEMA` and `PROMPT_SETTINGS_SCHEMA` in 
 | `ken_burns_enabled` | ✓ | ✓ | ✓ | ✓ | ✅ WIRED |
 | `ken_burns_intensity` | ✓ | ✓ | ✓ | ✓ | ✅ WIRED |
 
-### Prompt Templates
+### Prompt Şablonları
 
 | Key | Admin UI | DB Saved | Resolver (alias) | Pipeline | Status |
 |-----|----------|----------|----------|----------|--------|
@@ -124,12 +123,11 @@ All controls listed in `SYSTEM_SETTINGS_SCHEMA` and `PROMPT_SETTINGS_SCHEMA` in 
 
 ---
 
-## Part 3: Not-Configurable Hardcoded Values (Acceptable)
+## Bölüm 3: Yapılandırılamaz Sabit Kodlu Değerler (Kabul Edilebilir)
 
-Values that are hardcoded and cannot be changed via admin panel. All are
-technically correct and acceptable design decisions for the current scope.
+Admin paneli üzerinden değiştirilemeyen sabit kodlu değerler. Tamamı teknik açıdan doğru ve mevcut kapsam için kabul edilebilir tasarım kararlarıdır.
 
-### Script System
+### Senaryo Sistemi
 
 | Value | File | Configurable? | Decision |
 |-------|------|--------------|----------|
@@ -138,14 +136,14 @@ technically correct and acceptable design decisions for the current scope.
 | Hook exclusion window: last 6 hooks avoided | `pipeline/steps/script.py` | ❌ No | ⚠ TECHNICAL FALLBACK — prevents repetition |
 | Default title fallback: `"Yapay Zekanın Geleceği"` | `pipeline/steps/script.py` | ❌ No | ⚠ TECHNICAL FALLBACK — only used when `_job_title` missing (shouldn't happen in normal flow) |
 
-### TTS / Audio
+### TTS / Ses
 
 | Value | File | Configurable? | Decision |
 |-------|------|--------------|----------|
 | Audio filename pattern: `scene_{NN}.mp3` | `standard_video/pipeline.py` | ❌ No | ⚠ TECHNICAL FALLBACK — internal naming convention |
 | `tts_speed` only affects Edge TTS | `edge_tts_provider.py` | Partial | ⚠ TECHNICAL FALLBACK — ElevenLabs/OpenAI providers don't implement this key |
 
-### Subtitles
+### Altyazılar
 
 | Value | File | Configurable? | Decision |
 |-------|------|--------------|----------|
@@ -156,7 +154,7 @@ technically correct and acceptable design decisions for the current scope.
 | Default `duration_seconds` per scene if TTS absent: `15.0` | `pipeline/steps/subtitles.py` | ❌ No | ⚠ TECHNICAL FALLBACK |
 | Whisper HTTP timeout: `120.0s` | `pipeline/steps/subtitles.py` | ❌ No | ⚠ TECHNICAL FALLBACK |
 
-### Composition
+### Kompozisyon
 
 | Value | File | Configurable? | Decision |
 |-------|------|--------------|----------|
@@ -165,7 +163,7 @@ technically correct and acceptable design decisions for the current scope.
 | `DEFAULT_SCENE_DURATION = 5.0s` | `pipeline/steps/composition.py` | ❌ No | ⚠ TECHNICAL FALLBACK — when TTS duration absent |
 | Temp file server timeout `120s` | `pipeline/steps/composition.py` | ❌ No | ⚠ TECHNICAL FALLBACK |
 
-### Provider
+### Sağlayıcı
 
 | Value | File | Configurable? | Decision |
 |-------|------|--------------|----------|
@@ -176,9 +174,9 @@ technically correct and acceptable design decisions for the current scope.
 
 ---
 
-## Part 4: Visible But Not Wired (📌 VISIBLE BUT DISABLED)
+## Bölüm 4: Görünür Ama Bağlı Değil (📌 GÖRÜNÜR AMA DEVRE DIŞI)
 
-These settings appear in the UI but have no pipeline effect. Documented and disclosed to user.
+Bu ayarlar UI'da görünür ancak pipeline üzerinde hiçbir etkisi yoktur. Belgelenmiş ve kullanıcıya açıklanmıştır.
 
 | Setting | Location | Effect | Status |
 |---------|----------|--------|--------|
@@ -192,9 +190,9 @@ These settings appear in the UI but have no pipeline effect. Documented and disc
 
 ---
 
-## Part 5: Dashboard Interaction Model — Verification Summary
+## Bölüm 5: Dashboard Etkileşim Modeli — Doğrulama Özeti
 
-Code-path trace performed 2026-03-31. All 8 behaviors verified by static analysis.
+Kod yolu izi 2026-03-31 tarihinde gerçekleştirildi. Tüm 8 davranış statik analizle doğrulandı.
 
 | # | Behavior | Implementation | Result |
 |---|----------|---------------|--------|
@@ -207,13 +205,13 @@ Code-path trace performed 2026-03-31. All 8 behaviors verified by static analysi
 | 7 | Hover → klavye odak sync | `onMouseEnter → setFocusedIdx(idx)`, `lastWasKeyboardRef=false` → no DOM focus() on hover | ✅ |
 | 8 | ARIA/role | `role="listbox"` + `aria-activedescendant`, `role="option"` + `aria-selected/setsize/posinset` + roving tabindex | ✅ |
 
-**Critical path safety check:**
+**Kritik yol güvenlik kontrolü:**
 - `anyPanelOpen=true` → `disabled=true` in `useScopedKeyboardNavigation` → scope popped from stack → `isActive()=false` → keyboard handler does NOT fire while panel is open ✅
 - `useDismissOnEsc` runs in capture phase (priority over Radix) — Radix's own ESC handler sets `defaultPrevented=true` for its dialogs, so our handler only fires for non-Radix panels ✅
 
 ---
 
-## Part 6: Summary of Changes Made in This Audit
+## Bölüm 6: Bu Denetimde Yapılan Değişikliklerin Özeti
 
 | File | Change | Type |
 |------|--------|------|
@@ -225,7 +223,7 @@ Code-path trace performed 2026-03-31. All 8 behaviors verified by static analysi
 
 ---
 
-## Part 7: Remaining Risks
+## Bölüm 7: Kalan Riskler
 
 | Risk | Level | Description |
 |------|-------|-------------|

@@ -28,6 +28,12 @@ export interface UserVideoDefaults {
   thumbnailEnabled: boolean;
   publishToYoutube: boolean;
   youtubePrivacy: "private" | "unlisted" | "public";
+  // ── Phase 2: Kullanıcı override edilebilir görsel ayarlar ─────────────
+  subtitleAnimation: string;  // "none" | "hype" | "explosive" | "vibrant" | "minimal_anim"
+  subtitleFont: string;       // "inter" | "roboto" | "montserrat" | "oswald" | "bebas" | "serif" | "sans"
+  subtitleBg: string;         // "none" | "box" | "pill"
+  kenBurnsDirection: string;  // "center" | "pan-left" | "pan-right" | "random"
+  videoEffect: string;        // "none" | "vignette" | "warm" | "cool" | "cinematic"
 }
 
 interface ResolvedSettingsResponse {
@@ -81,6 +87,12 @@ const DEFAULT_USER_SETTINGS: UserVideoDefaults = {
   thumbnailEnabled: false,
   publishToYoutube: false,
   youtubePrivacy: "private",
+  // Phase 2
+  subtitleAnimation: "none",
+  subtitleFont: "inter",
+  subtitleBg: "none",
+  kenBurnsDirection: "center",
+  videoEffect: "none",
 };
 
 // ─── Yardımcı: Backend ayarlarını UserVideoDefaults'a eşle ──────────────────
@@ -98,6 +110,12 @@ function mapResolvedToDefaults(
   if (typeof resolved.video_resolution === "string") mapped.videoResolution = resolved.video_resolution;
   if (typeof resolved.video_fps === "number") mapped.videoFps = resolved.video_fps;
   if (typeof resolved.video_format === "string") mapped.videoFormat = resolved.video_format;
+  // Phase 2
+  if (typeof resolved.subtitle_animation === "string") mapped.subtitleAnimation = resolved.subtitle_animation;
+  if (typeof resolved.subtitle_font === "string") mapped.subtitleFont = resolved.subtitle_font;
+  if (typeof resolved.subtitle_bg === "string") mapped.subtitleBg = resolved.subtitle_bg;
+  if (typeof resolved.ken_burns_direction === "string") mapped.kenBurnsDirection = resolved.ken_burns_direction;
+  if (typeof resolved.video_effect === "string") mapped.videoEffect = resolved.video_effect;
 
   return mapped;
 }

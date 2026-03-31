@@ -11,11 +11,18 @@ import {
   spring,
 } from "remotion";
 import { Subtitles } from "../components/Subtitles";
+import { PriceBadge } from "../components/PriceBadge";
+import { StarRating } from "../components/StarRating";
+import { FloatingComments } from "../components/FloatingComments";
+import { useLayout } from "../components/useLayout";
 import type {
   ProductReviewProps,
   ReviewSection,
   SubtitleChunk,
   SubtitleStyle,
+  SubtitleAnimation,
+  SubtitleFont,
+  ProductReviewStyle,
 } from "../types";
 
 const SECTION_COLORS: Record<string, string> = {
@@ -54,14 +61,13 @@ const SectionBadge: React.FC<{
   frame: number;
   fps: number;
 }> = ({ color, label, icon, frame, fps }) => {
-  const slideX = interpolate(frame, [0, BADGE_SLIDE_FRAMES], [-120, 0], {
-    extrapolateRight: "clamp",
-    extrapolateLeft: "clamp",
+  // Spring-based entrance (YTRobot-v3 pattern)
+  const enterSpring = spring({
+    frame,
+    fps,
+    config: { damping: 14, stiffness: 180 },
   });
-  const opacity = interpolate(frame, [0, BADGE_SLIDE_FRAMES], [0, 1], {
-    extrapolateRight: "clamp",
-    extrapolateLeft: "clamp",
-  });
+  const slideX = interpolate(enterSpring, [0, 1], [-120, 0]);
 
   return (
     <div
@@ -79,7 +85,7 @@ const SectionBadge: React.FC<{
         backgroundColor: `${color}22`,
         border: `1.5px solid ${color}55`,
         transform: `translateX(${slideX}px)`,
-        opacity,
+        opacity: enterSpring,
       }}
     >
       <span style={{ fontSize: 14 }}>{icon}</span>
@@ -93,6 +99,9 @@ const ScoreRing: React.FC<{
   frame: number;
   fps: number;
 }> = ({ score, frame, fps }) => {
+  const layout = useLayout();
+  const sr = layout.scoreRing;
+
   const animatedScore = interpolate(frame, [0, SCORE_ANIM_FRAMES], [0, score], {
     extrapolateRight: "clamp",
     extrapolateLeft: "clamp",
@@ -105,14 +114,19 @@ const ScoreRing: React.FC<{
     { extrapolateRight: "clamp", extrapolateLeft: "clamp" }
   );
 
-  const circumference = 2 * Math.PI * 70;
+  const circumference = 2 * Math.PI * sr.radius;
   const strokeDashoffset = circumference * (1 - progress);
+  const center = sr.size / 2;
 
   const scaleSpring = spring({
     frame,
     fps,
     config: { damping: 12, stiffness: 80, mass: 0.8 },
   });
+
+  // Glow pulse on gauge (YTRobot-v3/ScoreCard.tsx port)
+  const glowIntensity = 0.3 + 0.2 * Math.sin((frame / fps) * Math.PI * 2);
+  const scoreColor = score >= 8 ? "#10b981" : score >= 6 ? "#f59e0b" : score >= 4 ? "#f97316" : "#ef4444";
 
   return (
     <div
@@ -122,34 +136,35 @@ const ScoreRing: React.FC<{
         alignItems: "center",
         justifyContent: "center",
         transform: `scale(${scaleSpring})`,
+        filter: `drop-shadow(0 0 ${8 + glowIntensity * 12}px ${scoreColor}66)`,
       }}
     >
-      <div style={{ position: "relative", width: 180, height: 180 }}>
+      <div style={{ position: "relative", width: sr.size, height: sr.size }}>
         <svg
-          width={180}
-          height={180}
-          viewBox="0 0 180 180"
+          width={sr.size}
+          height={sr.size}
+          viewBox={`0 0 ${sr.size} ${sr.size}`}
           style={{ position: "absolute", top: 0, left: 0 }}
         >
           <circle
-            cx={90}
-            cy={90}
-            r={70}
+            cx={center}
+            cy={center}
+            r={sr.radius}
             fill="none"
             stroke="rgba(255,255,255,0.1)"
-            strokeWidth={8}
+            strokeWidth={sr.strokeWidth}
           />
           <circle
-            cx={90}
-            cy={90}
-            r={70}
+            cx={center}
+            cy={center}
+            r={sr.radius}
             fill="none"
-            stroke="#f59e0b"
-            strokeWidth={8}
+            stroke={scoreColor}
+            strokeWidth={sr.strokeWidth}
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
-            transform="rotate(-90 90 90)"
+            transform={`rotate(-90 ${center} ${center})`}
           />
         </svg>
         <div
@@ -164,9 +179,9 @@ const ScoreRing: React.FC<{
         >
           <span
             style={{
-              fontSize: 48,
+              fontSize: sr.scoreFontSize,
               fontWeight: 800,
-              color: "#f59e0b",
+              color: scoreColor,
               lineHeight: 1,
             }}
           >
@@ -174,7 +189,7 @@ const ScoreRing: React.FC<{
           </span>
           <span
             style={{
-              fontSize: 16,
+              fontSize: sr.divisionFontSize,
               color: "#94a3b8",
               fontWeight: 600,
               marginTop: 4,
@@ -263,6 +278,15 @@ const SectionRenderer: React.FC<{
   subtitleChunk: SubtitleChunk | undefined;
   subtitleStyle: SubtitleStyle;
   durationFrames: number;
+  subtitleAnimation?: SubtitleAnimation;
+  subtitleFont?: SubtitleFont;
+  price?: number;
+  originalPrice?: number;
+  currency?: string;
+  starRating?: number;
+  reviewCount?: number;
+  topComments?: string[];
+  reviewStyle?: ProductReviewStyle;
 }> = ({
   section,
   idx,
@@ -272,9 +296,19 @@ const SectionRenderer: React.FC<{
   subtitleChunk,
   subtitleStyle,
   durationFrames,
+  subtitleAnimation,
+  subtitleFont,
+  price,
+  originalPrice,
+  currency = "TL",
+  starRating,
+  reviewCount,
+  topComments,
+  reviewStyle = "modern",
 }) => {
   const { fps } = useVideoConfig();
   const frame = useCurrentFrame();
+  const layout = useLayout();
   const color = SECTION_COLORS[section.type] || "#64748b";
   const label = SECTION_LABELS[section.type] || section.type;
   const icon = SECTION_ICONS[section.type] || "●";
@@ -306,11 +340,11 @@ const SectionRenderer: React.FC<{
       <div
         style={{
           position: "absolute",
-          top: 24,
-          left: 28,
+          top: layout.safeArea.top + Math.round(4 * layout.scale),
+          left: layout.safeArea.left + Math.round(4 * layout.scale),
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: Math.round(8 * layout.scale),
         }}
       >
         <SectionBadge
@@ -325,27 +359,27 @@ const SectionRenderer: React.FC<{
       <div
         style={{
           position: "absolute",
-          top: 24,
-          right: 28,
+          top: layout.safeArea.top + Math.round(4 * layout.scale),
+          right: layout.safeArea.right + Math.round(4 * layout.scale),
           display: "flex",
           flexDirection: "column",
           alignItems: "flex-end",
-          gap: 4,
+          gap: Math.round(4 * layout.scale),
         }}
       >
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 10,
+            gap: Math.round(10 * layout.scale),
           }}
         >
-          <span style={{ fontSize: 14, color: "#94a3b8", fontWeight: 500 }}>
+          <span style={{ fontSize: Math.round(14 * layout.scale), color: "#94a3b8", fontWeight: 500 }}>
             {productName}
           </span>
           <span
             style={{
-              fontSize: 15,
+              fontSize: Math.round(15 * layout.scale),
               fontWeight: 700,
               color: "#f59e0b",
             }}
@@ -355,7 +389,7 @@ const SectionRenderer: React.FC<{
         </div>
         <span
           style={{
-            fontSize: 11,
+            fontSize: layout.overlay.counterFontSize,
             color: "#64748b",
             fontWeight: 500,
           }}
@@ -368,17 +402,17 @@ const SectionRenderer: React.FC<{
         <div
           style={{
             position: "absolute",
-            top: "35%",
-            left: "8%",
-            right: "8%",
+            top: layout.proCon.topPosition,
+            left: layout.proCon.horizontalPadding,
+            right: layout.proCon.horizontalPadding,
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: Math.round(12 * layout.scale),
           }}
         >
           <span
             style={{
-              fontSize: 32,
+              fontSize: layout.proCon.iconFontSize,
               fontWeight: 800,
               color: color,
             }}
@@ -387,7 +421,7 @@ const SectionRenderer: React.FC<{
           </span>
           <span
             style={{
-              fontSize: 28,
+              fontSize: layout.proCon.headingFontSize,
               fontWeight: 700,
               color: "#fff",
             }}
@@ -401,14 +435,34 @@ const SectionRenderer: React.FC<{
         <div
           style={{
             position: "absolute",
-            top: "25%",
+            top: layout.scoreRing.topPosition,
             left: 0,
             right: 0,
             display: "flex",
-            justifyContent: "center",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: Math.round(16 * layout.scale),
           }}
         >
           <ScoreRing score={overallScore} frame={frame} fps={fps} />
+
+          {/* Star rating — verdict sahnesinde score ring altinda */}
+          {starRating != null && starRating > 0 && (
+            <StarRating
+              rating={starRating}
+              reviewCount={reviewCount}
+              starSize={layout.starRating.starSize}
+            />
+          )}
+
+          {/* Price badge — verdict sahnesinde star rating altinda */}
+          {price != null && price > 0 && (
+            <PriceBadge
+              price={price}
+              originalPrice={originalPrice}
+              currency={currency}
+            />
+          )}
         </div>
       )}
 
@@ -416,15 +470,15 @@ const SectionRenderer: React.FC<{
         <div
           style={{
             position: "absolute",
-            bottom: 120,
-            left: "8%",
-            right: "8%",
+            bottom: Math.round(layout.isVertical ? 180 : 120) * layout.scale,
+            left: layout.proCon.horizontalPadding,
+            right: layout.proCon.horizontalPadding,
             textAlign: "center",
           }}
         >
           <div
             style={{
-              fontSize: 22,
+              fontSize: Math.round(22 * layout.scale),
               fontWeight: 700,
               color: "#fff",
               textShadow: "0 2px 8px rgba(0,0,0,0.6)",
@@ -435,12 +489,25 @@ const SectionRenderer: React.FC<{
         </div>
       )}
 
+      {/* Floating comments — overview ve pros sahnelerinde */}
+      {(section.type === "overview" || section.type === "pros") &&
+        topComments &&
+        topComments.length > 0 && (
+          <FloatingComments
+            comments={topComments}
+            style={reviewStyle}
+            stagger={40}
+          />
+        )}
+
       {subtitleChunk && (
         <Subtitles
           subtitleChunk={subtitleChunk}
           style={subtitleStyle}
           sceneStartFrame={0}
           sceneDurationFrames={durationFrames}
+          animation={subtitleAnimation}
+          font={subtitleFont}
         />
       )}
 
@@ -459,6 +526,15 @@ export const ProductReview: React.FC<ProductReviewProps> = ({
   subtitles,
   subtitleStyle,
   settings,
+  subtitleAnimation,
+  subtitleFont,
+  price,
+  originalPrice,
+  currency = "TL",
+  starRating,
+  reviewCount,
+  topComments,
+  reviewStyle = "modern",
 }) => {
   const { fps } = useVideoConfig();
 
@@ -551,6 +627,15 @@ export const ProductReview: React.FC<ProductReviewProps> = ({
               subtitleChunk={subtitleChunk}
               subtitleStyle={subtitleStyle}
               durationFrames={durationFrames}
+              subtitleAnimation={subtitleAnimation}
+              subtitleFont={subtitleFont}
+              price={price}
+              originalPrice={originalPrice}
+              currency={currency}
+              starRating={starRating}
+              reviewCount={reviewCount}
+              topComments={topComments}
+              reviewStyle={reviewStyle}
             />
           </Sequence>
         );

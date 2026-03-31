@@ -129,6 +129,9 @@ async def run_pipeline(job_id: str) -> None:
         _metadata_key = f"{_module_key}_metadata_prompt"
         if config.get(_metadata_key):
             config.setdefault("metadata_prompt_template", config[_metadata_key])
+        _enhance_key = f"{_module_key}_narration_enhance_prompt"
+        if config.get(_enhance_key):
+            config.setdefault("narration_enhance_prompt", config[_enhance_key])
 
         # Job title'ı config'e ekle (step fonksiyonlarının erişebilmesi için)
         config["_job_title"] = job.title

@@ -1,4 +1,4 @@
-# TTS/Subtitle Render Mismatch — Root Cause Analysis
+# TTS/Altyazı Render Uyumsuzluğu — Kök Neden Analizi
 
 **Date:** 2026-03-31
 **Severity:** Critical (her videoda 8/10 sahne yanlish altyazi gosteriyor)

@@ -26,6 +26,8 @@ import {
 } from "lucide-react";
 import { useSettingsStore, type UserVideoDefaults } from "@/stores/settingsStore";
 import { useUIStore } from "@/stores/uiStore";
+import { isSettingAdminOnly } from "@/lib/constants";
+// isSettingAdminOnly is used both for UI filtering (isHiddenFromUser) and save payload filtering
 import { api } from "@/api/client";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +70,45 @@ const FPS_OPTIONS = [
   { value: 60, label: "60 FPS — Yüksek Kalite" },
 ];
 
+const SUBTITLE_ANIMATIONS = [
+  { value: "none", label: "Animasyon Yok" },
+  { value: "hype", label: "Hype (Slide-up + Zoom)" },
+  { value: "explosive", label: "Explosive (Slide-left + Fire)" },
+  { value: "vibrant", label: "Vibrant (Pop-in Bounce)" },
+  { value: "minimal_anim", label: "Minimal (Renk Geçişi)" },
+];
+
+const SUBTITLE_FONTS = [
+  { value: "inter", label: "Inter (Modern, Okunabilir)" },
+  { value: "roboto", label: "Roboto (Temiz, Nötr)" },
+  { value: "montserrat", label: "Montserrat (Geometric)" },
+  { value: "oswald", label: "Oswald (Condensed, Kalın)" },
+  { value: "bebas", label: "Bebas Neue (Display, Impact)" },
+  { value: "serif", label: "Serif (Georgia, Klasik)" },
+  { value: "sans", label: "Sans-Serif (Arial, Basit)" },
+];
+
+const SUBTITLE_BGS = [
+  { value: "none", label: "Arka Plan Yok (Alt Gradient)" },
+  { value: "box", label: "Kutu (Dikdörtgen)" },
+  { value: "pill", label: "Kapsül (Yuvarlatılmış)" },
+];
+
+const KEN_BURNS_DIRECTIONS = [
+  { value: "center", label: "Merkez (Varsayılan)" },
+  { value: "pan-left", label: "Sola Pan" },
+  { value: "pan-right", label: "Sağa Pan" },
+  { value: "random", label: "Rastgele (Sahne başına köşe)" },
+];
+
+const VIDEO_EFFECTS = [
+  { value: "none", label: "Efekt Yok" },
+  { value: "vignette", label: "Vignette (Kenar Karartma)" },
+  { value: "warm", label: "Sıcak Ton" },
+  { value: "cool", label: "Soğuk Ton" },
+  { value: "cinematic", label: "Sinematik (Letterbox)" },
+];
+
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function UserSettings() {
@@ -98,6 +139,11 @@ export default function UserSettings() {
     return lockedKeys.includes(key);
   }
 
+  /** Admin-only ayarlar user panelde tamamen gizlenir (schema-driven). */
+  function isHiddenFromUser(key: string): boolean {
+    return isSettingAdminOnly(key);
+  }
+
   function handleChange<K extends keyof UserVideoDefaults>(
     key: K,
     value: UserVideoDefaults[K]
@@ -112,15 +158,22 @@ export default function UserSettings() {
       // Sadece pipeline'da fiilen okunan ayarları kaydet.
       // Etkisiz ayarlar (subtitle_enabled, metadata_enabled, thumbnail_enabled,
       // publish_to_youtube, youtube_privacy) henüz backend'de aktif değil — gönderilmez.
-      const settingsPayload = {
-        settings: [
+      // Admin-only ayarları user payload'dan çıkar (schema-driven güvenlik)
+      const allUserSettings = [
           { scope: "user" as const, scope_id: "", key: "language", value: form.language },
           { scope: "user" as const, scope_id: "", key: "tts_provider", value: form.ttsProvider },
           { scope: "user" as const, scope_id: "", key: "visuals_provider", value: form.visualsProvider },
           { scope: "user" as const, scope_id: "", key: "subtitle_style", value: form.subtitleStyle },
           { scope: "user" as const, scope_id: "", key: "video_resolution", value: form.videoResolution },
           { scope: "user" as const, scope_id: "", key: "video_fps", value: form.videoFps },
-        ],
+          { scope: "user" as const, scope_id: "", key: "subtitle_animation", value: form.subtitleAnimation },
+          { scope: "user" as const, scope_id: "", key: "subtitle_font", value: form.subtitleFont },
+          { scope: "user" as const, scope_id: "", key: "subtitle_bg", value: form.subtitleBg },
+          { scope: "user" as const, scope_id: "", key: "ken_burns_direction", value: form.kenBurnsDirection },
+          { scope: "user" as const, scope_id: "", key: "video_effect", value: form.videoEffect },
+      ];
+      const settingsPayload = {
+        settings: allUserSettings.filter((s) => !isSettingAdminOnly(s.key)),
       };
       await api.post("/settings/user", settingsPayload);
       setUserDefaults(form);
@@ -201,6 +254,7 @@ export default function UserSettings() {
 
         <div className="rounded-xl border border-border bg-card divide-y divide-border">
           {/* Dil */}
+          {!isHiddenFromUser("language") && (
           <SettingRow
             icon={<Globe size={14} />}
             label="İçerik Dili"
@@ -214,8 +268,10 @@ export default function UserSettings() {
               locked={isLocked("language")}
             />
           </SettingRow>
+          )}
 
           {/* TTS */}
+          {!isHiddenFromUser("tts_provider") && (
           <SettingRow
             icon={<Mic size={14} />}
             label="Ses Sentezi (TTS)"
@@ -229,8 +285,10 @@ export default function UserSettings() {
               locked={isLocked("tts_provider")}
             />
           </SettingRow>
+          )}
 
           {/* Altyazı stili */}
+          {!isHiddenFromUser("subtitle_style") && (
           <SettingRow
             icon={<Subtitles size={14} />}
             label="Altyazı Stili"
@@ -245,6 +303,7 @@ export default function UserSettings() {
               placeholder="Altyazı Stili"
             />
           </SettingRow>
+          )}
         </div>
       </div>
 
@@ -254,6 +313,7 @@ export default function UserSettings() {
 
         <div className="rounded-xl border border-border bg-card divide-y divide-border">
           {/* Görsel kaynağı */}
+          {!isHiddenFromUser("visuals_provider") && (
           <SettingRow
             icon={<Monitor size={14} />}
             label="Görsel Kaynağı"
@@ -267,8 +327,10 @@ export default function UserSettings() {
               locked={isLocked("visuals_provider")}
             />
           </SettingRow>
+          )}
 
           {/* Çözünürlük */}
+          {!isHiddenFromUser("video_resolution") && (
           <SettingRow
             icon={<Monitor size={14} />}
             label="Video Çözünürlüğü"
@@ -282,8 +344,10 @@ export default function UserSettings() {
               locked={isLocked("video_resolution")}
             />
           </SettingRow>
+          )}
 
           {/* FPS */}
+          {!isHiddenFromUser("video_fps") && (
           <SettingRow
             icon={<Zap size={14} />}
             label="Kare Hızı"
@@ -300,6 +364,92 @@ export default function UserSettings() {
               locked={isLocked("video_fps")}
             />
           </SettingRow>
+          )}
+
+          {/* Ken Burns Yönü */}
+          {!isHiddenFromUser("ken_burns_direction") && (
+          <SettingRow
+            icon={<Monitor size={14} />}
+            label="Ken Burns Yönü"
+            description="Sahne görselinde zoom hareket yönü"
+            locked={isLocked("ken_burns_direction")}
+          >
+            <SelectField
+              value={form.kenBurnsDirection}
+              onChange={(v) => handleChange("kenBurnsDirection", v)}
+              options={KEN_BURNS_DIRECTIONS}
+              locked={isLocked("ken_burns_direction")}
+            />
+          </SettingRow>
+          )}
+
+          {/* Video Efekti */}
+          {!isHiddenFromUser("video_effect") && (
+          <SettingRow
+            icon={<Palette size={14} />}
+            label="Video Renk Efekti"
+            description="Sahne üzerine uygulanan görsel filtre"
+            locked={isLocked("video_effect")}
+          >
+            <SelectField
+              value={form.videoEffect}
+              onChange={(v) => handleChange("videoEffect", v)}
+              options={VIDEO_EFFECTS}
+              locked={isLocked("video_effect")}
+            />
+          </SettingRow>
+          )}
+
+          {/* Altyazı Animasyonu */}
+          {!isHiddenFromUser("subtitle_animation") && (
+          <SettingRow
+            icon={<Subtitles size={14} />}
+            label="Altyazı Animasyonu"
+            description="Karaoke tarzı kelime giriş efekti"
+            locked={isLocked("subtitle_animation")}
+          >
+            <SelectField
+              value={form.subtitleAnimation}
+              onChange={(v) => handleChange("subtitleAnimation", v)}
+              options={SUBTITLE_ANIMATIONS}
+              locked={isLocked("subtitle_animation")}
+            />
+          </SettingRow>
+          )}
+
+          {/* Altyazı Fontu */}
+          {!isHiddenFromUser("subtitle_font") && (
+          <SettingRow
+            icon={<Subtitles size={14} />}
+            label="Altyazı Fontu"
+            description="Altyazı metni için kullanılacak font ailesi"
+            locked={isLocked("subtitle_font")}
+          >
+            <SelectField
+              value={form.subtitleFont}
+              onChange={(v) => handleChange("subtitleFont", v)}
+              options={SUBTITLE_FONTS}
+              locked={isLocked("subtitle_font")}
+            />
+          </SettingRow>
+          )}
+
+          {/* Altyazı Arka Planı */}
+          {!isHiddenFromUser("subtitle_bg") && (
+          <SettingRow
+            icon={<Subtitles size={14} />}
+            label="Altyazı Arka Planı"
+            description="Altyazı metninin arkasına eklenen konteyner stili"
+            locked={isLocked("subtitle_bg")}
+          >
+            <SelectField
+              value={form.subtitleBg}
+              onChange={(v) => handleChange("subtitleBg", v)}
+              options={SUBTITLE_BGS}
+              locked={isLocked("subtitle_bg")}
+            />
+          </SettingRow>
+          )}
         </div>
       </div>
 

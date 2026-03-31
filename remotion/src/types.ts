@@ -45,6 +45,49 @@ export type SubtitleStyle =
   | "minimal"
   | "hormozi";
 
+/**
+ * Altyazı animasyon preset'i (YTRobot-v3'ten port).
+ *
+ * Stil (SubtitleStyle) renk/konum/vurgulama kontrol ederken,
+ * animasyon preset'i giriş efekti ve kelime-seviye ölçek efekti kontrol eder.
+ */
+export type SubtitleAnimation =
+  | "hype"       // slide-up + zoom-in + glow
+  | "explosive"  // slide-left + fire glow
+  | "vibrant"    // pop-in bounce
+  | "minimal_anim" // sadece renk geçişi
+  | "none";      // animasyon yok
+
+/**
+ * Altyazı font seçimi (YTRobot-v3'ten port).
+ */
+export type SubtitleFont =
+  | "inter"
+  | "roboto"
+  | "montserrat"
+  | "oswald"
+  | "bebas"
+  | "serif"
+  | "sans";
+
+/**
+ * Ken Burns pan yönü.
+ * center: merkez zoom, pan-left/right: yönlü kaydırma, random: sahne başına döngüsel köşe.
+ */
+export type KenBurnsDirection = "center" | "pan-left" | "pan-right" | "random";
+
+/**
+ * Video renk/stil efekti.
+ * vignette: kenar karartma, warm/cool: renk tonu, cinematic: letterbox.
+ */
+export type VideoEffect = "none" | "vignette" | "warm" | "cool" | "cinematic";
+
+/**
+ * Altyazı arka plan stili.
+ * box: dikdörtgen kutucuk, pill: yuvarlatılmış kapsül, none: arka plan yok.
+ */
+export type SubtitleBg = "none" | "box" | "pill";
+
 // ─── Video ayarları ───────────────────────────────────────────────────────────
 
 export interface VideoSettings {
@@ -73,9 +116,24 @@ export interface StandardVideoProps {
   kenBurnsEnabled: boolean;
   /** Ken Burns zoom miktarı (0.0 – 0.3) */
   kenBurnsZoom: number;
+  /** Altyazı animasyon preset'i — varsayılan "none" (opsiyonel, backward-compat) */
+  subtitleAnimation?: SubtitleAnimation;
+  /** Altyazı font ailesi — varsayılan "inter" (opsiyonel) */
+  subtitleFont?: SubtitleFont;
+  /** Ken Burns pan yönü — varsayılan "center" (opsiyonel) */
+  kenBurnsDirection?: KenBurnsDirection;
+  /** Video renk/stil efekti — varsayılan "none" (opsiyonel) */
+  videoEffect?: VideoEffect;
+  /** Altyazı arka plan stili — varsayılan "none" (opsiyonel) */
+  subtitleBg?: SubtitleBg;
 }
 
 // ─── NewsBulletin Composition Props ───────────────────────────────────────────
+
+/** Ticker kayan haber öğesi */
+export interface TickerItem {
+  text: string;
+}
 
 /** Haber bülteni tek haber öğesi */
 export interface NewsItem {
@@ -95,6 +153,18 @@ export interface NewsItem {
   source?: string;
 }
 
+/** Haber bülteni görsel stili */
+export type BulletinStyle =
+  | "breaking"
+  | "tech"
+  | "corporate"
+  | "sport"
+  | "finance"
+  | "weather"
+  | "science"
+  | "entertainment"
+  | "dark";
+
 export interface NewsBulletinProps {
   /** Bülten başlığı */
   title: string;
@@ -106,6 +176,18 @@ export interface NewsBulletinProps {
   settings: VideoSettings;
   /** Bülten tarih damgası (ISO-8601) — overlay olarak gösterilir */
   dateStamp: string;
+  /** Altyazı animasyon preset'i (opsiyonel) */
+  subtitleAnimation?: SubtitleAnimation;
+  /** Altyazı font ailesi (opsiyonel) */
+  subtitleFont?: SubtitleFont;
+  /** Ticker kayan haber başlıkları (opsiyonel) */
+  ticker?: TickerItem[];
+  /** Bülten görsel stili (opsiyonel, default: "corporate") */
+  bulletinStyle?: BulletinStyle;
+  /** Yayın ağı adı — breaking overlay ve badge'de gösterilir (opsiyonel) */
+  networkName?: string;
+  /** Dil kodu — UI etiketleri için (opsiyonel, default: "tr") */
+  lang?: string;
 }
 
 // ─── ProductReview Composition Props ──────────────────────────────────────────
@@ -124,6 +206,14 @@ export interface ReviewSection {
   durationInSeconds: number;
 }
 
+/** Ürün inceleme görsel stili */
+export type ProductReviewStyle =
+  | "modern"
+  | "dark"
+  | "energetic"
+  | "minimal"
+  | "premium";
+
 export interface ProductReviewProps {
   /** İnceleme başlığı */
   title: string;
@@ -136,4 +226,22 @@ export interface ProductReviewProps {
   subtitles: SubtitleChunk[];
   subtitleStyle: SubtitleStyle;
   settings: VideoSettings;
+  /** Altyazı animasyon preset'i (opsiyonel) */
+  subtitleAnimation?: SubtitleAnimation;
+  /** Altyazı font ailesi (opsiyonel) */
+  subtitleFont?: SubtitleFont;
+  /** Ürün fiyatı (opsiyonel — verdidct sahnesinde gösterilir) */
+  price?: number;
+  /** Orijinal fiyat (opsiyonel — indirim varsa) */
+  originalPrice?: number;
+  /** Para birimi (opsiyonel, default: "TL") */
+  currency?: string;
+  /** Yıldız puanı, 0-5 (opsiyonel) */
+  starRating?: number;
+  /** Yorum sayısı (opsiyonel) */
+  reviewCount?: number;
+  /** Üst yorumlar (opsiyonel — floating comments) */
+  topComments?: string[];
+  /** İnceleme görsel stili (opsiyonel, default: "modern") */
+  reviewStyle?: ProductReviewStyle;
 }

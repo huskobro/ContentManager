@@ -1,4 +1,4 @@
-# TTS → Subtitle Text Chain Trace
+# TTS → Altyazı Metin Zinciri İzi
 
 **Date:** 2026-03-31 (güncel — ikinci doğrulama turu)
 **Session:** `c2261ada354448c7b2153a36dfb246a0`

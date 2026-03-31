@@ -1,16 +1,13 @@
-# System Chains Map
+# Sistem Zinciri Haritası
 _Last updated: 2026-03-31 (category/hook full CRUD — DB-backed resolution chains, config["_db"] injection, bootstrap seeding)_
 
-This document maps every processing chain that is actually implemented in the
-codebase. Only chains that are wired end-to-end in source files are documented
-here. References are to the files read: `pipeline.py`, `config.py` (all three
-modules), `subtitles.py`, `script.py`, and `constants.ts`.
+Bu doküman, kod tabanında gerçekten uygulanmış her işleme zincirini eşler. Yalnızca kaynak dosyalarda uçtan uca bağlı zincirler belgelenir. Referanslar okunan dosyalara aittir: `pipeline.py`, `config.py` (tüm üç modül), `subtitles.py`, `script.py` ve `constants.ts`.
 
 ---
 
-## 1. Script Generation Chain
+## 1. Senaryo Üretim Zinciri
 
-**Flow:**
+**Akış:**
 
 ```
 config["_job_title"] + config["scene_count"] + config["language"]
@@ -27,7 +24,7 @@ config["_job_title"] + config["scene_count"] + config["language"]
   → cache.save_json("script", script_data)
 ```
 
-**Hardcoded values:**
+**Sabit kodlu değerler:**
 - Default title fallback: `"Yapay Zekanın Geleceği"` (used when `_job_title` absent)
 - Language map: `{"tr": "Türkçe", "en": "English", "de": "Deutsch", "fr": "Français", "es": "Español"}`
 - Default `scene_count`: 10 (standard_video), 8 (news_bulletin), 8 (product_review)
@@ -36,13 +33,13 @@ config["_job_title"] + config["scene_count"] + config["language"]
 - Minimum scenes in fallback parser: `max(scene_count // 2, 3)`
 - Narration truncation in fallback parser: 500 characters per paragraph
 
-**Config keys read by this step:**
+**Bu adımda okunan config anahtarları:**
 `_job_title`, `scene_count`, `language`, `script_prompt_template`,
 `category`, `use_hook_variety`, `script_temperature`, `script_max_tokens`
 
 ---
 
-## 2. TTS Chain
+## 2. TTS Zinciri
 
 **Flow:**
 
@@ -59,13 +56,13 @@ cache.load_json("script")  →  scenes[]
                      total_duration_seconds, files[]
 ```
 
-**Hardcoded values:**
+**Sabit kodlu değerler:**
 - Default voice fallback: `app_settings.default_tts_voice` → `"tr-TR-EmelNeural"` (overridable via `.env`). Both `edge_tts_provider.py` and `standard_video/pipeline.py` use `config.get("tts_voice") or _app_settings.default_tts_voice` — no hardcoded string.
 - Audio filename pattern: `scene_{scene_num:02d}.{format}` where format comes from provider (`mp3`)
 - `duration_sec = duration_ms / 1000.0`
 - Step is **fatal** — any scene TTS failure raises `RuntimeError`
 
-**Config keys read by this step:**
+**Bu adımda okunan config anahtarları:**
 `tts_voice`
 
 **Provider wired:**
@@ -74,7 +71,7 @@ cache.load_json("script")  →  scenes[]
 
 ---
 
-## 3. Subtitle Chain
+## 3. Altyazı Zinciri
 
 **Flow (3-layer timing strategy, in priority order):**
 
@@ -110,7 +107,7 @@ for each tts_file:
                  entry_count, timing_source, entries[]
 ```
 
-**Hardcoded values:**
+**Sabit kodlu değerler:**
 - Whisper API URL: `https://api.openai.com/v1/audio/transcriptions`
 - Whisper model: `whisper-1`
 - Whisper cost rate: `$0.006 / minute`
@@ -118,13 +115,13 @@ for each tts_file:
 - Whisper HTTP timeout: `120.0` seconds
 - Step is **non-fatal** — errors do not stop the pipeline
 
-**Config keys read by this step:**
+**Bu adımda okunan config anahtarları:**
 `subtitle_style`, `subtitle_font_size`, `subtitle_use_whisper`,
 `openai_api_key`, `language`
 
 ---
 
-## 4. Provider Fallback Chain
+## 4. Sağlayıcı Fallback Zinciri
 
 Each pipeline step calls `provider_registry.execute_with_fallback(category=...)`.
 The fallback order is controlled at runtime by admin settings. The declared
@@ -152,7 +149,7 @@ defaults from `constants.ts` and module `config.py` files are:
 
 ---
 
-## 5. Category System
+## 5. Kategori Sistemi
 
 **6 builtin categories** seeded at startup into the `categories` table (`backend/models/category.py`).
 Admin can add custom categories and edit/disable any category via the CRUD API.
@@ -197,7 +194,7 @@ custom categories are fully deletable.
 
 ---
 
-## 6. Hook Variety System
+## 6. Hook Çeşitlilik Sistemi
 
 **Config key:** `"use_hook_variety"` (default: `True`)
 
@@ -240,7 +237,7 @@ custom hooks are fully deletable.
 
 ---
 
-## 7. Video Composition Chain
+## 7. Video Kompozisyon Zinciri
 
 **Flow:**
 
@@ -269,20 +266,20 @@ cache.load_json("subtitles") →  subtitle entries[], style_config
 → Stop file server
 ```
 
-**Hardcoded values:**
+**Sabit kodlu değerler:**
 - `COMPOSITION_MAP`: `standard_video → "StandardVideo"`, `news_bulletin → "NewsBulletin"`, `product_review → "ProductReview"`
 - `DEFAULT_WIDTH = 1920`, `DEFAULT_HEIGHT = 1080`, `DEFAULT_FPS = 30`
 - `DEFAULT_SCENE_DURATION = 5.0` seconds (used when TTS duration absent)
 - Visual type detection extensions: video = `{.mp4, .webm, .mov, .avi, .mkv}`, image = `{.jpg, .jpeg, .png, .webp, .gif, .bmp}`
 - Step is **fatal**
 
-**Config keys read by this step:**
+**Bu adımda okunan config anahtarları:**
 `video_resolution`, `video_fps`, `subtitle_style`, `ken_burns_enabled`,
 `ken_burns_intensity`, `output_dir`
 
 ---
 
-## 8. Metadata Generation Chain
+## 8. Metadata Üretim Zinciri
 
 **Flow:**
 
@@ -298,7 +295,7 @@ config["_job_title"] + config["language"]
   → cache.save_json("metadata", metadata)
 ```
 
-**Hardcoded values:**
+**Sabit kodlu değerler:**
 - `temperature = 0.6` (hardcoded in step, not from config)
 - `max_output_tokens = 2048` (hardcoded in step, not from config)
 - Fallback metadata category field value: `"Education"`
@@ -307,7 +304,7 @@ config["_job_title"] + config["language"]
 
 ---
 
-## 9. Subtitle Style Definitions
+## 9. Altyazı Stil Tanımları
 
 5 styles are hardcoded in `backend/pipeline/steps/subtitles.py` as `SUBTITLE_STYLES`:
 

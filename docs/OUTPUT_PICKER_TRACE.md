@@ -1,4 +1,4 @@
-# Output Picker End-to-End Trace
+# Çıktı Seçici — Uçtan Uca İz
 
 **Date:** 2026-03-31
 **Verification method:** Live browser network log + curl backend tests

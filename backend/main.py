@@ -232,6 +232,72 @@ def _seed_categories_and_hooks(db) -> None:
     db.commit()
 
 
+def _seed_category_style_mappings(db) -> None:
+    """
+    Category→BulletinStyle eşleşme tablosunu varsayılan setiyle doldurur (idempotent).
+
+    Tablo boşsa Türkçe haber kategorilerini varsayılan stil eşleşmeleriyle seed eder.
+    Tablo doluysa hiçbir şey yapma.
+
+    Varsayılan eşleşmeler:
+      spor       → sport
+      teknoloji  → tech
+      ekonomi    → finance
+      siyaset    → corporate
+      son_dakika → breaking
+      bilim      → science
+      eglence    → entertainment
+      saglik     → corporate (genel)
+      dunya      → corporate (genel)
+      gundem     → corporate (genel)
+    """
+    from datetime import datetime, timezone
+    from backend.models.category_style_mapping import CategoryStyleMapping
+
+    count = db.query(CategoryStyleMapping).count()
+    if count > 0:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    defaults = [
+        ("spor", "sport", "Spor haberleri → yeşil spor stili"),
+        ("teknoloji", "tech", "Teknoloji haberleri → mor teknoloji stili"),
+        ("ekonomi", "finance", "Ekonomi/finans haberleri → amber finans stili"),
+        ("siyaset", "corporate", "Siyaset haberleri → kurumsal mavi stil"),
+        ("son_dakika", "breaking", "Son dakika haberleri → kırmızı breaking stili"),
+        ("bilim", "science", "Bilim haberleri → mor bilim stili"),
+        ("eglence", "entertainment", "Eğlence haberleri → pembe eğlence stili"),
+        ("saglik", "corporate", "Sağlık haberleri → kurumsal stil"),
+        ("dunya", "corporate", "Dünya haberleri → kurumsal stil"),
+        ("gundem", "corporate", "Gündem haberleri → kurumsal stil"),
+        # Alternatif yazımlar (LLM farklı üretebilir)
+        ("sport", "sport", "sport → sport (EN alias)"),
+        ("tech", "tech", "tech → tech (EN alias)"),
+        ("finance", "finance", "finance → finance (EN alias)"),
+        ("science", "science", "science → science (EN alias)"),
+        ("entertainment", "entertainment", "entertainment → entertainment (EN alias)"),
+        ("breaking", "breaking", "breaking → breaking (EN alias)"),
+        ("politics", "corporate", "politics → corporate (EN alias)"),
+        ("health", "corporate", "health → corporate (EN alias)"),
+        ("world", "corporate", "world → corporate (EN alias)"),
+    ]
+
+    for cat_key, style, desc in defaults:
+        mapping = CategoryStyleMapping(
+            category_key=cat_key,
+            bulletin_style=style,
+            description=desc,
+            enabled=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(mapping)
+
+    db.commit()
+    log.info("Category→style mapping'ler seed edildi", count=len(defaults))
+
+
 def _repair_list_elements(items: list) -> list:
     """
     Bozuk serileştirilmiş list elemanlarını onarır.
@@ -431,6 +497,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # 0c. Kategori/hook tablolarini seed et + eski override'lari tasima (idempotent)
         _seed_categories_and_hooks(db)
+
+        # 0d. Category→style mapping tablosunu varsayılan setiyle seed et (idempotent)
+        _seed_category_style_mappings(db)
 
         # 1. Output_dir'i SettingsResolver üzerinden yükle
         try:

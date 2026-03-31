@@ -1,12 +1,12 @@
-# Code Review Fixes — Output Folder System
+# Kod İnceleme Düzeltmeleri — Çıktı Klasörü Sistemi
 
-## 📋 Overview
+## 📋 Genel Bakış
 
-Code review tarafından saptanan sorunlar ele alındı ve iyileştirmeler yapıldı. Tüm **Critical** ve **Important** sorunlar çözüldü.
+Kod incelemesiyle saptanan sorunlar ele alındı ve iyileştirmeler yapıldı. Tüm **Kritik** ve **Önemli** sorunlar çözüldü.
 
 ---
 
-## ✅ Fixed Issues
+## ✅ Düzeltilen Sorunlar
 
 ### 1️⃣ Issue 1: Path Traversal Validation (FIXED)
 
@@ -103,7 +103,7 @@ Admins artık overwrite durumlarını loglardan izleyebilir.
 
 ---
 
-## 📊 Code Quality Improvements
+## 📊 Kod Kalitesi İyileştirmeleri
 
 | Metrik | Öncesi | Sonrası | Iyileştirme |
 |--------|--------|---------|------------|
@@ -115,7 +115,7 @@ Admins artık overwrite durumlarını loglardan izleyebilir.
 
 ---
 
-## 🔒 Security Enhancements
+## 🔒 Güvenlik İyileştirmeleri
 
 | Kontrol | Durum | Detay |
 |---------|-------|--------|
@@ -128,9 +128,9 @@ Admins artık overwrite durumlarını loglardan izleyebilir.
 
 ---
 
-## 🧪 Testing
+## 🧪 Test
 
-### Path Traversal Protection Tests
+### Path Geçişi Koruma Testleri
 
 ```bash
 # Test 1: /etc reject
@@ -172,7 +172,7 @@ curl -X POST http://localhost:8000/api/settings/admin/output-folder \
 
 ---
 
-## 📁 Files Changed
+## 📁 Değiştirilen Dosyalar
 
 | Dosya | Değişiklik | Satırlar |
 |-------|-----------|---------|
@@ -184,59 +184,59 @@ curl -X POST http://localhost:8000/api/settings/admin/output-folder \
 
 ---
 
-## 🎯 Code Review Questions Answered
+## 🎯 Kod İnceleme Sorularının Yanıtları
 
-### Q1: Is the fallback logic adequate?
+### S1: Geri dönüş mantığı yeterli mi?
 
-**A:** ✅ YES. The logging enhancements (Issue 2 fix) now make fallback behavior visible. Admins can see in logs when copy failures occur.
+**C:** ✅ EVET. Loglama iyileştirmeleri (Sorun 2 düzeltmesi) artık geri dönüş davranışını görünür kıldı. Adminler kopyalama hatalarını loglarda görebilir.
 
-**Added:**
-- Warning log when overwrite happens
-- Error log with reason if copy fails
-- Size info logged for verification
+**Eklenenler:**
+- Üzerine yazma gerçekleştiğinde uyarı logu
+- Kopyalama başarısız olursa nedenli hata logu
+- Doğrulama için boyut bilgisi loglanıyor
 
-### Q2: Should we add UI for output folder configuration?
+### S2: Çıktı klasörü yapılandırması için UI eklemeli miyiz?
 
-**A:** ✅ Endpoint is sufficient for now. Could add UI later as Suggestion 1.
+**C:** ✅ Endpoint şimdilik yeterli. UI daha sonra Öneri 1 olarak eklenebilir.
 
-### Q3: Any concerns with overwriting videos on rerun?
+### S3: Videolar yeniden çalıştırmada üzerine yazılması bir sorun mu?
 
-**A:** ✅ FIXED. Now explicitly logged with timestamp and file sizes. Admins can track reruns via logs.
+**C:** ✅ DÜZELTİLDİ. Artık zaman damgası ve dosya boyutlarıyla açıkça loglanıyor. Adminler yeniden çalıştırmaları loglardan takip edebilir.
 
 ---
 
-## 📚 Related Documentation
+## 📚 İlgili Dokümantasyon
 
 - `docs/OUTPUT_FOLDER_SETUP.md` — User guide (updated with new security info)
 - `docs/VIDEO_OUTPUT_GUIDE.md` — Video access methods
 
 ---
 
-## 🚀 Deployment Notes
+## 🚀 Dağıtım Notları
 
-**Breaking Changes:** None. All changes backward compatible.
+**Kırıcı Değişiklikler:** Yok. Tüm değişiklikler geriye dönük uyumlu.
 
-**Migration:** 
-- Existing `output_dir` settings in SQLite continue to work
-- New path validation applies only to new/updated settings
+**Migrasyon:**
+- SQLite'daki mevcut `output_dir` ayarları çalışmaya devam eder
+- Yeni yol doğrulaması yalnızca yeni/güncellenen ayarlara uygulanır
 
-**Testing:**
-- All code review test cases passed ✅
-- Path traversal protection verified ✅
-- Overwrite logging verified ✅
+**Test:**
+- Tüm kod inceleme test senaryoları geçti ✅
+- Path geçişi koruması doğrulandı ✅
+- Üzerine yazma loglaması doğrulandı ✅
 
 ---
 
-## 📊 Code Review Assessment: APPROVED ✅
+## 📊 Kod İnceleme Değerlendirmesi: ONAYLANDI ✅
 
-| Item | Status | Notes |
+| Madde | Durum | Notlar |
 |------|--------|-------|
-| Critical Issues | ✅ Fixed | Path traversal validation |
-| Important Issues | ✅ Fixed | Overwrite logging |
-| Suggestions | ✅ Implemented | 3/4 (Disk space = future) |
-| Security | ✅ Enhanced | System directories protected |
-| Code Quality | ✅ Improved | DRY principle applied |
-| Tests | ✅ Passing | All manual tests passed |
+| Kritik Sorunlar | ✅ Düzeltildi | Path geçişi doğrulaması |
+| Önemli Sorunlar | ✅ Düzeltildi | Üzerine yazma loglaması |
+| Öneriler | ✅ Uygulandı | 3/4 (Disk alanı = gelecek) |
+| Güvenlik | ✅ İyileştirildi | Sistem dizinleri korunuyor |
+| Kod Kalitesi | ✅ İyileştirildi | DRY ilkesi uygulandı |
+| Testler | ✅ Geçiyor | Tüm manuel testler geçti |
 
-**Ready for production.** All critical/important feedback addressed. System is secure and maintainable.
+**Üretime hazır.** Tüm kritik/önemli geri bildirimler ele alındı. Sistem güvenli ve bakımı kolay.
 

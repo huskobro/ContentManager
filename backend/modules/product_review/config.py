@@ -37,4 +37,17 @@ DEFAULT_CONFIG: dict = {
     "video_resolution": "1920x1080",
     "video_fps": 30,
     "ken_burns_enabled": True,
+
+    # --- İnceleme görsel stili (YTRobot-v3'ten port) ---
+    "review_style": "modern",         # modern, dark, energetic, minimal, premium
+    "review_price_enabled": False,    # Fiyat badge'i (veri gerektirir)
+    "review_star_rating_enabled": False,  # Yıldız puanı (veri gerektirir)
+    "review_comments_enabled": False,     # Floating comments (veri gerektirir)
+    "subtitle_animation": "none",
+    "subtitle_font": "inter",
+
+    # -- TTS post-processing ---
+    "tts_clean_apostrophes": True,
+    "tts_trim_silence": True,
+    "tts_apply_speed_post": False,
 }

@@ -528,10 +528,16 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
         isWideType ? "flex-col" : "flex-col sm:flex-row sm:items-start"
       )}
     >
-      {/* Sol: etiket + açıklama */}
+      {/* Sol: etiket + açıklama + pipeline stage */}
       <div className={cn("min-w-0", !isWideType && "sm:w-52 shrink-0")}>
         <p className="text-xs font-medium text-foreground">{def.label}</p>
         <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{def.description}</p>
+        {def.pipelineStage && (
+          <p className="text-[10px] text-blue-400/70 leading-snug mt-0.5 flex items-center gap-1">
+            <span className="inline-block h-1 w-1 rounded-full bg-blue-400/50 shrink-0" />
+            {def.pipelineStage}
+          </p>
+        )}
       </div>
 
       {/* Sağ: input + kontroller */}
@@ -806,7 +812,10 @@ export default function GlobalSettings() {
     [settings, updateSetting, createSetting, deleteSetting, setOutputFolder, resetOutputFolder, addToast, loadData]
   );
 
-  const categories: SettingCategory[] = ["system", "pipeline", "script", "video_audio"];
+  const categories: SettingCategory[] = [
+    "system", "pipeline", "script", "video_audio",
+    "tts_processing", "module_news", "module_review",
+  ];
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">

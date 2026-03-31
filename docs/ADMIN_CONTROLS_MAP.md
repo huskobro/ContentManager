@@ -1,17 +1,17 @@
-# Admin Controls Map
+# Admin Kontrol Haritası
 _Last updated: 2026-03-31 (category/hook full CRUD — separate ORM tables, bootstrap seeding, builtin protection)_
 
-Maps every admin panel control to its concrete effect on the pipeline.
-Only settings that are actually read somewhere in the codebase are included.
-All wiring claims below were verified by source code audit (2026-03-31).
-Schema source: `frontend/src/lib/constants.ts` (`SYSTEM_SETTINGS_SCHEMA` +
-`PROMPT_SETTINGS_SCHEMA`). Pipeline wiring confirmed in `pipeline.py`,
-`config.py` (all modules), `subtitles.py`, `composition.py`, `runner.py`,
-and `edge_tts_provider.py`.
+Admin panel'deki her kontrolü pipeline'a olan somut etkisiyle eşleştirir.
+Yalnızca kaynak kodda gerçekten okunan ayarlar dahildir.
+Tüm bağlantı iddiaları kaynak kodu denetimiyle doğrulanmıştır (2026-03-31).
+Şema kaynağı: `frontend/src/lib/constants.ts` (`SYSTEM_SETTINGS_SCHEMA` +
+`PROMPT_SETTINGS_SCHEMA`). Pipeline bağlantısı `pipeline.py`,
+`config.py` (tüm modüller), `subtitles.py`, `composition.py`, `runner.py`
+ve `edge_tts_provider.py` dosyalarında doğrulanmıştır.
 
 ---
 
-## System Settings
+## Sistem Ayarları
 
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
@@ -23,7 +23,7 @@ and `edge_tts_provider.py`.
 
 ---
 
-## Pipeline Defaults
+## Pipeline Varsayılanları
 
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
@@ -37,7 +37,7 @@ and `edge_tts_provider.py`.
 
 ---
 
-## Script Settings
+## Senaryo Ayarları
 
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
@@ -50,7 +50,7 @@ and `edge_tts_provider.py`.
 
 ---
 
-## Video & Audio Settings
+## Video ve Ses Ayarları
 
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
@@ -65,21 +65,13 @@ and `edge_tts_provider.py`.
 
 ---
 
-## Prompt Templates
+## Prompt Şablonları
 
-Admin-editable LLM prompt templates stored per module. When a template is set,
-it **replaces** the hardcoded system instruction. Unset (empty) → pipeline falls
-back to hardcoded instruction.
+Her modül için ayrı saklanan, admin tarafından düzenlenebilen LLM prompt şablonları. Şablon ayarlandığında sabit kodlu sistem talimatının **yerini alır**. Ayarlanmamış (boş) bırakılırsa pipeline sabit kodlu talimata geri döner.
 
-**UI surface (2026-03-31):** All prompt templates are managed exclusively via the
-**Master Promptlar** page (`/admin/prompts`, `PromptManager.tsx`). The GlobalSettings
-page no longer contains prompt fields — the duplicate `PromptTemplatesCard` component
-was removed.
+**UI yüzeyi (2026-03-31):** Tüm prompt şablonları yalnızca **Master Promptlar** sayfasından yönetilir (`/admin/prompts`, `PromptManager.tsx`). GlobalSettings sayfası artık prompt alanı içermez — yinelenen `PromptTemplatesCard` bileşeni kaldırıldı.
 
-**Save path:** PromptManager saves with `scope="module"`, `scope_id=<module_key>`,
-`key=script_prompt_template` (or `metadata_prompt_template`). The `runner.py` aliasing
-(`{module_key}_script_prompt → script_prompt_template`) remains in place for backwards
-compatibility with any admin-scope records already in the database.
+**Kaydetme yolu:** PromptManager `scope="module"`, `scope_id=<module_key>`, `key=script_prompt_template` (veya `metadata_prompt_template`) ile kaydeder. `runner.py`'deki takma ad (`{module_key}_script_prompt → script_prompt_template`) veritabanında halihazırda bulunan admin-scope kayıtları için geriye dönük uyumluluk adına korunmaktadır.
 
 | Key Saved by PromptManager | Module | Pipeline Config Key | Variables Supported | Wiring Status |
 |---------------------------|--------|---------------------|---------------------|---------------|
@@ -90,58 +82,54 @@ compatibility with any admin-scope records already in the database.
 | `script_prompt_template` (scope=module, product_review) | `product_review` | `script_prompt_template` | `{scene_count}`, `{pros_count}`, `{cons_count}`, `{score_range}`, `{language_name}` | **WIRED** — `product_review/pipeline.py:step_script_review` |
 | `metadata_prompt_template` (scope=module, product_review) | `product_review` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` |
 
-**Fallback behaviour:** If the template field is empty or blank, the hardcoded
-system instruction is used without modification. Unknown `{placeholder}` values
-in custom templates are silently ignored (`KeyError` caught, template used as-is).
+**Geri dönüş davranışı:** Şablon alanı boş veya boşluktan oluşuyorsa, sabit kodlu sistem talimatı değiştirilmeden kullanılır. Özel şablonlardaki bilinmeyen `{placeholder}` değerleri sessizce görmezden gelinir (`KeyError` yakalanır, şablon olduğu gibi kullanılır).
 
 ---
 
 ---
 
-## Category CRUD
+## Kategori CRUD
 
-**UI surface:** Master Promptlar → Kategoriler tab (`/admin/prompts`, `PromptManager.tsx`).
-**API:** Full CRUD — `GET`, `POST`, `PUT`, `DELETE /api/admin/categories[/{key}]`.
-**Storage:** `categories` table (dedicated ORM model — `backend/models/category.py`). No longer stored in `settings` table.
+**UI yüzeyi:** Master Promptlar → Kategoriler sekmesi (`/admin/prompts`, `PromptManager.tsx`).
+**API:** Tam CRUD — `GET`, `POST`, `PUT`, `DELETE /api/admin/categories[/{key}]`.
+**Depolama:** `categories` tablosu (ayrı ORM modeli — `backend/models/category.py`). Artık `settings` tablosunda saklanmıyor.
 
-**System type: Full CRUD with builtin protection.**
+**Sistem tipi: Yerleşik koruma ile tam CRUD.**
 
-### ORM Fields
+### ORM Alanları
 
-| Field | Type | Notes |
+| Alan | Tür | Notlar |
 |---|---|---|
-| `key` | string (PK) | Unique identifier, e.g. `science`, `true_crime` |
-| `name_tr` | string | Turkish display name |
-| `name_en` | string | English display name |
-| `tone` | string | LLM tone instruction |
-| `focus` | string | LLM focus instruction |
-| `style_instruction` | string | LLM style instruction |
-| `enabled` | bool | `False` → pipeline skips enhancement |
-| `is_builtin` | bool | `True` for the 6 seeded categories — cannot be deleted |
-| `sort_order` | int | Display order in UI |
+| `key` | string (PK) | Benzersiz tanımlayıcı, ör. `science`, `true_crime` |
+| `name_tr` | string | Türkçe görünen ad |
+| `name_en` | string | İngilizce görünen ad |
+| `tone` | string | LLM ton talimatı |
+| `focus` | string | LLM odak talimatı |
+| `style_instruction` | string | LLM stil talimatı |
+| `enabled` | bool | `False` → pipeline iyileştirmeyi atlar |
+| `is_builtin` | bool | Tohumlanmış 6 kategori için `True` — silinemez |
+| `sort_order` | int | UI'daki görüntülenme sırası |
 
-### Available Operations
+### Mevcut İşlemler
 
-| Capability | Supported? | Notes |
+| İşlem | Destekleniyor mu? | Notlar |
 |---|---|---|
-| List all categories | YES | `GET /api/admin/categories` — returns all rows including builtins |
-| Create custom category | YES | `POST /api/admin/categories` → 201; 409 if key already exists |
-| Edit any category | YES | `PUT /api/admin/categories/{key}` → 200; 404 if not found |
-| Enable/disable category | YES | `PUT` with `enabled=false` → pipeline skips enhancement |
-| Delete custom category | YES | `DELETE /api/admin/categories/{key}` → 200 for `is_builtin=False` |
-| Delete builtin category | NO | `DELETE` on `is_builtin=True` → **403 Forbidden** |
-| Rename category key | NO | Keys are fixed identifiers (PK) |
+| Tüm kategorileri listele | EVET | `GET /api/admin/categories` — yerleşikler dahil tüm satırları döner |
+| Özel kategori oluştur | EVET | `POST /api/admin/categories` → 201; key zaten varsa 409 |
+| Herhangi bir kategoriyi düzenle | EVET | `PUT /api/admin/categories/{key}` → 200; bulunamazsa 404 |
+| Kategoriyi etkinleştir/devre dışı bırak | EVET | `PUT` ile `enabled=false` → pipeline iyileştirmeyi atlar |
+| Özel kategoriyi sil | EVET | `DELETE /api/admin/categories/{key}` → `is_builtin=False` için 200 |
+| Yerleşik kategoriyi sil | HAYIR | `is_builtin=True` üzerinde `DELETE` → **403 Forbidden** |
+| Kategori key'ini yeniden adlandır | HAYIR | Key'ler sabit tanımlayıcılardır (PK) |
 
-### Bootstrap Seeding
+### Bootstrap Tohumlama
 
-On first startup, `_seed_categories_and_hooks(db)` (called in `main.py` lifespan) inserts the 6
-hardcoded categories as `is_builtin=True` if they do not already exist. Seeding is idempotent —
-subsequent startups skip existing rows.
+İlk başlatmada `_seed_categories_and_hooks(db)` (`main.py` lifespan'ında çağrılır) 6 sabit kodlu kategoriyi `is_builtin=True` olarak ekler (zaten yoksa). Tohumlama idempotent'tir — sonraki başlatmalarda mevcut satırlar atlanır.
 
-**Builtin category set:** `general`, `true_crime`, `science`, `history`, `motivation`, `religion`.
-`general` never adds enhancement regardless of content — the `category != "general"` guard in `build_enhanced_prompt()` ensures this.
+**Yerleşik kategori seti:** `general`, `true_crime`, `science`, `history`, `motivation`, `religion`.
+`general` içerikten bağımsız olarak asla iyileştirme eklemez — `build_enhanced_prompt()` içindeki `category != "general"` koruması bunu sağlar.
 
-### Runtime wiring (verified 2026-03-31)
+### Çalışma Zamanı Bağlantısı (doğrulandı 2026-03-31)
 
 ```
 POST/PUT/DELETE /api/admin/categories[/{key}] → categories table (ORM)
@@ -155,45 +143,44 @@ enabled=False → enhancement block skipped entirely
 
 ---
 
-## Hook CRUD
+## Hook CRUD (Açılış Hook'ları)
 
-**UI surface:** Master Promptlar → Açılış Hook'ları tab (`/admin/prompts`, `PromptManager.tsx`).
-**API:** Full CRUD — `GET /api/admin/hooks/{lang}`, `POST /api/admin/hooks`, `PUT /api/admin/hooks/{type}/{lang}`, `DELETE /api/admin/hooks/{type}/{lang}`.
-**Storage:** `hooks` table (dedicated ORM model — `backend/models/hook.py`). No longer stored in `settings` table.
+**UI yüzeyi:** Master Promptlar → Açılış Hook'ları sekmesi (`/admin/prompts`, `PromptManager.tsx`).
+**API:** Tam CRUD — `GET /api/admin/hooks/{lang}`, `POST /api/admin/hooks`, `PUT /api/admin/hooks/{type}/{lang}`, `DELETE /api/admin/hooks/{type}/{lang}`.
+**Depolama:** `hooks` tablosu (ayrı ORM modeli — `backend/models/hook.py`). Artık `settings` tablosunda saklanmıyor.
 
-**System type: Full CRUD with builtin protection.**
+**Sistem tipi: Yerleşik koruma ile tam CRUD.**
 
-### ORM Fields
+### ORM Alanları
 
-| Field | Type | Notes |
+| Alan | Tür | Notlar |
 |---|---|---|
-| `type` | string (composite PK) | Hook type key, e.g. `shocking_fact`, `question` |
-| `lang` | string (composite PK) | Language code: `tr` or `en` |
-| `name` | string | Display name shown in UI |
-| `template` | string | Hook instruction text appended to the user prompt |
-| `enabled` | bool | `False` → excluded from pipeline hook pool |
-| `is_builtin` | bool | `True` for the 8×2 seeded hooks — cannot be deleted |
+| `type` | string (bileşik PK) | Hook tipi anahtarı, ör. `shocking_fact`, `question` |
+| `lang` | string (bileşik PK) | Dil kodu: `tr` veya `en` |
+| `name` | string | UI'da gösterilen görünen ad |
+| `template` | string | Kullanıcı promptuna eklenen hook talimat metni |
+| `enabled` | bool | `False` → pipeline hook havuzundan çıkarılır |
+| `is_builtin` | bool | Tohumlanmış 8×2 hook için `True` — silinemez |
 
-### Available Operations
+### Mevcut İşlemler
 
-| Capability | Supported? | Notes |
+| İşlem | Destekleniyor mu? | Notlar |
 |---|---|---|
-| List all hooks for a language | YES | `GET /api/admin/hooks/{lang}` — returns all rows for that lang |
-| Create custom hook | YES | `POST /api/admin/hooks` → 201; 409 if type+lang already exists; 400 if invalid lang |
-| Edit any hook | YES | `PUT /api/admin/hooks/{type}/{lang}` → 200; 404 if not found |
-| Enable/disable individual hook | YES | `PUT` with `enabled=false` → excluded from pipeline pool |
-| All hooks disabled → fallback | YES | `_get_effective_hooks()` returns full base list if filtered result is empty |
-| Delete custom hook | YES | `DELETE` on `is_builtin=False` → 200 |
-| Delete builtin hook | NO | `DELETE` on `is_builtin=True` → **403 Forbidden** |
+| Bir dil için tüm hook'ları listele | EVET | `GET /api/admin/hooks/{lang}` — o dildeki tüm satırları döner |
+| Özel hook oluştur | EVET | `POST /api/admin/hooks` → 201; type+lang zaten varsa 409; geçersiz dilde 400 |
+| Herhangi bir hook'u düzenle | EVET | `PUT /api/admin/hooks/{type}/{lang}` → 200; bulunamazsa 404 |
+| Tek hook'u etkinleştir/devre dışı bırak | EVET | `PUT` ile `enabled=false` → pipeline havuzundan çıkarılır |
+| Tüm hook'lar devre dışı → geri dönüş | EVET | `_get_effective_hooks()` filtre sonucu boşsa tam temel listeyi döner |
+| Özel hook'u sil | EVET | `is_builtin=False` üzerinde `DELETE` → 200 |
+| Yerleşik hook'u sil | HAYIR | `is_builtin=True` üzerinde `DELETE` → **403 Forbidden** |
 
-### Bootstrap Seeding
+### Bootstrap Tohumlama
 
-On first startup, `_seed_categories_and_hooks(db)` inserts 8 hook types × 2 languages (`tr`/`en`)
-as `is_builtin=True` if they do not already exist.
+İlk başlatmada `_seed_categories_and_hooks(db)`, 8 hook tipi × 2 dil (`tr`/`en`) için `is_builtin=True` olarak kayıt ekler (zaten yoksa).
 
-**Builtin hook types:** `shocking_fact`, `question`, `story`, `contradiction`, `future_peek`, `comparison`, `personal_address`, `countdown`.
+**Yerleşik hook tipleri:** `shocking_fact`, `question`, `story`, `contradiction`, `future_peek`, `comparison`, `personal_address`, `countdown`.
 
-### Runtime wiring (verified 2026-03-31)
+### Çalışma Zamanı Bağlantısı (doğrulandı 2026-03-31)
 
 ```
 POST/PUT/DELETE /api/admin/hooks[/{type}/{lang}] → hooks table (ORM)
@@ -207,13 +194,11 @@ _get_effective_hooks() returns full base list if all hooks are disabled
 
 ---
 
-## Provider Fallback Settings (detail)
+## Provider Fallback Ayarları (Detay)
 
-The 5-layer `SettingsResolver` merges settings in this order (lowest → highest
-priority): global defaults → admin → module → provider → user overrides.
-`locked=True` admin keys cannot be overridden by user layer.
+5 katmanlı `SettingsResolver` ayarları şu sırayla birleştirir (düşük → yüksek öncelik): global varsayılanlar → admin → modül → provider → kullanıcı override'ları. `locked=True` olan admin anahtarları kullanıcı katmanı tarafından geçersiz kılınamaz.
 
-API keys read from environment (`.env`) at layer 1; admin panel can override:
+API anahtarları ortamdan (`.env`) katman 1'de okunur; admin paneli override edebilir:
 
 | Admin Key | Used By |
 |-----------|---------|

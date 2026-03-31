@@ -8,9 +8,13 @@ import {
   useVideoConfig,
   useCurrentFrame,
   interpolate,
+  spring,
 } from "remotion";
 import { Subtitles } from "../components/Subtitles";
-import type { NewsBulletinProps, NewsItem, SubtitleChunk, SubtitleStyle } from "../types";
+import { NewsTicker } from "../components/NewsTicker";
+import { BreakingNewsOverlay } from "../components/BreakingNewsOverlay";
+import { useLayout } from "../components/useLayout";
+import type { NewsBulletinProps, NewsItem, SubtitleChunk, SubtitleStyle, SubtitleAnimation, SubtitleFont, TickerItem, BulletinStyle } from "../types";
 
 const CATEGORY_COLORS: Record<string, string> = {
   ekonomi: "#10b981",
@@ -28,6 +32,7 @@ const getCategoryColor = (category?: string): string => {
 const DEFAULT_DURATION_SECONDS = 5;
 const FADE_IN_FRAMES = 12;
 const LOWER_THIRD_SLIDE_FRAMES = 15;
+const FADEOUT_FRAMES = 20;
 
 export const NewsBulletin: React.FC<NewsBulletinProps> = ({
   title,
@@ -36,9 +41,17 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
   subtitleStyle,
   settings,
   dateStamp,
+  subtitleAnimation,
+  subtitleFont,
+  ticker,
+  bulletinStyle = "corporate",
+  networkName,
+  lang = "tr",
 }) => {
   const { fps } = useVideoConfig();
   const globalFrame = useCurrentFrame();
+
+  const isBreaking = bulletinStyle === "breaking";
 
   if (items.length === 0) {
     return (
@@ -123,6 +136,8 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
               subtitleStyle={subtitleStyle}
               durationFrames={durationFrames}
               isFirst={idx === 0}
+              subtitleAnimation={subtitleAnimation}
+              subtitleFont={subtitleFont}
             />
           </Sequence>
         );
@@ -135,6 +150,29 @@ export const NewsBulletin: React.FC<NewsBulletinProps> = ({
           pointerEvents: "none",
         }}
       />
+
+      {/* Breaking news overlay — sadece breaking stilde, ilk 60 frame */}
+      {isBreaking && (
+        <Sequence from={20} durationInFrames={60} name="Breaking Flash">
+          <BreakingNewsOverlay
+            networkName={networkName}
+            style={bulletinStyle}
+            lang={lang}
+            durationFrames={60}
+          />
+        </Sequence>
+      )}
+
+      {/* Ticker bar — frame 30'dan itibaren sürekli */}
+      {ticker && ticker.length > 0 && (
+        <Sequence from={30} name="News Ticker">
+          <NewsTicker
+            items={ticker}
+            style={bulletinStyle}
+            lang={lang}
+          />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };
@@ -148,6 +186,8 @@ interface NewsItemSceneProps {
   subtitleStyle: SubtitleStyle;
   durationFrames: number;
   isFirst: boolean;
+  subtitleAnimation?: SubtitleAnimation;
+  subtitleFont?: SubtitleFont;
 }
 
 const NewsItemScene: React.FC<NewsItemSceneProps> = ({
@@ -159,9 +199,12 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
   subtitleStyle,
   durationFrames,
   isFirst,
+  subtitleAnimation,
+  subtitleFont,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const layout = useLayout();
 
   const fadeInOpacity = isFirst
     ? 1
@@ -169,27 +212,45 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
         extrapolateRight: "clamp",
       });
 
-  const lowerThirdTranslateY = interpolate(
+  // ── Spring-based lower-third (YTRobot-v3/LowerThird.tsx port) ──
+  // 3-phase entrance: accent bar → panel slide-up → headline slide
+  const accentBarScale = spring({
     frame,
-    [0, LOWER_THIRD_SLIDE_FRAMES],
-    [80, 0],
-    { extrapolateRight: "clamp" }
+    fps,
+    config: { damping: 12, stiffness: 220 },
+  });
+  const panelSlide = spring({
+    frame: Math.max(0, frame - 4),
+    fps,
+    config: { damping: 14, stiffness: 180 },
+  });
+  const headlineSlide = spring({
+    frame: Math.max(0, frame - 8),
+    fps,
+    config: { damping: 16, stiffness: 160 },
+  });
+
+  // Fade-out in last frames (YTRobot-v3 pattern)
+  const fadeOutOpacity = interpolate(
+    frame,
+    [durationFrames - FADEOUT_FRAMES, durationFrames],
+    [1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const lowerThirdOpacity = interpolate(
-    frame,
-    [0, LOWER_THIRD_SLIDE_FRAMES],
-    [0, 1],
-    { extrapolateRight: "clamp" }
-  );
+  const panelTranslateY = interpolate(panelSlide, [0, 1], [80, 0]);
+  const headlineTranslateX = interpolate(headlineSlide, [0, 1], [-60, 0]);
 
   const categoryColor = getCategoryColor(item.category);
+
+  // Live indicator pulse (YTRobot-v3 pattern)
+  const liveIndicatorOpacity = 0.5 + 0.5 * Math.sin((frame / fps) * Math.PI * 2);
 
   return (
     <AbsoluteFill
       style={{
         fontFamily: "Inter, system-ui, sans-serif",
-        opacity: fadeInOpacity,
+        opacity: fadeInOpacity * fadeOutOpacity,
       }}
     >
       <AbsoluteFill>
@@ -224,31 +285,64 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
 
       {item.audioSrc ? <Audio src={item.audioSrc} /> : null}
 
+      {/* Top bar: date + live indicator + counter */}
       <div
         style={{
           position: "absolute",
-          top: 20,
-          left: 24,
-          fontSize: 13,
-          color: "#ffffff",
-          fontWeight: 600,
-          padding: "4px 10px",
-          backgroundColor: "rgba(0,0,0,0.45)",
-          borderRadius: 4,
+          top: layout.overlay.counterTop,
+          left: layout.safeArea.left,
+          display: "flex",
+          alignItems: "center",
+          gap: Math.round(12 * layout.scale),
         }}
       >
-        {dateStamp.slice(0, 10)}
+        <div
+          style={{
+            fontSize: layout.overlay.badgeFontSize,
+            color: "#ffffff",
+            fontWeight: 600,
+            padding: layout.overlay.badgePadding,
+            backgroundColor: "rgba(0,0,0,0.45)",
+            borderRadius: 4,
+          }}
+        >
+          {dateStamp.slice(0, 10)}
+        </div>
+        {/* Pulsing live indicator (YTRobot-v3 port) */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: Math.round(6 * layout.scale),
+            padding: layout.overlay.badgePadding,
+            backgroundColor: "rgba(220,38,38,0.8)",
+            borderRadius: 4,
+          }}
+        >
+          <div
+            style={{
+              width: Math.round(8 * layout.scale),
+              height: Math.round(8 * layout.scale),
+              borderRadius: "50%",
+              backgroundColor: "#fff",
+              opacity: liveIndicatorOpacity,
+            }}
+          />
+          <span style={{ fontSize: Math.round(11 * layout.scale), fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            CANLI
+          </span>
+        </div>
       </div>
 
       <div
         style={{
           position: "absolute",
-          top: 20,
-          right: 24,
-          fontSize: 13,
+          top: layout.overlay.counterTop,
+          right: layout.overlay.counterRight,
+          fontSize: layout.overlay.badgeFontSize,
           color: "#ffffff",
           fontWeight: 600,
-          padding: "4px 10px",
+          padding: layout.overlay.badgePadding,
           backgroundColor: "rgba(0,0,0,0.45)",
           borderRadius: 4,
         }}
@@ -260,7 +354,7 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
         <div
           style={{
             position: "absolute",
-            top: "60%",
+            top: layout.isVertical ? "45%" : "55%",
             left: 0,
             right: 0,
             display: "flex",
@@ -272,10 +366,13 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
               style={subtitleStyle}
               sceneStartFrame={0}
               sceneDurationFrames={durationFrames}
+              animation={subtitleAnimation}
+              font={subtitleFont}
             />
         </div>
       )}
 
+      {/* Spring-animated lower third (YTRobot-v3 port) */}
       <div
         style={{
           position: "absolute",
@@ -284,22 +381,33 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
           right: 0,
           background:
             "linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 60%, transparent 100%)",
-          padding: "60px 40px 32px",
-          transform: `translateY(${lowerThirdTranslateY}px)`,
-          opacity: lowerThirdOpacity,
+          padding: layout.lowerThird.padding,
+          transform: `translateY(${panelTranslateY}px)`,
+          opacity: panelSlide,
         }}
       >
+        {/* Accent bar (YTRobot-v3 port) */}
+        <div
+          style={{
+            width: layout.lowerThird.accentBarWidth,
+            height: layout.lowerThird.accentBarHeight,
+            backgroundColor: categoryColor,
+            marginBottom: Math.round(12 * layout.scale),
+            transformOrigin: "left",
+            transform: `scaleX(${accentBarScale})`,
+          }}
+        />
         {item.category && (
           <div
             style={{
               display: "inline-block",
-              fontSize: 11,
+              fontSize: layout.lowerThird.categoryFontSize,
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               color: "#ffffff",
-              marginBottom: 8,
-              padding: "3px 10px",
+              marginBottom: Math.round(8 * layout.scale),
+              padding: `${Math.round(3 * layout.scale)}px ${Math.round(10 * layout.scale)}px`,
               borderRadius: 4,
               backgroundColor: categoryColor,
             }}
@@ -309,17 +417,19 @@ const NewsItemScene: React.FC<NewsItemSceneProps> = ({
         )}
         <div
           style={{
-            fontSize: 26,
+            fontSize: layout.lowerThird.headlineFontSize,
             fontWeight: 700,
             color: "#ffffff",
             lineHeight: 1.3,
-            marginBottom: 6,
+            marginBottom: Math.round(6 * layout.scale),
+            transform: `translateX(${headlineTranslateX}px)`,
+            opacity: headlineSlide,
           }}
         >
           {item.headline}
         </div>
         {item.source && (
-          <div style={{ fontSize: 13, color: "#94a3b8" }}>
+          <div style={{ fontSize: layout.lowerThird.sourceFontSize, color: "#94a3b8", opacity: headlineSlide }}>
             Kaynak: {item.source}
           </div>
         )}

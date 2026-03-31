@@ -245,7 +245,60 @@ def _build_standard_video_props(
         "settings": {"width": width, "height": height, "fps": fps},
         "kenBurnsEnabled": config.get("ken_burns_enabled", True),
         "kenBurnsZoom": config.get("ken_burns_intensity", 0.15),
+        # Karaoke animasyon ve font (opsiyonel — yoksa Remotion default kullanır)
+        "subtitleAnimation": config.get("subtitle_animation", "none"),
+        "subtitleFont": config.get("subtitle_font", "inter"),
+        # Yeni görsel ayarlar (YTRobot-v3 Phase 2 port)
+        "kenBurnsDirection": config.get("ken_burns_direction", "center"),
+        "videoEffect": config.get("video_effect", "none"),
+        "subtitleBg": config.get("subtitle_bg", "none"),
     }
+
+
+def _resolve_bulletin_style_for_category(
+    category: str,
+    config: dict[str, Any],
+) -> str:
+    """
+    Kategori değerine göre BulletinStyle çözümler.
+
+    Öncelik zinciri:
+    1. category_style_mapping_enabled=False → global default döner
+    2. DB'de eşleşme yoksa → global default döner
+    3. Eşleşme varsa + enabled=True → eşleşmedeki stil döner
+    4. Her durumda: config.get("bulletin_style", "corporate") global default
+
+    Lowercase karşılaştırma yapılır (LLM "Ekonomi" veya "ekonomi" üretebilir).
+    DB erişimi config["_db"] üzerinden yapılır (varsa). Yoksa sadece hardcoded fallback.
+    """
+    # Feature kapalıysa direkt dön
+    if not config.get("category_style_mapping_enabled", True):
+        return str(config.get("bulletin_style", "corporate"))
+
+    if not category:
+        return str(config.get("bulletin_style", "corporate"))
+
+    db = config.get("_db")
+    if db is None:
+        return str(config.get("bulletin_style", "corporate"))
+
+    try:
+        from backend.models.category_style_mapping import CategoryStyleMapping
+        cat_lower = category.strip().lower()
+        mapping = (
+            db.query(CategoryStyleMapping)
+            .filter(
+                CategoryStyleMapping.category_key == cat_lower,
+                CategoryStyleMapping.enabled == True,  # noqa: E712
+            )
+            .first()
+        )
+        if mapping:
+            return mapping.bulletin_style
+    except Exception:
+        pass
+
+    return str(config.get("bulletin_style", "corporate"))
 
 
 def _build_news_bulletin_props(
@@ -298,7 +351,8 @@ def _build_news_bulletin_props(
             "visualType": visual_type,
             "durationInSeconds": duration,
             "category": scene.get("category", ""),
-            "source": scene.get("source", ""),
+            # LLM schema uses "news_source" (see news_bulletin/pipeline.py), also try "source" as fallback
+            "source": scene.get("news_source", scene.get("source", "")),
         })
 
     subtitle_chunks = _build_subtitle_chunks(subtitle_entries, scene_start_times)
@@ -309,6 +363,30 @@ def _build_news_bulletin_props(
     height = int(res_parts[1]) if len(res_parts) == 2 else DEFAULT_HEIGHT
     fps = config.get("video_fps", DEFAULT_FPS)
 
+    # Ticker items — haber başlıklarından oluştur (bulletin_ticker_enabled ise)
+    ticker_items: list[dict[str, str]] = []
+    if config.get("bulletin_ticker_enabled", True):
+        for item in items:
+            headline = item.get("headline", "")
+            if headline:
+                ticker_items.append({"text": headline})
+
+    # Bülten stili çözümleme:
+    # 1. Sahnelerin çoğunluk kategorisini bul
+    # 2. category_style_mapping_enabled=True ise DB'den eşleşme ara
+    # 3. Yoksa config.bulletin_style global default kullan
+    dominant_category = ""
+    if items:
+        cat_counts: dict[str, int] = {}
+        for item in items:
+            cat = item.get("category", "").strip()
+            if cat:
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        if cat_counts:
+            dominant_category = max(cat_counts, key=lambda k: cat_counts[k])
+
+    resolved_bulletin_style = _resolve_bulletin_style_for_category(dominant_category, config)
+
     return {
         "title": config.get("_job_title", "Haber Bülteni"),
         "items": items,
@@ -316,6 +394,13 @@ def _build_news_bulletin_props(
         "subtitleStyle": subtitles_data.get("style", "standard"),
         "settings": {"width": width, "height": height, "fps": fps},
         "dateStamp": datetime.now().strftime("%Y-%m-%d"),
+        "subtitleAnimation": config.get("subtitle_animation", "none"),
+        "subtitleFont": config.get("subtitle_font", "inter"),
+        # Bülten görsel ayarları (YTRobot-v3 Phase 2 port)
+        "ticker": ticker_items if ticker_items else None,
+        "bulletinStyle": resolved_bulletin_style,
+        "networkName": config.get("bulletin_network_name", ""),
+        "lang": config.get("_language", "tr"),
     }
 
 
@@ -388,15 +473,45 @@ def _build_product_review_props(
     height = int(res_parts[1]) if len(res_parts) == 2 else DEFAULT_HEIGHT
     fps = config.get("video_fps", DEFAULT_FPS)
 
-    return {
+    # Opsiyonel ürün bilgileri — script_data'dan veya config'den gelir
+    product_price = script_data.get("price") or config.get("_product_price")
+    original_price = script_data.get("original_price") or config.get("_product_original_price")
+    star_rating_val = script_data.get("star_rating") or config.get("_product_star_rating")
+    review_count_val = script_data.get("review_count") or config.get("_product_review_count")
+    top_comments = script_data.get("top_comments") or config.get("_product_top_comments")
+
+    result: dict[str, Any] = {
         "title": config.get("_job_title", "Ürün İnceleme"),
         "productName": config.get("_product_name", config.get("_job_title", "")),
-        "overallScore": config.get("review_score", 0),
+        # LLM üretir overall_score (product_review/pipeline.py'de setdefault 7.0),
+        # admin config.review_score ile override edebilir, ikisi de yoksa 0
+        "overallScore": script_data.get("overall_score") or config.get("review_score", 0),
         "sections": sections,
         "subtitles": subtitle_chunks,
         "subtitleStyle": subtitles_data.get("style", "standard"),
         "settings": {"width": width, "height": height, "fps": fps},
+        "subtitleAnimation": config.get("subtitle_animation", "none"),
+        "subtitleFont": config.get("subtitle_font", "inter"),
+        "reviewStyle": config.get("review_style", "modern"),
     }
+
+    # Opsiyonel alanlar — sadece veri varsa ve feature flag açıksa ekle
+    if config.get("review_price_enabled", False) and product_price:
+        result["price"] = float(product_price)
+        if original_price:
+            result["originalPrice"] = float(original_price)
+        result["currency"] = config.get("_product_currency", "TL")
+
+    if config.get("review_star_rating_enabled", False) and star_rating_val:
+        result["starRating"] = float(star_rating_val)
+        if review_count_val:
+            result["reviewCount"] = int(review_count_val)
+
+    if config.get("review_comments_enabled", False) and top_comments:
+        if isinstance(top_comments, list):
+            result["topComments"] = top_comments[:5]
+
+    return result
 
 
 # Props builder dispatch tablosu

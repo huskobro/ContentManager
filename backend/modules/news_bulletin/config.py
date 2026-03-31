@@ -56,4 +56,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # -- Ken Burns efekti -----------------------------------------------
     "ken_burns_enabled": False,
+
+    # -- Bülten görsel ayarları (YTRobot-v3'ten port) --------------------
+    "bulletin_style": "corporate",  # breaking, tech, corporate, sport, finance, weather, science, entertainment, dark
+    "bulletin_network_name": "",    # Yayın ağı adı (ör. "ContentManager News")
+    "bulletin_ticker_enabled": True,  # Alt kayan haber şeridi
+    "subtitle_animation": "none",
+    "subtitle_font": "inter",
+
+    # -- TTS post-processing ---------------------------------------------
+    "tts_clean_apostrophes": True,
+    "tts_trim_silence": True,
+    "tts_apply_speed_post": False,
 }
