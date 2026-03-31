@@ -593,15 +593,27 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
               type="button"
               role="switch"
               aria-checked={display === "true"}
-              onClick={() => setDisplay(display === "true" ? "false" : "true")}
+              disabled={saving}
+              onClick={async () => {
+                const next = display === "true" ? "false" : "true";
+                setDisplay(next);
+                setSaving(true);
+                await onSave(def, next === "true", locked);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
               className={cn(
                 "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all w-full sm:w-auto",
                 display === "true"
                   ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-                  : "border-border bg-input text-muted-foreground hover:text-foreground hover:bg-accent"
+                  : "border-border bg-input text-muted-foreground hover:text-foreground hover:bg-accent",
+                saving && "opacity-60 cursor-not-allowed"
               )}
             >
-              {display === "true" ? (
+              {saving ? (
+                <Loader2 size={13} className="animate-spin shrink-0" />
+              ) : display === "true" ? (
                 <ToggleRight size={15} className="shrink-0" />
               ) : (
                 <ToggleLeft size={15} className="shrink-0" />

@@ -109,6 +109,20 @@ const VIDEO_EFFECTS = [
   { value: "cinematic", label: "Sinematik (Letterbox)" },
 ];
 
+// camelCase frontend key → snake_case backend key eşleştirmesi
+const KEY_MAP: Partial<Record<string, string>> = {
+  ttsProvider: "tts_provider",
+  visualsProvider: "visuals_provider",
+  subtitleStyle: "subtitle_style",
+  videoResolution: "video_resolution",
+  videoFps: "video_fps",
+  subtitleAnimation: "subtitle_animation",
+  subtitleFont: "subtitle_font",
+  subtitleBg: "subtitle_bg",
+  kenBurnsDirection: "ken_burns_direction",
+  videoEffect: "video_effect",
+};
+
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function UserSettings() {
@@ -144,21 +158,41 @@ export default function UserSettings() {
     return isSettingAdminOnly(key);
   }
 
+  // Auto-save: select/toggle değişince anında kaydet
+  // Tek bir key→value pair'i backend'e yazar, sonra store'u günceller
+  async function autoSaveKey<K extends keyof UserVideoDefaults>(
+    key: K,
+    value: UserVideoDefaults[K]
+  ) {
+    if (isLocked(key) || isSettingAdminOnly(key)) return;
+    const backendKey = KEY_MAP[key] ?? key;
+    setSaving(true);
+    try {
+      await api.post("/settings/user", {
+        settings: [{ scope: "user" as const, scope_id: "", key: backendKey, value }],
+      });
+      setUserDefaults({ ...userDefaults, [key]: value });
+      setForm((prev) => ({ ...prev, [key]: value }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Kayıt başarısız";
+      addToast({ type: "error", title: "Kaydedilemedi", description: message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function handleChange<K extends keyof UserVideoDefaults>(
     key: K,
     value: UserVideoDefaults[K]
   ) {
     if (isLocked(key)) return;
     setForm((prev) => ({ ...prev, [key]: value }));
+    autoSaveKey(key, value);
   }
 
   async function handleSave() {
     setSaving(true);
     try {
-      // Sadece pipeline'da fiilen okunan ayarları kaydet.
-      // Etkisiz ayarlar (subtitle_enabled, metadata_enabled, thumbnail_enabled,
-      // publish_to_youtube, youtube_privacy) henüz backend'de aktif değil — gönderilmez.
-      // Admin-only ayarları user payload'dan çıkar (schema-driven güvenlik)
       const allUserSettings = [
           { scope: "user" as const, scope_id: "", key: "language", value: form.language },
           { scope: "user" as const, scope_id: "", key: "tts_provider", value: form.ttsProvider },

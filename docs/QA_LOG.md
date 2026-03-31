@@ -64,6 +64,55 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Aktif/Pasif Bug Düzeltmesi + Geniş Kapsamlı Auto-Save
+
+### Aktif/Pasif Bug — Gerçek Root Cause
+
+Önceki düzeltme (mount'ta `loadAllEnabledStates`) kısmen işe yarıyordu ancak temel mimari sorunu çözmemişti:
+
+**Sorun:** `ModuleManager`'da şu useEffect mevcuttu:
+```typescript
+useEffect(() => {
+  if (expandedModule) {
+    setModuleSettingsMap((prev) => ({ ...prev, [expandedModule]: settings }));
+  }
+}, [settings, expandedModule]);
+```
+`settings` → adminStore'daki **paylaşılan global state**. `loadAllEnabledStates` mount'ta direkt fetch yapıp `moduleSettingsMap`'e yazıyordu. Accordion açılınca `fetchSettings("module", key)` → `settings` güncelleniyor → useEffect `moduleSettingsMap[expandedModule]`'i eziyordu. Bu race condition + stale state patikası news_bulletin'in pasif görünmesine yol açıyordu: mount'ta fetch `enabled=false` buluyordu, accordion açılınca `fetchSettings` global `settings`'i güncelliyordu ve useEffect bunu map'e yazarken `enabled` kaydı bazen farklı sırayla ya da başka bir fetch'in sonuçlarıyla çakışıyordu.
+
+**Gerçek düzeltme:** `loadModuleSettings` → adminStore `fetchSettings` çağırmak yerine **direkt fetch** yapıp sonucu `moduleSettingsMap`'e yazıyor. Global `settings` state'e hiç dokunulmuyor. `useEffect([settings, expandedModule])` tamamen kaldırıldı.
+
+### Auto-Save — Kapsam ve Davranış
+
+| Yüzey | Alan Tipi | Davranış |
+|---|---|---|
+| ModuleManager → AdminSettingRow | toggle | Tıklayınca anında kaydeder (önceden de böyleydi) |
+| ModuleManager → AdminSettingRow | select | Seçim değişince anında kaydeder (**YENİ**) |
+| ModuleManager → AdminSettingRow | text/number | `dirty` → manuel Kaydet butonu (debounce mantığı) |
+| GlobalSettings → SettingRow | toggle | Tıklayınca anında kaydeder (**YENİ**) |
+| GlobalSettings → SettingRow | select/text/password/path | `dirty` → manuel Kaydet butonu (değişmedi) |
+| UserSettings | select (language, tts, visuals, resolution, fps, vb.) | Seçim değişince anında kaydeder (**YENİ**) |
+| UserSettings | (genel) | Manuel "Kaydet" butonu korundu (fallback) |
+
+YTRobot-v3 referans analizi: benzer bir auto-save yok, tüm ayarlar form gönderme ile kaydediliyor. ContentManager'ın mevcut per-row mimarisine daha uygun bir yaklaşım seçildi.
+
+### Değiştirilen Dosyalar
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/admin/ModuleManager.tsx` | `loadModuleSettings` direkt fetch'e geçirildi; `useEffect([settings,expandedModule])` kaldırıldı; select için auto-save eklendi |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | Toggle için auto-save eklendi (onClick → anında save) |
+| `frontend/src/pages/user/UserSettings.tsx` | `autoSaveKey()` fonksiyonu eklendi; `handleChange` → `autoSaveKey` çağırıyor; `KEY_MAP` sabiti eklendi |
+
+### Test Sonuçları
+
+| Test Türü | Sonuç |
+|---|---|
+| `frontend tsc --noEmit` | ✅ PASS |
+| `pytest backend/tests/` | ✅ 124 geçti, 1 atlandı |
+
+---
+
 ## 2026-03-31 — Admin Bilgi Mimarisi Yeniden Yapılandırması
 
 ### Değişiklik Özeti

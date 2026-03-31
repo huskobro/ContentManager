@@ -94,7 +94,7 @@ function getAdminPin() {
 // ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function ModuleManager() {
-  const { settings, loading, error, fetchSettings, createSetting, updateSetting } =
+  const { loading, error, createSetting, updateSetting } =
     useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
@@ -133,21 +133,28 @@ export default function ModuleManager() {
   }, [loadAllEnabledStates]);
 
   // Belirli bir modülün tüm ayarlarını yükle (accordion açılırken)
+  // Global adminStore settings[] state'ine dokunmadan direkt moduleSettingsMap'e yazar.
   const loadModuleSettings = useCallback(
     async (moduleKey: string) => {
       setModuleLoadingMap((prev) => ({ ...prev, [moduleKey]: true }));
-      await fetchSettings("module", moduleKey);
-      setModuleLoadingMap((prev) => ({ ...prev, [moduleKey]: false }));
+      try {
+        const pin = getAdminPin();
+        const res = await fetch(
+          `/api/settings?scope=module&scope_id=${moduleKey}`,
+          { headers: { "X-Admin-Pin": pin } }
+        );
+        if (res.ok) {
+          const data: SettingRecord[] = await res.json();
+          setModuleSettingsMap((prev) => ({ ...prev, [moduleKey]: data }));
+        }
+      } catch {
+        // sessizce atla
+      } finally {
+        setModuleLoadingMap((prev) => ({ ...prev, [moduleKey]: false }));
+      }
     },
-    [fetchSettings]
+    []
   );
-
-  // fetchSettings global settings[] state'ini günceller → map'e yaz
-  useEffect(() => {
-    if (expandedModule) {
-      setModuleSettingsMap((prev) => ({ ...prev, [expandedModule]: settings }));
-    }
-  }, [settings, expandedModule]);
 
   function handleToggleAccordion(key: string) {
     if (expandedModule === key) {
@@ -404,23 +411,23 @@ function AdminSettingRow({ def, dbSettings, onSave }: {
           <div className="flex items-center gap-2 flex-1">
             <select
               value={localVal}
-              onChange={(e) => { setLocalVal(e.target.value); setDirty(true); }}
-              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              onChange={async (e) => {
+                const next = e.target.value;
+                setLocalVal(next);
+                setSaving(true);
+                await onSave(def, next);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
             >
               {def.options.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-            {dirty && (
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
-                Kaydet
-              </button>
-            )}
+            {saving && <Loader2 size={11} className="animate-spin text-muted-foreground" />}
           </div>
         ) : (
           <div className="flex items-center gap-2 flex-1">
