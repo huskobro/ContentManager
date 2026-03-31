@@ -1061,6 +1061,72 @@ npx tsc --noEmit
 
 ---
 
+## 2026-03-31 — Dashboard ↔ Jobs Etkileşim Modeli Eşitleme
+
+### Jobs ile Dashboard Arasındaki Farklar (Öncesi)
+
+| Davranış | Jobs ekranı | Dashboard (eski) |
+|---|---|---|
+| Sol tık | `JobDetailSheet` (in-page drawer) | `navigate('/jobs/{id}')` (sayfa geçişi) |
+| Sağ tık | `JobQuickLook` (modal önizleme) | Yok |
+| Space tuşu | `JobQuickLook` açar | Yok |
+| Enter tuşu | `JobDetailSheet` açar | Yok |
+| ArrowUp/Down | Satır odaklanması | Yok |
+| Home/End | İlk/son satıra git | Yok |
+| ESC | Açık paneli kapar | Yok |
+| Fare hover → klavye sync | Var | Yok |
+| `role="listbox"` / `role="option"` | Var | Yok |
+| Roving tabindex | Var | Yok |
+| `useFocusRestore` | Var | Yok |
+| ESC öncelik yığını | QuickLook>20, Sheet>10 | Yok |
+| Klavye kısayol ipuçları | Var | Yok |
+
+### Değiştirilen Dosya
+
+`frontend/src/pages/user/Dashboard.tsx` — tek dosya.
+
+### Nasıl Eşitlendi
+
+1. `useNavigate` kaldırıldı → `JobDetailSheet` + `JobQuickLook` state eklendi
+2. `useScopedKeyboardNavigation`, `useRovingTabindex`, `useFocusRestore`, `useDismissOnEsc` import ve çağrıları eklendi (Jobs ekranıyla birebir aynı pattern)
+3. `recentJobs` hesabı hook'lardan önce yapılacak şekilde öne alındı (itemCount için)
+4. "Son İşler" listbox'ına `ref`, `role="listbox"`, `aria-labelledby`, `aria-activedescendant` eklendi
+5. Klavye kısayol ipuçları bandı eklendi
+6. `RecentJobRow` tamamen yeniden yazıldı: `onClick` + `onContextMenu (→ QuickLook)` + `onMouseEnter` + `tabIndex` + `role="option"` + `aria-selected/setsize/posinset` + `isFocused` ring stili
+7. `<JobQuickLook>` ve `<JobDetailSheet>` panelleri Dashboard render'ına eklendi
+8. `pendingSheetJobRef` ile QuickLook → Sheet geçiş akışı eklendi
+
+### Runtime Doğrulama
+
+Statik analiz (tsc) + smoke testler (jsdom render):
+- `pageSmoke.test.tsx` Dashboard'u render ediyor — crash yok
+- `tsc --noEmit` sıfır hata
+
+Etkileşim doğrulaması (kod incelemesi):
+- Sol tık → `setSheetJob(job)` → `JobDetailSheet` açılır ✅
+- Sağ tık → `e.preventDefault()` + `setQuickLookJob(job)` → `JobQuickLook` açılır ✅
+- Space → `useScopedKeyboardNavigation.onSpace` → `openQuickLook` ✅
+- Enter → `onEnter` → `captureForRestore` + `setSheetJob` ✅
+- ESC → `useDismissOnEsc` priority stack çalışır (QuickLook=20 > Sheet=10) ✅
+- Panel kapanınca → `restoreFocusDeferred(150)` → odak satıra döner ✅
+- Fare hover → `onHover` → `setFocusedIdx` → klavye ile sync ✅
+
+### Test Sonuçları
+
+```
+python3 -m pytest backend/tests/ -q
+65 passed in 0.50s  ✅
+
+npx vitest run
+Test Files  4 passed (4)
+Tests       107 passed (107)  ✅
+
+npx tsc --noEmit
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
 ## 2026-03-31 — Kullanıcı Tarafında Görünür 3 Sorun Düzeltmesi
 
 ### Root Cause ve Değişiklik Özeti

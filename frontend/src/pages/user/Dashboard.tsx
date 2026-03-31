@@ -7,14 +7,20 @@
  *   • Son işler listesi (GET /api/jobs ile beslenir)
  *   • Hızlı eylem kısayolları
  *
+ * Son İşler Etkileşim Modeli (Jobs ekranıyla aynı):
+ *   • Sol tık / Enter → JobDetailSheet (in-page drawer)
+ *   • Sağ tık / Space → JobQuickLook (modal önizleme)
+ *   • ArrowUp/Down/Home/End → satır odaklanması
+ *   • ESC → açık paneli kapar
+ *   • Fare hover → klavye odağını o satıra taşır
+ *
  * Gerçek Zamanlı Güncelleme:
  *   Global SSE stream'e (GET /api/jobs/stream) bağlanır.
- *   Herhangi bir job değiştiğinde store reaktif olarak güncellenir.
  *   Polling (setInterval) kullanılmaz.
  */
 
-import { useEffect, useState, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Link } from "react-router-dom";
 import {
   LayoutDashboard,
   PlusCircle,
@@ -33,6 +39,12 @@ import { useJobStore, type Job } from "@/stores/jobStore";
 import { useUIStore } from "@/stores/uiStore";
 import { STATUS_CONFIG, MODULE_INFO, getModuleIcon } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { JobQuickLook } from "@/components/jobs/JobQuickLook";
+import { JobDetailSheet } from "@/components/jobs/JobDetailSheet";
+import { useScopedKeyboardNavigation } from "@/hooks/useScopedKeyboardNavigation";
+import { useRovingTabindex } from "@/hooks/useRovingTabindex";
+import { useFocusRestore } from "@/hooks/useFocusRestore";
+import { useDismissOnEsc } from "@/hooks/useDismissStack";
 
 // ─── Sağlık tipi ─────────────────────────────────────────────────────────────
 
@@ -48,10 +60,86 @@ interface HealthResponse {
 export default function Dashboard() {
   const { stats, jobs, loading, error, fetchJobs, fetchStats, connectGlobalStream } = useJobStore();
   const addToast = useUIStore((s) => s.addToast);
-  const navigate = useNavigate();
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
+
+  // ── Panel State ────────────────────────────────────────────────────────────
+  const [quickLookJob, setQuickLookJob] = useState<Job | null>(null);
+  const [sheetJob, setSheetJob]         = useState<Job | null>(null);
+  const listRef                         = useRef<HTMLDivElement>(null);
+  const pendingSheetJobRef              = useRef<Job | null>(null);
+
+  const anyPanelOpen = quickLookJob !== null || sheetJob !== null;
+
+  // ── Odak Geri Yükleme ──────────────────────────────────────────────────────
+  const { captureForRestore, restoreFocusDeferred } = useFocusRestore();
+
+  // Son 5 iş (tarih sırasına göre) — hooks'tan önce hesaplanmalı (itemCount için)
+  const recentJobs = [...jobs]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5);
+
+  // ── Klavye Navigasyonu & Roving Tabindex ──────────────────────────────────
+  const notifyKeyboardRef = useRef<(() => void) | undefined>(undefined);
+
+  const { focusedIdx, setFocusedIdx, scopeId } = useScopedKeyboardNavigation({
+    itemCount: recentJobs.length,
+    disabled: anyPanelOpen,
+    scrollRef: listRef as React.RefObject<HTMLElement | null>,
+    homeEnd: true,
+    onSpace: (idx) => openQuickLook(recentJobs[idx]),
+    onEnter: (idx) => {
+      setFocusedIdx(idx);
+      captureForRestore();
+      setSheetJob(recentJobs[idx]);
+    },
+    onEscape: () => {
+      setQuickLookJob(null);
+      setSheetJob(null);
+    },
+    onKeyboardMove: () => notifyKeyboardRef.current?.(),
+  });
+
+  const { getTabIndex, notifyKeyboard } = useRovingTabindex({
+    focusedIdx,
+    itemCount: recentJobs.length,
+    containerRef: listRef as React.RefObject<HTMLElement | null>,
+  });
+
+  notifyKeyboardRef.current = notifyKeyboard;
+
+  // ── ESC Kapatma Yığını ────────────────────────────────────────────────────
+  useDismissOnEsc(quickLookJob !== null, () => setQuickLookJob(null), 20);
+  useDismissOnEsc(sheetJob !== null, () => {
+    setSheetJob(null);
+    restoreFocusDeferred(150);
+  }, 10);
+
+  // ── Quick Look / Sheet Yardımcıları ────────────────────────────────────────
+  function openQuickLook(job: Job) {
+    captureForRestore();
+    pendingSheetJobRef.current = job;
+    setQuickLookJob(job);
+  }
+
+  function closeQuickLook() {
+    setQuickLookJob(null);
+    restoreFocusDeferred(80);
+  }
+
+  function handleOpenDeepDiveFromQuickLook() {
+    const job = pendingSheetJobRef.current;
+    if (job) {
+      setSheetJob(job);
+      pendingSheetJobRef.current = null;
+    }
+  }
+
+  function closeSheet() {
+    setSheetJob(null);
+    restoreFocusDeferred(150);
+  }
 
   const loadData = useCallback(() => {
     fetchJobs({ page: 1, page_size: 10 });
@@ -59,30 +147,18 @@ export default function Dashboard() {
   }, [fetchJobs, fetchStats]);
 
   useEffect(() => {
-    // İlk veri yüklemesi
     loadData();
 
-    // Health check
     fetch("/health")
       .then((r) => r.json())
       .then((data: HealthResponse) => setHealth(data))
       .catch(() => addToast({ type: "error", title: "Backend'e bağlanılamadı" }))
       .finally(() => setHealthLoading(false));
 
-    // Global SSE stream'e bağlan — polling yok, push-based gerçek zamanlı güncelleme
-    // Herhangi bir job değiştiğinde store otomatik güncellenir
     const closeStream = connectGlobalStream();
-
-    return () => {
-      closeStream();
-    };
+    return () => { closeStream(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Son 5 işi al (tarih sırasına göre)
-  const recentJobs = [...jobs]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -166,9 +242,20 @@ export default function Dashboard() {
       {/* Son İşler */}
       <div className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Son İşler
-          </p>
+          <div className="flex items-center gap-3">
+            <p id="recent-jobs-label" className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Son İşler
+            </p>
+            {/* Klavye kısayolu ipuçları */}
+            <span className="hidden md:flex items-center gap-1 text-[10px] text-muted-foreground/50" aria-hidden="true">
+              <kbd className="rounded border border-border px-1 font-mono">↑↓</kbd>
+              <span>seç</span>
+              <kbd className="rounded border border-border px-1 font-mono ml-1">Space</kbd>
+              <span>önizle</span>
+              <kbd className="rounded border border-border px-1 font-mono ml-1">Enter</kbd>
+              <span>detay</span>
+            </span>
+          </div>
           <Link
             to="/jobs"
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
@@ -186,10 +273,7 @@ export default function Dashboard() {
           <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground gap-2">
             <AlertCircle size={20} className="text-destructive" />
             <p>Veri alınamadı</p>
-            <button
-              onClick={loadData}
-              className="text-xs text-primary hover:underline"
-            >
+            <button onClick={loadData} className="text-xs text-primary hover:underline">
               Tekrar dene
             </button>
           </div>
@@ -202,13 +286,52 @@ export default function Dashboard() {
             </Link>
           </div>
         ) : (
-          <div className="divide-y divide-border">
-            {recentJobs.map((job) => (
-              <RecentJobRow key={job.id} job={job} onClick={() => navigate(`/jobs/${job.id}`)} />
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-labelledby="recent-jobs-label"
+            aria-activedescendant={focusedIdx >= 0 ? `${scopeId}-opt-${focusedIdx}` : undefined}
+            className="divide-y divide-border"
+          >
+            {recentJobs.map((job, idx) => (
+              <RecentJobRow
+                key={job.id}
+                job={job}
+                idx={idx}
+                total={recentJobs.length}
+                scopeId={scopeId}
+                isFocused={focusedIdx === idx}
+                tabIndex={getTabIndex(idx)}
+                onHover={() => setFocusedIdx(idx)}
+                onClick={() => {
+                  setFocusedIdx(idx);
+                  captureForRestore();
+                  setSheetJob(job);
+                }}
+                onQuickLook={() => {
+                  setFocusedIdx(idx);
+                  openQuickLook(job);
+                }}
+              />
             ))}
           </div>
         )}
       </div>
+
+      {/* ── Quick Look Modal ── */}
+      <JobQuickLook
+        job={quickLookJob}
+        open={quickLookJob !== null}
+        onClose={closeQuickLook}
+        onOpenDeepDive={handleOpenDeepDiveFromQuickLook}
+      />
+
+      {/* ── Deep Dive Sheet ── */}
+      <JobDetailSheet
+        job={sheetJob}
+        open={sheetJob !== null}
+        onClose={closeSheet}
+      />
 
       {/* Hızlı Başlat */}
       <div className="rounded-xl border border-border bg-card p-4">
@@ -307,14 +430,33 @@ function QuickAction({
   );
 }
 
-function RecentJobRow({ job, onClick }: { job: Job; onClick: () => void }) {
+interface RecentJobRowProps {
+  job: Job;
+  idx: number;
+  total: number;
+  scopeId: string;
+  isFocused: boolean;
+  tabIndex: 0 | -1;
+  onHover: () => void;
+  onClick: () => void;
+  onQuickLook: () => void;
+}
+
+function RecentJobRow({
+  job,
+  idx,
+  total,
+  scopeId,
+  isFocused,
+  tabIndex,
+  onHover,
+  onClick,
+  onQuickLook,
+}: RecentJobRowProps) {
   const config = STATUS_CONFIG[job.status];
   const modMeta = MODULE_INFO[job.module_key];
-  const moduleInfo = {
-    label: modMeta?.label ?? job.module_key,
-    color: modMeta?.color ?? "text-muted-foreground",
-    icon: getModuleIcon(job.module_key, 14),
-  };
+  const modLabel = modMeta?.label ?? job.module_key;
+  const modColor = modMeta?.color ?? "text-muted-foreground";
 
   const completedSteps = job.steps.filter((s) => s.status === "completed").length;
   const totalSteps = job.steps.length;
@@ -324,21 +466,41 @@ function RecentJobRow({ job, onClick }: { job: Job; onClick: () => void }) {
 
   return (
     <button
+      id={`${scopeId}-opt-${idx}`}
+      data-nav-row
+      role="option"
+      aria-selected={isFocused}
+      aria-setsize={total}
+      aria-posinset={idx + 1}
+      tabIndex={tabIndex}
       onClick={onClick}
-      className="flex w-full items-center gap-4 px-4 py-3 text-left hover:bg-accent/50 transition-colors"
+      onMouseEnter={onHover}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onQuickLook();
+      }}
+      className={cn(
+        "flex w-full items-center gap-4 px-4 py-3 text-left transition-colors",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset",
+        isFocused
+          ? "bg-muted ring-1 ring-inset ring-primary/30"
+          : "hover:bg-accent/50"
+      )}
     >
       {/* Modül ikonu */}
-      <div className={cn("shrink-0", moduleInfo.color)}>{moduleInfo.icon}</div>
+      <div className={cn("shrink-0", modColor)} aria-hidden="true">
+        {getModuleIcon(job.module_key, 14)}
+      </div>
 
       {/* Başlık + modül */}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{job.title}</p>
-        <p className="text-xs text-muted-foreground">{moduleInfo.label}</p>
+        <p className="text-xs text-muted-foreground">{modLabel}</p>
       </div>
 
-      {/* İlerleme çubuğu (sadece aktif işlerde) */}
+      {/* İlerleme çubuğu */}
       {(job.status === "running" || job.status === "queued") && totalSteps > 0 && (
-        <div className="hidden sm:flex items-center gap-2 shrink-0">
+        <div className="hidden sm:flex items-center gap-2 shrink-0" aria-hidden="true">
           <div className="h-1.5 w-20 rounded-full bg-muted overflow-hidden">
             <div
               className="h-full rounded-full bg-primary transition-all duration-500"
@@ -350,7 +512,10 @@ function RecentJobRow({ job, onClick }: { job: Job; onClick: () => void }) {
       )}
 
       {/* Durum badge */}
-      <span className={cn("shrink-0 rounded-md px-2 py-1 text-xs font-medium", config.color, config.bg)}>
+      <span
+        className={cn("shrink-0 rounded-md px-2 py-1 text-xs font-medium", config.color, config.bg)}
+        aria-label={`Durum: ${config.label}`}
+      >
         {config.label}
       </span>
 
