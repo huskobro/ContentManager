@@ -135,6 +135,15 @@ async def run_pipeline(job_id: str) -> None:
         config["_job_id"] = job_id
         config["_language"] = job.language
 
+        # ── Kategori / hook override'larini DB'den yukle ──────────────────
+        # Admin panelden duzenlenmis kategori/hook metinleri runtime'a aktarilir.
+        # Bu cagri idempotent — her pipeline baslatmasinda taze yukler.
+        try:
+            from backend.pipeline.steps.script import load_overrides_from_db
+            load_overrides_from_db(db)
+        except Exception as _ov_err:
+            log.warning("Kategori/hook override yuklenemedi (hardcoded kullanilacak)", error=str(_ov_err))
+
         # ── CacheManager oluştur ───────────────────────────────────────────
         from pathlib import Path
         session_dir = Path(job.session_dir) if job.session_dir else None

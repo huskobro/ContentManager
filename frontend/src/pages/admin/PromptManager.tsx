@@ -1,11 +1,15 @@
 /**
- * PromptManager — Modül bazlı Master Prompt yönetimi.
+ * PromptManager — Master Prompt Yönetimi.
  *
- * Sol: dikey modül menüsü (Standard Video / Haber Bülteni / Ürün İnceleme)
- * Sağ: seçili modüle ait prompt alanları (büyük Textarea)
+ * Üç sekme:
+ *   1. Modül Promptları  — script_prompt_template / metadata_prompt_template (modül bazlı)
+ *   2. Kategoriler       — 6 kategori için ton/odak/stil talimatı override + enabled toggle
+ *   3. Açılış Hook'ları  — 8 hook tipi (tr/en) için ad/şablon override + enabled toggle
  *
- * Kayıt: scope="module", scope_id="{module_key}", key="{prompt_key}"
- * Boş bırakılırsa system default kullanılır.
+ * Kayıt yolları:
+ *   • Modül promptları: scope="module", scope_id="{module_key}", key="{prompt_key}"
+ *   • Kategori override: PUT /api/admin/categories/{key}
+ *   • Hook override:     PUT /api/admin/hooks/{type}/{lang}
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -20,6 +24,11 @@ import {
   AlertCircle,
   RefreshCw,
   Info,
+  Tag,
+  Zap,
+  RotateCcw,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -35,7 +44,6 @@ const MODULES = [
     icon: <Video size={16} />,
     color: "text-blue-400",
     activeBg: "bg-blue-500/10 border-blue-500/30",
-    accentColor: "text-blue-400",
   },
   {
     key: "news_bulletin" as const,
@@ -44,7 +52,6 @@ const MODULES = [
     icon: <Newspaper size={16} />,
     color: "text-amber-400",
     activeBg: "bg-amber-500/10 border-amber-500/30",
-    accentColor: "text-amber-400",
   },
   {
     key: "product_review" as const,
@@ -53,7 +60,6 @@ const MODULES = [
     icon: <ShoppingBag size={16} />,
     color: "text-emerald-400",
     activeBg: "bg-emerald-500/10 border-emerald-500/30",
-    accentColor: "text-emerald-400",
   },
 ] as const;
 
@@ -142,9 +148,45 @@ const PROMPTS_BY_MODULE: Record<ModuleKey, PromptDef[]> = {
   ],
 };
 
+// ─── Backend Tipleri ──────────────────────────────────────────────────────────
+
+interface CategoryDetail {
+  key: string;
+  name_tr: string;
+  name_en: string;
+  tone: string;
+  focus: string;
+  style_instruction: string;
+  default_tone: string;
+  default_focus: string;
+  default_style_instruction: string;
+  has_override: boolean;
+  enabled: boolean;
+}
+
+interface HookDetail {
+  type: string;
+  name: string;
+  template: string;
+  default_name: string;
+  default_template: string;
+  has_override: boolean;
+  enabled: boolean;
+}
+
 // ─── Ana Bileşen ─────────────────────────────────────────────────────────────
 
+type Tab = "prompts" | "categories" | "hooks";
+
 export default function PromptManager() {
+  const [activeTab, setActiveTab] = useState<Tab>("prompts");
+
+  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    { id: "prompts", label: "Modül Promptları", icon: <FileText size={14} /> },
+    { id: "categories", label: "Kategoriler", icon: <Tag size={14} /> },
+    { id: "hooks", label: "Açılış Hook'ları", icon: <Zap size={14} /> },
+  ];
+
   const { createSetting, updateSetting, deleteSetting } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
@@ -160,13 +202,21 @@ export default function PromptManager() {
     product_review: false,
   });
 
+  const [categories, setCategories] = useState<CategoryDetail[]>([]);
+  const [categoryLoading, setCategoryLoading] = useState(false);
+
+  const [hooks, setHooks] = useState<{ tr: HookDetail[]; en: HookDetail[] }>({ tr: [], en: [] });
+  const [hookLang, setHookLang] = useState<"tr" | "en">("tr");
+  const [hookLoading, setHookLoading] = useState(false);
+
+  const adminPin = localStorage.getItem("cm-admin-pin") ?? "0000";
+
   async function loadModuleSettings(moduleKey: ModuleKey) {
     setLoadingMap((prev) => ({ ...prev, [moduleKey]: true }));
     try {
-      const pin = localStorage.getItem("cm-admin-pin") ?? "0000";
       const query = new URLSearchParams({ scope: "module", scope_id: moduleKey });
       const res = await fetch(`/api/settings?${query.toString()}`, {
-        headers: { "X-Admin-Pin": pin },
+        headers: { "X-Admin-Pin": adminPin },
       });
       if (res.ok) {
         const data: SettingRecord[] = await res.json();
@@ -179,23 +229,55 @@ export default function PromptManager() {
     }
   }
 
+  async function loadCategories() {
+    setCategoryLoading(true);
+    try {
+      const res = await fetch("/api/admin/categories", {
+        headers: { "X-Admin-Pin": adminPin },
+      });
+      if (res.ok) {
+        setCategories(await res.json());
+      }
+    } catch {
+      // sessiz
+    } finally {
+      setCategoryLoading(false);
+    }
+  }
+
+  async function loadHooks(lang: "tr" | "en") {
+    setHookLoading(true);
+    try {
+      const res = await fetch(`/api/admin/hooks/${lang}`, {
+        headers: { "X-Admin-Pin": adminPin },
+      });
+      if (res.ok) {
+        const data: HookDetail[] = await res.json();
+        setHooks((prev) => ({ ...prev, [lang]: data }));
+      }
+    } catch {
+      // sessiz
+    } finally {
+      setHookLoading(false);
+    }
+  }
+
   const loadAll = useCallback(async () => {
-    await Promise.all(MODULES.map((m) => loadModuleSettings(m.key)));
-  }, []);
+    await Promise.all([
+      ...MODULES.map((m) => loadModuleSettings(m.key)),
+      loadCategories(),
+      loadHooks("tr"),
+      loadHooks("en"),
+    ]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     loadAll();
   }, [loadAll]);
 
-  const activeModuleMeta = MODULES.find((m) => m.key === activeModule)!;
-  const activePrompts = PROMPTS_BY_MODULE[activeModule];
-  const activeSettings = settingsMap[activeModule];
-  const isLoading = loadingMap[activeModule];
-
   async function handleSavePrompt(def: PromptDef, value: string) {
-    const existing = activeSettings.find((s) => s.key === def.key);
+    const existing = settingsMap[activeModule].find((s) => s.key === def.key);
 
-    // Boş değer → kaydı sil (sistem varsayılan promptu kullanılacak)
     if (value.trim() === "") {
       if (existing) {
         const ok = await deleteSetting(existing.id);
@@ -246,6 +328,90 @@ export default function PromptManager() {
     }
   }
 
+  async function handleSaveCategory(cat: CategoryDetail, patch: Partial<CategoryDetail>) {
+    const body = {
+      tone: patch.tone ?? cat.tone,
+      focus: patch.focus ?? cat.focus,
+      style_instruction: patch.style_instruction ?? cat.style_instruction,
+      enabled: patch.enabled ?? cat.enabled,
+    };
+    try {
+      const res = await fetch(`/api/admin/categories/${cat.key}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": adminPin },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        await loadCategories();
+        addToast({ type: "success", title: "Kategori güncellendi", description: cat.name_tr });
+      } else {
+        addToast({ type: "error", title: "Güncellenemedi", description: cat.name_tr });
+      }
+    } catch {
+      addToast({ type: "error", title: "Bağlantı hatası", description: cat.name_tr });
+    }
+  }
+
+  async function handleResetCategory(cat: CategoryDetail) {
+    try {
+      const res = await fetch(`/api/admin/categories/${cat.key}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": adminPin },
+        body: JSON.stringify({ tone: null, focus: null, style_instruction: null, enabled: true }),
+      });
+      if (res.ok) {
+        await loadCategories();
+        addToast({ type: "info", title: "Kategori sıfırlandı", description: `${cat.name_tr} — hardcoded değerler kullanılacak.` });
+      }
+    } catch {
+      addToast({ type: "error", title: "Sıfırlanamadı", description: cat.name_tr });
+    }
+  }
+
+  async function handleSaveHook(hook: HookDetail, lang: "tr" | "en", patch: Partial<HookDetail>) {
+    const body = {
+      name: patch.name ?? hook.name,
+      template: patch.template ?? hook.template,
+      enabled: patch.enabled ?? hook.enabled,
+    };
+    try {
+      const res = await fetch(`/api/admin/hooks/${hook.type}/${lang}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": adminPin },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        await loadHooks(lang);
+        addToast({ type: "success", title: "Hook güncellendi", description: hook.name });
+      } else {
+        addToast({ type: "error", title: "Güncellenemedi", description: hook.name });
+      }
+    } catch {
+      addToast({ type: "error", title: "Bağlantı hatası", description: hook.name });
+    }
+  }
+
+  async function handleResetHook(hook: HookDetail, lang: "tr" | "en") {
+    try {
+      const res = await fetch(`/api/admin/hooks/${hook.type}/${lang}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Pin": adminPin },
+        body: JSON.stringify({ name: null, template: null, enabled: true }),
+      });
+      if (res.ok) {
+        await loadHooks(lang);
+        addToast({ type: "info", title: "Hook sıfırlandı", description: `${hook.default_name} — hardcoded değer kullanılacak.` });
+      }
+    } catch {
+      addToast({ type: "error", title: "Sıfırlanamadı", description: hook.name });
+    }
+  }
+
+  const activeModuleMeta = MODULES.find((m) => m.key === activeModule)!;
+  const activePrompts = PROMPTS_BY_MODULE[activeModule];
+  const activeSettings = settingsMap[activeModule];
+  const isModuleLoading = loadingMap[activeModule];
+
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       {/* Başlık */}
@@ -263,116 +429,213 @@ export default function PromptManager() {
         </button>
       </div>
 
-      {/* Bilgi notu */}
-      <div className="flex items-start gap-2 rounded-lg bg-violet-500/10 border border-violet-500/20 px-3 py-2.5 text-xs text-violet-300">
-        <Info size={13} className="mt-0.5 shrink-0" />
-        <span>
-          Buradaki promptlar video üretimi sırasında LLM'e gönderilir.{" "}
-          <span className="text-violet-300/70">
-            Boş bırakılan alanlar için sistem varsayılan promptu kullanılır.{" "}
-            Değişkenler: <code className="font-mono bg-violet-500/20 px-1 rounded">&#123;topic&#125;</code>,{" "}
-            <code className="font-mono bg-violet-500/20 px-1 rounded">&#123;product_name&#125;</code>,{" "}
-            <code className="font-mono bg-violet-500/20 px-1 rounded">&#123;news_items&#125;</code>
-          </span>
-        </span>
+      {/* Sekme çubuğu */}
+      <div className="flex gap-1 rounded-xl border border-border bg-card p-1">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all",
+              activeTab === tab.id
+                ? "bg-violet-500/15 text-violet-300 border border-violet-500/30"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/40"
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Ana içerik — sol modül menüsü + sağ editör */}
-      <div className="flex gap-4">
-        {/* Sol: modül menüsü */}
-        <div className="w-52 shrink-0 space-y-1">
-          {MODULES.map((mod) => {
-            const isActive = activeModule === mod.key;
-            const settings = settingsMap[mod.key];
-            const filledCount = PROMPTS_BY_MODULE[mod.key].filter((p) =>
-              settings.some((s) => s.key === p.key && s.value)
-            ).length;
-            const totalCount = PROMPTS_BY_MODULE[mod.key].length;
+      {/* ── Sekme 1: Modül Promptları ───────────────────────────────────────── */}
+      {activeTab === "prompts" && (
+        <>
+          <div className="flex items-start gap-2 rounded-lg bg-violet-500/10 border border-violet-500/20 px-3 py-2.5 text-xs text-violet-300">
+            <Info size={13} className="mt-0.5 shrink-0" />
+            <span>
+              Buradaki promptlar video üretimi sırasında LLM'e gönderilir.{" "}
+              <span className="text-violet-300/70">
+                Boş bırakılan alanlar için sistem varsayılan promptu kullanılır.{" "}
+                Değişkenler: <code className="font-mono bg-violet-500/20 px-1 rounded">&#123;topic&#125;</code>,{" "}
+                <code className="font-mono bg-violet-500/20 px-1 rounded">&#123;product_name&#125;</code>,{" "}
+                <code className="font-mono bg-violet-500/20 px-1 rounded">&#123;news_items&#125;</code>
+              </span>
+            </span>
+          </div>
 
-            return (
-              <button
-                key={mod.key}
-                type="button"
-                onClick={() => setActiveModule(mod.key)}
-                className={cn(
-                  "w-full flex items-start gap-3 rounded-xl border p-3 text-left transition-all",
-                  isActive
-                    ? cn("border", mod.activeBg)
-                    : "border-border bg-card hover:bg-accent/30"
-                )}
-              >
-                <span className={cn("mt-0.5 shrink-0", isActive ? mod.color : "text-muted-foreground")}>
-                  {mod.icon}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p
+          <div className="flex gap-4">
+            {/* Sol: modül menüsü */}
+            <div className="w-52 shrink-0 space-y-1">
+              {MODULES.map((mod) => {
+                const isActive = activeModule === mod.key;
+                const modSettings = settingsMap[mod.key];
+                const filledCount = PROMPTS_BY_MODULE[mod.key].filter((p) =>
+                  modSettings.some((s) => s.key === p.key && s.value)
+                ).length;
+                const totalCount = PROMPTS_BY_MODULE[mod.key].length;
+
+                return (
+                  <button
+                    key={mod.key}
+                    type="button"
+                    onClick={() => setActiveModule(mod.key)}
                     className={cn(
-                      "text-xs font-medium",
-                      isActive ? "text-foreground" : "text-muted-foreground"
+                      "w-full flex items-start gap-3 rounded-xl border p-3 text-left transition-all",
+                      isActive
+                        ? cn("border", mod.activeBg)
+                        : "border-border bg-card hover:bg-accent/30"
                     )}
                   >
-                    {mod.label}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/60 mt-0.5">{mod.description}</p>
-                  <div className="mt-1.5 flex items-center gap-1">
-                    <div className="h-1 flex-1 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={cn(
-                          "h-full rounded-full transition-all",
-                          isActive ? mod.color.replace("text-", "bg-") : "bg-muted-foreground/40"
-                        )}
-                        style={{ width: `${(filledCount / totalCount) * 100}%` }}
-                      />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground/50 shrink-0">
-                      {filledCount}/{totalCount}
+                    <span className={cn("mt-0.5 shrink-0", isActive ? mod.color : "text-muted-foreground")}>
+                      {mod.icon}
                     </span>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Sağ: prompt editörler */}
-        <div className="flex-1 min-w-0">
-          <div className="rounded-xl border border-border bg-card overflow-hidden">
-            {/* Modül başlığı */}
-            <div
-              className={cn(
-                "flex items-center gap-2 border-b border-border px-4 py-3",
-                activeModuleMeta.activeBg.split(" ")[0]
-              )}
-            >
-              <span className={activeModuleMeta.color}>{activeModuleMeta.icon}</span>
-              <p className="text-sm font-semibold text-foreground">{activeModuleMeta.label}</p>
-              <span className="text-xs text-muted-foreground">— Prompt Şablonları</span>
+                    <div className="min-w-0 flex-1">
+                      <p className={cn("text-xs font-medium", isActive ? "text-foreground" : "text-muted-foreground")}>
+                        {mod.label}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">{mod.description}</p>
+                      <div className="mt-1.5 flex items-center gap-1">
+                        <div className="h-1 flex-1 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={cn("h-full rounded-full transition-all", isActive ? mod.color.replace("text-", "bg-") : "bg-muted-foreground/40")}
+                            style={{ width: `${(filledCount / totalCount) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground/50 shrink-0">
+                          {filledCount}/{totalCount}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
-            {isLoading ? (
-              <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
-                <Loader2 size={16} className="animate-spin mr-2" />
-                Yükleniyor...
+            {/* Sağ: prompt editörler */}
+            <div className="flex-1 min-w-0">
+              <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <div className={cn("flex items-center gap-2 border-b border-border px-4 py-3", activeModuleMeta.activeBg.split(" ")[0])}>
+                  <span className={activeModuleMeta.color}>{activeModuleMeta.icon}</span>
+                  <p className="text-sm font-semibold text-foreground">{activeModuleMeta.label}</p>
+                  <span className="text-xs text-muted-foreground">— Prompt Şablonları</span>
+                </div>
+
+                {isModuleLoading ? (
+                  <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+                    <Loader2 size={16} className="animate-spin mr-2" />
+                    Yükleniyor...
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {activePrompts.map((def) => {
+                      const dbRecord = activeSettings.find((s) => s.key === def.key) ?? null;
+                      return (
+                        <PromptEditor
+                          key={`${activeModule}-${def.key}`}
+                          def={def}
+                          dbRecord={dbRecord}
+                          onSave={handleSavePrompt}
+                          accentColor={activeModuleMeta.color}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {activePrompts.map((def) => {
-                  const dbRecord = activeSettings.find((s) => s.key === def.key) ?? null;
-                  return (
-                    <PromptEditor
-                      key={`${activeModule}-${def.key}`}
-                      def={def}
-                      dbRecord={dbRecord}
-                      onSave={handleSavePrompt}
-                      accentColor={activeModuleMeta.color}
-                    />
-                  );
-                })}
-              </div>
-            )}
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
+
+      {/* ── Sekme 2: Kategoriler ─────────────────────────────────────────────── */}
+      {activeTab === "categories" && (
+        <>
+          <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-xs text-amber-300">
+            <Info size={13} className="mt-0.5 shrink-0" />
+            <span>
+              Kategori içerikleri (Ton, Odak, Stil Talimatı) LLM system prompt'una eklenir.{" "}
+              <span className="text-amber-300/70">
+                Boş bırakılan alanlar hardcoded varsayılan değeri kullanır. Genel kategorinin içeriği hiçbir zaman eklenmez.
+                Pasif kategoriler Global Ayarlar seçim listesinde görünmeye devam eder ancak prompt'a eklenmez.
+              </span>
+            </span>
+          </div>
+
+          {categoryLoading ? (
+            <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+              <Loader2 size={16} className="animate-spin mr-2" />
+              Yükleniyor...
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {categories.map((cat) => (
+                <CategoryEditor
+                  key={cat.key}
+                  cat={cat}
+                  onSave={handleSaveCategory}
+                  onReset={handleResetCategory}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Sekme 3: Hook'lar ────────────────────────────────────────────────── */}
+      {activeTab === "hooks" && (
+        <>
+          <div className="flex items-start gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5 text-xs text-emerald-300">
+            <Info size={13} className="mt-0.5 shrink-0" />
+            <span>
+              Açılış hook'ları use_hook_variety etkin olduğunda senaryonun user prompt'una eklenir.{" "}
+              <span className="text-emerald-300/70">
+                Pasif hook'lar rastgele seçim havuzundan çıkarılır. Tüm hook'lar pasif olursa sistem tüm havuzu etkinleştirir.
+                Dil bazlı ayrım: Türkçe ve İngilizce içerik üretimi için ayrı şablonlar.
+              </span>
+            </span>
+          </div>
+
+          {/* Dil seçici */}
+          <div className="flex gap-2">
+            {(["tr", "en"] as const).map((lang) => (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => setHookLang(lang)}
+                className={cn(
+                  "rounded-lg border px-4 py-1.5 text-xs font-medium transition-colors",
+                  hookLang === lang
+                    ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
+                    : "border-border bg-card text-muted-foreground hover:bg-accent/30"
+                )}
+              >
+                {lang === "tr" ? "🇹🇷 Türkçe" : "🇬🇧 English"}
+              </button>
+            ))}
+          </div>
+
+          {hookLoading ? (
+            <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+              <Loader2 size={16} className="animate-spin mr-2" />
+              Yükleniyor...
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {hooks[hookLang].map((hook) => (
+                <HookEditor
+                  key={`${hook.type}-${hookLang}`}
+                  hook={hook}
+                  lang={hookLang}
+                  onSave={handleSaveHook}
+                  onReset={handleResetHook}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -390,7 +653,6 @@ function PromptEditor({
   onSave: (def: PromptDef, value: string) => Promise<void>;
   accentColor: string;
 }) {
-  // Kaydedilen değeri her zaman dbRecord'dan türet (stale closure önlemi)
   function getDbValue(record: SettingRecord | null): string {
     if (!record) return "";
     return typeof record.value === "string" ? record.value : JSON.stringify(record.value);
@@ -401,7 +663,6 @@ function PromptEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // dbRecord güncellendiğinde (başarılı kayıt sonrası) yerel state'i senkronize et
   useEffect(() => {
     const v = getDbValue(dbRecord);
     setValue(v);
@@ -421,7 +682,6 @@ function PromptEditor({
 
   return (
     <div className="p-4 space-y-3">
-      {/* Başlık + kaydet */}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -457,19 +717,12 @@ function PromptEditor({
                 : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
             )}
           >
-            {saving ? (
-              <Loader2 size={11} className="animate-spin" />
-            ) : saved ? (
-              <CheckCircle2 size={11} />
-            ) : (
-              <Save size={11} />
-            )}
+            {saving ? <Loader2 size={11} className="animate-spin" /> : saved ? <CheckCircle2 size={11} /> : <Save size={11} />}
             {saved ? "Kaydedildi" : "Kaydet"}
           </button>
         </div>
       </div>
 
-      {/* Textarea */}
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -483,7 +736,6 @@ function PromptEditor({
         )}
       />
 
-      {/* Alt bilgi */}
       <div className="flex items-center justify-between">
         <p className="text-[10px] text-muted-foreground/50">
           {value === "" ? (
@@ -495,10 +747,319 @@ function PromptEditor({
             `${value.length} karakter`
           )}
         </p>
-        {isDirty && (
-          <p className="text-[10px] text-amber-400/70">Kaydedilmemiş değişiklik var</p>
-        )}
+        {isDirty && <p className="text-[10px] text-amber-400/70">Kaydedilmemiş değişiklik var</p>}
       </div>
+    </div>
+  );
+}
+
+// ─── Kategori Editör ──────────────────────────────────────────────────────────
+
+function CategoryEditor({
+  cat,
+  onSave,
+  onReset,
+}: {
+  cat: CategoryDetail;
+  onSave: (cat: CategoryDetail, patch: Partial<CategoryDetail>) => Promise<void>;
+  onReset: (cat: CategoryDetail) => Promise<void>;
+}) {
+  const [tone, setTone] = useState(cat.tone);
+  const [focus, setFocus] = useState(cat.focus);
+  const [styleInstruction, setStyleInstruction] = useState(cat.style_instruction);
+  const [enabled, setEnabled] = useState(cat.enabled);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setTone(cat.tone);
+    setFocus(cat.focus);
+    setStyleInstruction(cat.style_instruction);
+    setEnabled(cat.enabled);
+  }, [cat]);
+
+  const isDirty =
+    tone !== cat.tone ||
+    focus !== cat.focus ||
+    styleInstruction !== cat.style_instruction ||
+    enabled !== cat.enabled;
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave(cat, { tone, focus, style_instruction: styleInstruction, enabled });
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function handleReset() {
+    setSaving(true);
+    await onReset(cat);
+    setSaving(false);
+  }
+
+  const isGeneral = cat.key === "general";
+
+  return (
+    <div className={cn("rounded-xl border bg-card overflow-hidden", !enabled && "opacity-60")}>
+      {/* Başlık */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex-1 flex items-center gap-3 text-left min-w-0"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-foreground">{cat.name_tr}</p>
+              <span className="text-[10px] text-muted-foreground font-mono">{cat.name_en}</span>
+              {cat.has_override && (
+                <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                  override
+                </span>
+              )}
+              {isGeneral && (
+                <span className="text-[10px] text-muted-foreground/60 italic">içerik eklenmez</span>
+              )}
+            </div>
+          </div>
+          <span className="text-[10px] text-muted-foreground/50 shrink-0">
+            {expanded ? "▲" : "▼"}
+          </span>
+        </button>
+
+        {/* Enabled toggle */}
+        <button
+          type="button"
+          onClick={() => setEnabled((v) => !v)}
+          title={enabled ? "Pasif yap" : "Aktif yap"}
+          className={cn(
+            "flex items-center gap-1 text-xs transition-colors shrink-0",
+            enabled ? "text-emerald-400" : "text-muted-foreground/50"
+          )}
+        >
+          {enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+        </button>
+      </div>
+
+      {/* Detay */}
+      {expanded && (
+        <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Ton</label>
+            <input
+              type="text"
+              value={tone}
+              onChange={(e) => setTone(e.target.value)}
+              placeholder={cat.default_tone}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Odak</label>
+            <input
+              type="text"
+              value={focus}
+              onChange={(e) => setFocus(e.target.value)}
+              placeholder={cat.default_focus}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Stil Talimatı</label>
+            <textarea
+              value={styleInstruction}
+              onChange={(e) => setStyleInstruction(e.target.value)}
+              placeholder={cat.default_style_instruction}
+              rows={4}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground font-mono outline-none focus:ring-2 focus:ring-ring transition-colors resize-y"
+            />
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            {cat.has_override ? (
+              <button
+                type="button"
+                onClick={handleReset}
+                disabled={saving}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <RotateCcw size={11} />
+                Hardcoded değere dön
+              </button>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/40">Hardcoded değer kullanılıyor</span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !isDirty}
+              className={cn(
+                "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                saved
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : isDirty
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+              )}
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : saved ? <CheckCircle2 size={11} /> : <Save size={11} />}
+              {saved ? "Kaydedildi" : "Kaydet"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Hook Editör ──────────────────────────────────────────────────────────────
+
+function HookEditor({
+  hook,
+  lang,
+  onSave,
+  onReset,
+}: {
+  hook: HookDetail;
+  lang: "tr" | "en";
+  onSave: (hook: HookDetail, lang: "tr" | "en", patch: Partial<HookDetail>) => Promise<void>;
+  onReset: (hook: HookDetail, lang: "tr" | "en") => Promise<void>;
+}) {
+  const [name, setName] = useState(hook.name);
+  const [template, setTemplate] = useState(hook.template);
+  const [enabled, setEnabled] = useState(hook.enabled);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setName(hook.name);
+    setTemplate(hook.template);
+    setEnabled(hook.enabled);
+  }, [hook]);
+
+  const isDirty = name !== hook.name || template !== hook.template || enabled !== hook.enabled;
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave(hook, lang, { name, template, enabled });
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function handleReset() {
+    setSaving(true);
+    await onReset(hook, lang);
+    setSaving(false);
+  }
+
+  return (
+    <div className={cn("rounded-xl border bg-card overflow-hidden", !enabled && "opacity-60")}>
+      {/* Başlık */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex-1 flex items-center gap-3 text-left min-w-0"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-foreground">{name}</p>
+              <span className="text-[10px] text-muted-foreground font-mono">{hook.type}</span>
+              {hook.has_override && (
+                <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                  override
+                </span>
+              )}
+              {!enabled && (
+                <span className="text-[10px] text-red-400/70 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">
+                  pasif
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground/60 mt-0.5 truncate">{template}</p>
+          </div>
+          <span className="text-[10px] text-muted-foreground/50 shrink-0">
+            {expanded ? "▲" : "▼"}
+          </span>
+        </button>
+
+        {/* Enabled toggle */}
+        <button
+          type="button"
+          onClick={() => setEnabled((v) => !v)}
+          title={enabled ? "Pasif yap" : "Aktif yap"}
+          className={cn(
+            "flex items-center gap-1 text-xs transition-colors shrink-0",
+            enabled ? "text-emerald-400" : "text-muted-foreground/50"
+          )}
+        >
+          {enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+        </button>
+      </div>
+
+      {/* Detay */}
+      {expanded && (
+        <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Görünen Ad</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={hook.default_name}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-muted-foreground">Talimat Şablonu</label>
+            <textarea
+              value={template}
+              onChange={(e) => setTemplate(e.target.value)}
+              placeholder={hook.default_template}
+              rows={4}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground font-mono outline-none focus:ring-2 focus:ring-ring transition-colors resize-y"
+            />
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            {hook.has_override ? (
+              <button
+                type="button"
+                onClick={handleReset}
+                disabled={saving}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <RotateCcw size={11} />
+                Hardcoded değere dön
+              </button>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/40">Hardcoded değer kullanılıyor</span>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !isDirty}
+              className={cn(
+                "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                saved
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : isDirty
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+              )}
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : saved ? <CheckCircle2 size={11} /> : <Save size={11} />}
+              {saved ? "Kaydedildi" : "Kaydet"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

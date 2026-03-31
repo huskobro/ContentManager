@@ -9,10 +9,20 @@ youtube_video_bot projesinden alinan en iyi prompt muhendisligi pratikleri:
 Bu fonksiyonlar dogrudan pipeline step'leri tarafindan import edilir.
 Standard video modulu config'den "category" ve "use_hook_variety" ayarlarini
 okuyarak bu fonksiyonlari kullanir.
+
+Override Sistemi:
+  Kategori ve hook metinleri admin panelden duzenlenebilir.
+  Overridelar settings tablosunda saklanir:
+    - category: scope="admin", key="category_content_{key}"
+                value = JSON: {tone, focus, style_instruction, enabled}
+    - hook:     scope="admin", key="hook_content_{type}_{lang}"
+                value = JSON: {name, template, enabled}
+  load_overrides_from_db(db) cagrisi ile runtime'a yuklenir.
 """
 
 from __future__ import annotations
 
+import json
 import random
 from typing import Any
 
@@ -240,10 +250,107 @@ _HOOKS: dict[str, list[dict[str, str]]] = {
 # Kullanilan hook tipleri -- ayni session'da tekrar onleme
 _used_hook_types: list[str] = []
 
+# ---------------------------------------------------------------------------
+# Override Sistemi -- Admin panelden duzenlenebilir icerikler
+# ---------------------------------------------------------------------------
+
+# {category_key: {tone, focus, style_instruction, enabled}}
+_category_overrides: dict[str, dict[str, Any]] = {}
+
+# {(hook_type, lang): {name, template, enabled}}
+_hook_overrides: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def load_overrides_from_db(db: Any) -> None:
+    """
+    Settings tablosundan kategori ve hook override'larini yukler.
+
+    Bu fonksiyon pipeline runner tarafindan is baslamadan once cagirilir.
+    Yoksa override'lar bos kalir ve hardcoded degerler kullanilir.
+
+    Args:
+        db: SQLAlchemy Session ornegi.
+    """
+    global _category_overrides, _hook_overrides
+
+    try:
+        from backend.models.settings import Setting
+
+        rows = (
+            db.query(Setting)
+            .filter(
+                Setting.scope == "admin",
+                Setting.scope_id == "",
+                Setting.key.like("category_content_%") | Setting.key.like("hook_content_%"),
+            )
+            .all()
+        )
+    except Exception:
+        return
+
+    new_cat: dict[str, dict[str, Any]] = {}
+    new_hook: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for row in rows:
+        try:
+            value = json.loads(row.value) if isinstance(row.value, str) else row.value
+            if not isinstance(value, dict):
+                continue
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        key: str = row.key
+        if key.startswith("category_content_"):
+            cat_key = key[len("category_content_"):]
+            new_cat[cat_key] = value
+        elif key.startswith("hook_content_"):
+            # format: hook_content_{type}_{lang}  (lang = tr | en)
+            rest = key[len("hook_content_"):]
+            # lang is always last 2 chars preceded by '_'
+            if "_" in rest:
+                last_underscore = rest.rfind("_")
+                hook_type = rest[:last_underscore]
+                lang = rest[last_underscore + 1:]
+                new_hook[(hook_type, lang)] = value
+
+    _category_overrides = new_cat
+    _hook_overrides = new_hook
+
+
+def _get_effective_category(key: str) -> dict[str, Any]:
+    """Hardcoded CATEGORIES uzerine override merge ederek efektif kategori bilgisini dondurur."""
+    base = dict(CATEGORIES.get(key, CATEGORIES["general"]))
+    override = _category_overrides.get(key, {})
+    for field in ("tone", "focus", "style_instruction"):
+        if override.get(field):
+            base[field] = override[field]
+    return base
+
+
+def _get_effective_hooks(language: str) -> list[dict[str, str]]:
+    """Hardcoded hook listesi uzerine override merge ederek efektif hook listesini dondurur.
+    enabled=False olan hook'lar filtrelenir."""
+    base_list = list(_HOOKS.get(language, _HOOKS.get("en", _HOOKS_TR)))
+    result = []
+    for hook in base_list:
+        override = _hook_overrides.get((hook["type"], language), {})
+        # enabled=False ise hook'u atla
+        if override.get("enabled") is False:
+            continue
+        effective = dict(hook)
+        if override.get("name"):
+            effective["name"] = override["name"]
+        if override.get("template"):
+            effective["template"] = override["template"]
+        result.append(effective)
+    return result if result else base_list  # Tum hook'lar pasifse fallback
+
 
 def get_category_prompt_enhancement(category: str) -> str:
     """
     Belirtilen kategori icin prompt zenginlestirme metni dondurur.
+
+    Admin override varsa hardcoded deger yerine override kullanilir.
 
     Args:
         category: Kategori anahtari (or. "true_crime", "science").
@@ -252,7 +359,7 @@ def get_category_prompt_enhancement(category: str) -> str:
     Returns:
         LLM system instruction'a eklenecek kategori-spesifik talimat metni.
     """
-    cat_info = CATEGORIES.get(category, CATEGORIES["general"])
+    cat_info = _get_effective_category(category)
 
     return (
         f"\n\nKATEGORI: {cat_info['name_tr']}\n"
@@ -282,7 +389,8 @@ def select_opening_hook(
     """
     global _used_hook_types
 
-    hooks = _HOOKS.get(language, _HOOKS.get("en", _HOOKS_TR))
+    # Override sistemi: efektif hook listesini al (admin override + enabled filtresi uygulanmis)
+    hooks = _get_effective_hooks(language)
 
     # Haric tutulacak tipler
     all_excludes = set(_used_hook_types)
@@ -350,7 +458,7 @@ def build_enhanced_prompt(
 
 def get_available_categories() -> list[dict[str, str]]:
     """
-    Kullanilabilir tum kategorileri dondurur.
+    Kullanilabilir tum kategorileri dondurur (sadece key + isimler).
 
     Returns:
         [{"key": "true_crime", "name_tr": "Suc & Gizem", "name_en": "True Crime"}, ...]
@@ -365,11 +473,59 @@ def get_available_categories() -> list[dict[str, str]]:
     ]
 
 
-def get_available_hooks(language: str = "tr") -> list[dict[str, str]]:
+def get_category_detail(category_key: str) -> dict[str, Any]:
     """
-    Belirtilen dildeki tum hook tiplerini dondurur.
+    Tek bir kategori icin hardcoded + override birlestirilmis tam detay dondurur.
 
     Returns:
-        [{type, name, template}, ...]
+        {key, name_tr, name_en, tone, focus, style_instruction,
+         has_override, enabled}
     """
-    return list(_HOOKS.get(language, _HOOKS.get("en", _HOOKS_TR)))
+    base = CATEGORIES.get(category_key, CATEGORIES["general"])
+    override = _category_overrides.get(category_key, {})
+    effective = _get_effective_category(category_key)
+
+    return {
+        "key": category_key,
+        "name_tr": base["name_tr"],
+        "name_en": base["name_en"],
+        "tone": effective["tone"],
+        "focus": effective["focus"],
+        "style_instruction": effective["style_instruction"],
+        "default_tone": base["tone"],
+        "default_focus": base["focus"],
+        "default_style_instruction": base["style_instruction"],
+        "has_override": bool(override),
+        "enabled": override.get("enabled", True),
+    }
+
+
+def get_all_categories_detail() -> list[dict[str, Any]]:
+    """
+    Tum kategorilerin tam detayini dondurur.
+    """
+    return [get_category_detail(key) for key in CATEGORIES]
+
+
+def get_available_hooks(language: str = "tr") -> list[dict[str, str]]:
+    """
+    Belirtilen dildeki tum hook tiplerini dondurur (override uygulanmis + enabled filtresi YOK).
+    Admin panel icin tum hook'lari listeler (disabled olanlar dahil).
+
+    Returns:
+        [{type, name, template, enabled, has_override}, ...]
+    """
+    base_list = list(_HOOKS.get(language, _HOOKS.get("en", _HOOKS_TR)))
+    result = []
+    for hook in base_list:
+        override = _hook_overrides.get((hook["type"], language), {})
+        result.append({
+            "type": hook["type"],
+            "name": override.get("name") or hook["name"],
+            "template": override.get("template") or hook["template"],
+            "default_name": hook["name"],
+            "default_template": hook["template"],
+            "enabled": override.get("enabled", True),
+            "has_override": bool(override),
+        })
+    return result

@@ -2,9 +2,13 @@
 Admin API — Admin yönetim endpoint'leri.
 
 Endpoint'ler:
-  GET  /api/admin/directories   → Verilen dizindeki alt klasörleri listele (klasör seçici için)
-  GET  /api/admin/costs         → Job maliyet özeti (provider bazlı toplam + son job'lar)
-  GET  /api/admin/stats         → Genel sistem istatistikleri
+  GET  /api/admin/directories          → Verilen dizindeki alt klasörleri listele
+  GET  /api/admin/costs                → Job maliyet özeti (provider bazlı toplam + son job'lar)
+  GET  /api/admin/stats                → Genel sistem istatistikleri
+  GET  /api/admin/categories           → Kategori listesi (override uygulanmış tam detay)
+  PUT  /api/admin/categories/{key}     → Kategori içeriğini override et (tone/focus/style_instruction/enabled)
+  GET  /api/admin/hooks/{lang}         → Hook listesi (tr veya en, override uygulanmış)
+  PUT  /api/admin/hooks/{type}/{lang}  → Hook içeriğini override et (name/template/enabled)
 
 Yetkilendirme:
   • Tüm endpoint'ler Admin PIN gerektirir (X-Admin-Pin header).
@@ -16,13 +20,17 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+import json as _json
+
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.config import settings as app_settings
 from backend.database import get_db
 from backend.models.job import Job, JobStep
+from backend.models.settings import Setting
 from backend.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -255,3 +263,193 @@ def get_admin_stats(
         "output_dir": output_dir_info,
         "max_concurrent_jobs": app_settings.max_concurrent_jobs,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kategori Yönetimi
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CategoryOverrideRequest(BaseModel):
+    tone: str | None = None
+    focus: str | None = None
+    style_instruction: str | None = None
+    enabled: bool = True
+
+
+@router.get(
+    "/admin/categories",
+    summary="Kategori listesi",
+    description="Tüm kategorileri hardcoded + admin override birleştirilmiş tam detay ile döndürür.",
+    response_model=list[dict],
+)
+def list_categories(
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> list[dict]:
+    from backend.pipeline.steps.script import load_overrides_from_db, get_all_categories_detail
+    load_overrides_from_db(db)
+    return get_all_categories_detail()
+
+
+@router.put(
+    "/admin/categories/{category_key}",
+    summary="Kategori içeriğini override et",
+    description=(
+        "Belirtilen kategori için ton, odak ve stil talimatını override eder. "
+        "Boş veya None değerler hardcoded varsayılana döner (kayıt silinir). "
+        "Override, settings tablosunda scope='admin', key='category_content_{key}' olarak saklanır."
+    ),
+    response_model=dict,
+)
+def update_category(
+    category_key: str,
+    body: CategoryOverrideRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.pipeline.steps.script import CATEGORIES, load_overrides_from_db, get_all_categories_detail
+
+    if category_key not in CATEGORIES:
+        raise HTTPException(status_code=404, detail=f"Kategori bulunamadı: {category_key}")
+
+    setting_key = f"category_content_{category_key}"
+
+    # Kayıt var mı?
+    existing = (
+        db.query(Setting)
+        .filter(Setting.scope == "admin", Setting.scope_id == "", Setting.key == setting_key)
+        .first()
+    )
+
+    # Değerler tamamen boşsa ve enabled=True ise override sil (varsayılana dön)
+    has_any_content = any([body.tone, body.focus, body.style_instruction])
+    if not has_any_content and body.enabled:
+        if existing:
+            db.delete(existing)
+            db.commit()
+        load_overrides_from_db(db)
+        return {"status": "reset", "category_key": category_key}
+
+    override_value = {
+        "tone": body.tone or "",
+        "focus": body.focus or "",
+        "style_instruction": body.style_instruction or "",
+        "enabled": body.enabled,
+    }
+    encoded = _json.dumps(override_value, ensure_ascii=False)
+
+    if existing:
+        existing.value = encoded
+        db.commit()
+        db.refresh(existing)
+    else:
+        new_row = Setting(
+            scope="admin",
+            scope_id="",
+            key=setting_key,
+            value=encoded,
+            locked=False,
+            description=f"Kategori override: {category_key}",
+        )
+        db.add(new_row)
+        db.commit()
+
+    load_overrides_from_db(db)
+    return {"status": "updated", "category_key": category_key, "override": override_value}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hook Yönetimi
+# ─────────────────────────────────────────────────────────────────────────────
+
+class HookOverrideRequest(BaseModel):
+    name: str | None = None
+    template: str | None = None
+    enabled: bool = True
+
+
+@router.get(
+    "/admin/hooks/{lang}",
+    summary="Hook listesi",
+    description="Belirtilen dildeki (tr/en) tüm hook tiplerini override uygulanmış detay ile döndürür.",
+    response_model=list[dict],
+)
+def list_hooks(
+    lang: str,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> list[dict]:
+    if lang not in ("tr", "en"):
+        raise HTTPException(status_code=400, detail="Geçerli dil: 'tr' veya 'en'")
+    from backend.pipeline.steps.script import load_overrides_from_db, get_available_hooks
+    load_overrides_from_db(db)
+    return get_available_hooks(lang)
+
+
+@router.put(
+    "/admin/hooks/{hook_type}/{lang}",
+    summary="Hook içeriğini override et",
+    description=(
+        "Belirtilen hook tipi ve dil için ad, şablon ve enabled durumunu override eder. "
+        "Override, settings tablosunda scope='admin', key='hook_content_{type}_{lang}' olarak saklanır."
+    ),
+    response_model=dict,
+)
+def update_hook(
+    hook_type: str,
+    lang: str,
+    body: HookOverrideRequest,
+    db: Session = Depends(get_db),
+    _pin: str = Depends(_require_admin),
+) -> dict:
+    from backend.pipeline.steps.script import _HOOKS, _HOOKS_TR, load_overrides_from_db
+
+    if lang not in ("tr", "en"):
+        raise HTTPException(status_code=400, detail="Geçerli dil: 'tr' veya 'en'")
+
+    hooks = _HOOKS.get(lang, _HOOKS_TR)
+    valid_types = {h["type"] for h in hooks}
+    if hook_type not in valid_types:
+        raise HTTPException(status_code=404, detail=f"Hook tipi bulunamadı: {hook_type} ({lang})")
+
+    setting_key = f"hook_content_{hook_type}_{lang}"
+    existing = (
+        db.query(Setting)
+        .filter(Setting.scope == "admin", Setting.scope_id == "", Setting.key == setting_key)
+        .first()
+    )
+
+    # Tamamen boş + enabled=True → reset (varsayılana dön)
+    has_any_content = any([body.name, body.template])
+    if not has_any_content and body.enabled:
+        if existing:
+            db.delete(existing)
+            db.commit()
+        load_overrides_from_db(db)
+        return {"status": "reset", "hook_type": hook_type, "lang": lang}
+
+    override_value = {
+        "name": body.name or "",
+        "template": body.template or "",
+        "enabled": body.enabled,
+    }
+    encoded = _json.dumps(override_value, ensure_ascii=False)
+
+    if existing:
+        existing.value = encoded
+        db.commit()
+        db.refresh(existing)
+    else:
+        new_row = Setting(
+            scope="admin",
+            scope_id="",
+            key=setting_key,
+            value=encoded,
+            locked=False,
+            description=f"Hook override: {hook_type} ({lang})",
+        )
+        db.add(new_row)
+        db.commit()
+
+    load_overrides_from_db(db)
+    return {"status": "updated", "hook_type": hook_type, "lang": lang, "override": override_value}

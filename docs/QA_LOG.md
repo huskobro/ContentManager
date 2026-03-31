@@ -1415,3 +1415,71 @@ npx tsc -p tsconfig.app.json --noEmit
 | Risk | Seviye | Açıklama |
 |---|---|---|
 | DB'de `scope=admin` kayıtlı eski prompt değerleri | Düşük | Eski GlobalSettings üzerinden kaydedilmiş admin-scope prompt'lar DB'de kalır; 5-layer'da module > admin olduğundan PromptManager ile üstüne yazılabilir |
+
+---
+
+## 2026-03-31 — Kategori & Hook Yönetim Sistemi
+
+### Değişiklik Özeti
+
+**Görev: category ve hook sistemlerini Master Prompts ekranında yönetilebilir yap**
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/pipeline/steps/script.py` | `_category_overrides` + `_hook_overrides` dict'leri eklendi; `load_overrides_from_db(db)` fonksiyonu; `_get_effective_category()` + `_get_effective_hooks()` override-aware merge fonksiyonları; `get_category_detail()`, `get_all_categories_detail()` yeni API fonksiyonları; `get_available_hooks()` override + enabled bilgisi döndürecek şekilde güncellendi |
+| `backend/pipeline/runner.py` | Pipeline başlamadan önce `load_overrides_from_db(db)` çağrısı eklendi |
+| `backend/api/admin.py` | `GET /api/admin/categories`, `PUT /api/admin/categories/{key}`, `GET /api/admin/hooks/{lang}`, `PUT /api/admin/hooks/{type}/{lang}` endpoint'leri eklendi |
+| `frontend/src/pages/admin/PromptManager.tsx` | Üç sekme mimarisi: "Modül Promptları" | "Kategoriler" | "Açılış Hook'ları"; CategoryEditor + HookEditor bileşenleri |
+
+### Global Settings vs Master Prompts Kesin Ayrımı
+
+| Global Settings'te Kalan | Master Prompts'ta Olan |
+|---|---|
+| `category` (hangi kategori seçili — behavior) | Kategori ton/odak/stil metin içerikleri |
+| `use_hook_variety` (hook sistemi açık/kapalı — behavior) | Hook ad ve talimat şablon metinleri |
+| `scene_count`, `script_temperature` vb. sistem davranışları | script_prompt_template, metadata_prompt_template |
+| Pipeline provider seçimi, TTS ayarları | Kategori/hook enabled toggle'ları |
+
+### Runtime Wiring Doğrulaması
+
+| Test | Sonuç |
+|---|---|
+| `GET /api/admin/categories` → 6 kategori | ✅ |
+| `GET /api/admin/hooks/tr` → 8 hook | ✅ |
+| `PUT /api/admin/categories/science` (tone override) | ✅ `has_override=True` |
+| Reset science → hardcoded değer geri geldi | ✅ `has_override=False` |
+| `get_category_prompt_enhancement()` override-aware | ✅ (load_overrides_from_db sonrası) |
+| `select_opening_hook()` disabled hook filtresi | ✅ (_get_effective_hooks kullanıyor) |
+| pipeline runner'da load_overrides_from_db çağrısı | ✅ runner.py:138 |
+
+### Override Saklama Mimarisi
+
+```
+category override: scope="admin", scope_id="", key="category_content_{key}"
+                   value = JSON: {tone, focus, style_instruction, enabled}
+
+hook override:     scope="admin", scope_id="", key="hook_content_{type}_{lang}"
+                   value = JSON: {name, template, enabled}
+```
+
+Her ikisi de mevcut `settings` tablosunu kullanır — yeni tablo yok.
+
+### Çalıştırılan Testler
+
+```
+python3 -m pytest backend/tests/ -q
+65 passed in 0.58s  ✅
+
+npx vitest run
+Tests  107 passed (107)  ✅
+
+npx tsc -p tsconfig.app.json --noEmit
+Çıktı yok — sıfır hata  ✅
+```
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| Kategori/hook override'ları session-level `_category_overrides` dict'inde | Düşük | Override'lar process restart'ta kaybolmaz (DB'den yüklenir) ancak her pipeline başlamadan önce taze yükleme yapılıyor |
+| `general` kategorisinin enabled toggle'ı UI'da var | Bilgi | Pipeline `general` kategorisi için hiçbir zaman enhancement eklemez (`if category != "general"`) — enabled/disabled durumu etkisiz |
