@@ -2952,3 +2952,44 @@ Remotion tsc:      ✓ Clean (0 error)
 Frontend tsc:      ✓ Clean (0 error)
 ```
 
+
+---
+
+## 2026-03-31 — Faz 11.1: YouTube OAuth ve Kanal Bağlantısı
+
+### Yapılanlar
+
+| Bileşen | Değişiklik |
+|---|---|
+| `backend/models/youtube_channel.py` | YENİ — 11 sütunlu ORM model |
+| `backend/api/youtube.py` | YENİ — 7 endpoint (OAuth flow + channel CRUD) |
+| `backend/config.py` | `google_client_id`, `google_client_secret`, `youtube_oauth_redirect_uri` eklendi |
+| `backend/database.py` | `youtube_channel` import + `create_tables()` güncellendi |
+| `backend/main.py` | `youtube_router` kayıt edildi |
+| `frontend/src/pages/admin/ChannelManager.tsx` | YENİ — BST-001 rollback dahil tam admin sayfası |
+| `frontend/src/App.tsx` | `/admin/channels` route eklendi |
+| `frontend/src/components/layout/Sidebar.tsx` | "Kanal Yönetimi" nav entry eklendi |
+| `backend/tests/test_youtube_channel_crud.py` | YENİ — 15 test |
+
+### Test Sonuçları
+
+```
+139 passed, 1 skipped — tüm testler geçti (önceki: 124)
+tsc --noEmit → temiz, hata yok
+Pydantic v2 deprecation warning → ConfigDict ile giderildi
+```
+
+### BST-001 Durumu (Bu Yüzeyde)
+
+| Endpoint | Rollback Uygulandı |
+|---|---|
+| `PATCH /active` toggle | ✅ Optimistic + rollback on error |
+| `POST /default` seç | ✅ Optimistic (snapshot) + rollback on error |
+| `DELETE /disconnect` | N/A — iki-aşamalı confirm ile güvenli |
+
+### Kalan Riskler
+
+- OAuth callback: `_OAUTH_STATE_STORE` process-local dict. Restart'ta temizlenir.
+  Beklenen davranış: state doğrulama başarısız → kullanıcı tekrar bağlar.
+- `frontend_base` hardcoded `http://localhost:5173` — production'da `.env`'den alınmalı.
+- Token refresh: `access_token` expire olunca `refresh_token` ile yenileme henüz implement edilmedi (Faz 11.2 kapsamı).

@@ -124,10 +124,18 @@ class Settings(BaseSettings):
     # Visuals
     pexels_api_key: str = Field(default="", description="Pexels stok video/fotoğraf API anahtarı")
 
-    # YouTube
+    # YouTube / Google OAuth2
     youtube_client_id: str = Field(default="", description="YouTube OAuth2 client ID")
     youtube_client_secret: str = Field(
         default="", description="YouTube OAuth2 client secret"
+    )
+    # GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET env alias desteği
+    google_client_id: str = Field(default="", description="Google OAuth2 client ID (alias)")
+    google_client_secret: str = Field(default="", description="Google OAuth2 client secret (alias)")
+    # OAuth callback adresi — Google Cloud Console'da kayıtlı olmalı
+    youtube_oauth_redirect_uri: str = Field(
+        default="http://localhost:8000/api/youtube/oauth/callback",
+        description="Google OAuth2 redirect URI",
     )
 
     # ── D) Pipeline Varsayılanları ──────────────────────────────────────────

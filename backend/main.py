@@ -28,6 +28,7 @@ from backend.utils.logger import get_logger
 from backend.api import jobs as jobs_router
 from backend.api import settings as settings_router
 from backend.api import admin as admin_router
+from backend.api import youtube as youtube_router
 
 log = get_logger(__name__)
 
@@ -638,6 +639,7 @@ def health_check() -> JSONResponse:
 app.include_router(jobs_router.router, prefix="/api", tags=["jobs"])
 app.include_router(settings_router.router, prefix="/api", tags=["settings"])
 app.include_router(admin_router.router, prefix="/api", tags=["admin"])
+app.include_router(youtube_router.router, prefix="/api", tags=["youtube"])
 
 
 # ─── Doğrudan çalıştırma ──────────────────────────────────────────────────────
