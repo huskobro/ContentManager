@@ -317,31 +317,72 @@ def load_overrides_from_db(db: Any) -> None:
     _hook_overrides = new_hook
 
 
-def _get_effective_category(key: str) -> dict[str, Any]:
-    """Hardcoded CATEGORIES uzerine override merge ederek efektif kategori bilgisini dondurur.
+def _get_effective_category(key: str, db: Any = None) -> dict[str, Any]:
+    """Efektif kategori bilgisini dondurur.
+
+    DB saglanmissa categories tablosundan okur (tam CRUD).
+    DB saglanmamissa geriye donuk uyumluluk icin hardcoded + _category_overrides kullanir.
 
     Returns:
-        Birlestirilmis dict — tone, focus, style_instruction, name_tr, name_en, enabled.
-        enabled: override'da acikca False set edilmedikce True kabul edilir.
+        Dict — key, name_tr, name_en, tone, focus, style_instruction, enabled, is_builtin.
     """
+    if db is not None:
+        try:
+            from backend.models.category import Category
+            row = db.query(Category).filter(Category.key == key).first()
+            if row:
+                return {
+                    "key": row.key,
+                    "name_tr": row.name_tr,
+                    "name_en": row.name_en,
+                    "tone": row.tone,
+                    "focus": row.focus,
+                    "style_instruction": row.style_instruction,
+                    "enabled": row.enabled,
+                    "is_builtin": row.is_builtin,
+                }
+        except Exception:
+            pass  # DB hatasi: hardcoded fallback'e dus
+
+    # Hardcoded fallback (DB yoksa veya kayit bulunamazsa)
     base = dict(CATEGORIES.get(key, CATEGORIES["general"]))
     override = _category_overrides.get(key, {})
     for field in ("tone", "focus", "style_instruction"):
         if override.get(field):
             base[field] = override[field]
-    # enabled alanini ekle: override'da False ise False, yoksa True
     base["enabled"] = override.get("enabled", True)
+    base["is_builtin"] = True
     return base
 
 
-def _get_effective_hooks(language: str) -> list[dict[str, str]]:
-    """Hardcoded hook listesi uzerine override merge ederek efektif hook listesini dondurur.
-    enabled=False olan hook'lar filtrelenir."""
+def _get_effective_hooks(language: str, db: Any = None) -> list[dict[str, str]]:
+    """Efektif hook listesini dondurur (enabled=False olanlar filtrelenir).
+
+    DB saglanmissa hooks tablosundan okur (tam CRUD).
+    DB saglanmamissa geriye donuk uyumluluk icin hardcoded + _hook_overrides kullanir.
+    """
+    if db is not None:
+        try:
+            from backend.models.hook import Hook
+            rows = (
+                db.query(Hook)
+                .filter(Hook.lang == language, Hook.enabled == True)
+                .order_by(Hook.sort_order, Hook.id)
+                .all()
+            )
+            if rows:
+                return [
+                    {"type": r.type, "name": r.name, "template": r.template}
+                    for r in rows
+                ]
+        except Exception:
+            pass  # DB hatasi: hardcoded fallback'e dus
+
+    # Hardcoded fallback
     base_list = list(_HOOKS.get(language, _HOOKS.get("en", _HOOKS_TR)))
     result = []
     for hook in base_list:
         override = _hook_overrides.get((hook["type"], language), {})
-        # enabled=False ise hook'u atla
         if override.get("enabled") is False:
             continue
         effective = dict(hook)
@@ -350,23 +391,21 @@ def _get_effective_hooks(language: str) -> list[dict[str, str]]:
         if override.get("template"):
             effective["template"] = override["template"]
         result.append(effective)
-    return result if result else base_list  # Tum hook'lar pasifse fallback
+    return result if result else base_list
 
 
-def get_category_prompt_enhancement(category: str) -> str:
+def get_category_prompt_enhancement(category: str, db: Any = None) -> str:
     """
     Belirtilen kategori icin prompt zenginlestirme metni dondurur.
 
-    Admin override varsa hardcoded deger yerine override kullanilir.
-
     Args:
         category: Kategori anahtari (or. "true_crime", "science").
-                  Taninmayan kategoriler "general" olarak degerlendirilir.
+        db: SQLAlchemy Session (opsiyonel). Saglanirsa DB'den okur.
 
     Returns:
         LLM system instruction'a eklenecek kategori-spesifik talimat metni.
     """
-    cat_info = _get_effective_category(category)
+    cat_info = _get_effective_category(category, db=db)
 
     return (
         f"\n\nKATEGORI: {cat_info['name_tr']}\n"
@@ -379,6 +418,7 @@ def get_category_prompt_enhancement(category: str) -> str:
 def select_opening_hook(
     language: str = "tr",
     exclude_types: list[str] | None = None,
+    db: Any = None,
 ) -> dict[str, str]:
     """
     Rastgele bir acilis hook'u secer.
@@ -387,27 +427,23 @@ def select_opening_hook(
     Tum hook'lar kullanildiysa havuz sifirlanir.
 
     Args:
-        language: Dil kodu ("tr" veya "en"). Desteklenmeyen diller
-                  "en" olarak degerlendirilir.
-        exclude_types: Bu tipleri haric tut (opsiyonel, ek filtre).
+        language: Dil kodu ("tr" veya "en").
+        exclude_types: Bu tipleri haric tut (opsiyonel).
+        db: SQLAlchemy Session (opsiyonel). Saglanirsa DB'den okur.
 
     Returns:
         Secilen hook dict'i (type, name, template).
     """
     global _used_hook_types
 
-    # Override sistemi: efektif hook listesini al (admin override + enabled filtresi uygulanmis)
-    hooks = _get_effective_hooks(language)
+    hooks = _get_effective_hooks(language, db=db)
 
-    # Haric tutulacak tipler
     all_excludes = set(_used_hook_types)
     if exclude_types:
         all_excludes.update(exclude_types)
 
-    # Kullanilabilir hook'lari filtrele
     available = [h for h in hooks if h["type"] not in all_excludes]
 
-    # Tumu kullanildiysa havuzu sifirla
     if not available:
         _used_hook_types.clear()
         available = list(hooks)
@@ -415,7 +451,6 @@ def select_opening_hook(
     selected = random.choice(available)
     _used_hook_types.append(selected["type"])
 
-    # Havuz boyutunu sinirla (son 6 hook'u hatirla)
     if len(_used_hook_types) > 6:
         _used_hook_types = _used_hook_types[-6:]
 
@@ -426,6 +461,7 @@ def build_enhanced_prompt(
     title: str,
     config: dict[str, Any],
     base_system_instruction: str,
+    db: Any = None,
 ) -> tuple[str, str]:
     """
     Kategori ve hook bilgilerini kullanarak zenginlestirilmis
@@ -435,29 +471,26 @@ def build_enhanced_prompt(
         title: Video/is basligi.
         config: Cozumlenmis ayarlar.
         base_system_instruction: Modulun temel system instruction'i.
+        db: SQLAlchemy Session (opsiyonel). Saglanirsa DB tablosundan okur.
 
     Returns:
         (enhanced_system_instruction, hook_instruction) tuple'i.
-        hook_instruction bos string olabilir (use_hook_variety=False ise).
     """
     language = config.get("language", "tr")
     category = config.get("category", "general")
     use_hook_variety = config.get("use_hook_variety", True)
 
-    # System instruction'i kategori bilgisiyle zenginlestir
     enhanced_instruction = base_system_instruction
 
     if category and category != "general":
-        # Kategori enabled=False ise enhancement ekleme
-        cat_info = _get_effective_category(category)
+        cat_info = _get_effective_category(category, db=db)
         if cat_info.get("enabled", True):
-            category_enhancement = get_category_prompt_enhancement(category)
+            category_enhancement = get_category_prompt_enhancement(category, db=db)
             enhanced_instruction += category_enhancement
 
-    # Acilis hook'u sec
     hook_instruction = ""
     if use_hook_variety:
-        hook = select_opening_hook(language)
+        hook = select_opening_hook(language, db=db)
         hook_instruction = (
             f"\n\nACILIS HOOK TIPI: {hook['name']}\n"
             f"TALIMAT: {hook['template']}"
@@ -466,35 +499,52 @@ def build_enhanced_prompt(
     return enhanced_instruction, hook_instruction
 
 
-def get_available_categories() -> list[dict[str, str]]:
+def get_available_categories(db: Any = None) -> list[dict[str, str]]:
     """
     Kullanilabilir tum kategorileri dondurur (sadece key + isimler).
 
-    Returns:
-        [{"key": "true_crime", "name_tr": "Suc & Gizem", "name_en": "True Crime"}, ...]
+    DB saglanmissa categories tablosundan, yoksa hardcoded'dan okur.
     """
+    if db is not None:
+        try:
+            from backend.models.category import Category
+            rows = db.query(Category).order_by(Category.sort_order, Category.id).all()
+            if rows:
+                return [{"key": r.key, "name_tr": r.name_tr, "name_en": r.name_en} for r in rows]
+        except Exception:
+            pass
     return [
-        {
-            "key": key,
-            "name_tr": info["name_tr"],
-            "name_en": info["name_en"],
-        }
+        {"key": key, "name_tr": info["name_tr"], "name_en": info["name_en"]}
         for key, info in CATEGORIES.items()
     ]
 
 
-def get_category_detail(category_key: str) -> dict[str, Any]:
+def get_category_detail(category_key: str, db: Any = None) -> dict[str, Any]:
     """
-    Tek bir kategori icin hardcoded + override birlestirilmis tam detay dondurur.
+    Tek bir kategori icin tam detay dondurur.
 
-    Returns:
-        {key, name_tr, name_en, tone, focus, style_instruction,
-         has_override, enabled}
+    DB saglanmissa categories tablosundan okur.
     """
+    if db is not None:
+        try:
+            from backend.models.category import Category
+            row = db.query(Category).filter(Category.key == category_key).first()
+            if row:
+                return {
+                    **row.to_dict(),
+                    "has_override": not row.is_builtin or (
+                        row.tone != CATEGORIES.get(category_key, {}).get("tone", "") or
+                        row.focus != CATEGORIES.get(category_key, {}).get("focus", "") or
+                        row.style_instruction != CATEGORIES.get(category_key, {}).get("style_instruction", "")
+                    ),
+                }
+        except Exception:
+            pass
+
+    # Hardcoded fallback
     base = CATEGORIES.get(category_key, CATEGORIES["general"])
     override = _category_overrides.get(category_key, {})
     effective = _get_effective_category(category_key)
-
     return {
         "key": category_key,
         "name_tr": base["name_tr"],
@@ -502,29 +552,61 @@ def get_category_detail(category_key: str) -> dict[str, Any]:
         "tone": effective["tone"],
         "focus": effective["focus"],
         "style_instruction": effective["style_instruction"],
-        "default_tone": base["tone"],
-        "default_focus": base["focus"],
-        "default_style_instruction": base["style_instruction"],
-        "has_override": bool(override),
         "enabled": override.get("enabled", True),
+        "is_builtin": True,
+        "has_override": bool(override),
+        "sort_order": 0,
     }
 
 
-def get_all_categories_detail() -> list[dict[str, Any]]:
+def get_all_categories_detail(db: Any = None) -> list[dict[str, Any]]:
     """
     Tum kategorilerin tam detayini dondurur.
     """
+    if db is not None:
+        try:
+            from backend.models.category import Category
+            rows = db.query(Category).order_by(Category.sort_order, Category.id).all()
+            if rows:
+                result = []
+                for row in rows:
+                    d = row.to_dict()
+                    # has_override: builtin olmayan kayitlar veya icerik degismis builtin'ler
+                    builtin_base = CATEGORIES.get(row.key, {})
+                    d["has_override"] = not row.is_builtin or bool(
+                        (builtin_base.get("tone") and row.tone != builtin_base.get("tone")) or
+                        (builtin_base.get("focus") and row.focus != builtin_base.get("focus")) or
+                        (builtin_base.get("style_instruction") and row.style_instruction != builtin_base.get("style_instruction"))
+                    )
+                    result.append(d)
+                return result
+        except Exception:
+            pass
     return [get_category_detail(key) for key in CATEGORIES]
 
 
-def get_available_hooks(language: str = "tr") -> list[dict[str, str]]:
+def get_available_hooks(language: str = "tr", db: Any = None) -> list[dict[str, Any]]:
     """
-    Belirtilen dildeki tum hook tiplerini dondurur (override uygulanmis + enabled filtresi YOK).
-    Admin panel icin tum hook'lari listeler (disabled olanlar dahil).
+    Belirtilen dildeki tum hook tiplerini dondurur (disabled olanlar dahil).
+    Admin panel icin kullanilir.
 
-    Returns:
-        [{type, name, template, enabled, has_override}, ...]
+    DB saglanmissa hooks tablosundan, yoksa hardcoded'dan okur.
     """
+    if db is not None:
+        try:
+            from backend.models.hook import Hook
+            rows = (
+                db.query(Hook)
+                .filter(Hook.lang == language)
+                .order_by(Hook.sort_order, Hook.id)
+                .all()
+            )
+            if rows:
+                return [r.to_dict() for r in rows]
+        except Exception:
+            pass
+
+    # Hardcoded fallback
     base_list = list(_HOOKS.get(language, _HOOKS.get("en", _HOOKS_TR)))
     result = []
     for hook in base_list:
@@ -533,9 +615,9 @@ def get_available_hooks(language: str = "tr") -> list[dict[str, str]]:
             "type": hook["type"],
             "name": override.get("name") or hook["name"],
             "template": override.get("template") or hook["template"],
-            "default_name": hook["name"],
-            "default_template": hook["template"],
             "enabled": override.get("enabled", True),
+            "is_builtin": True,
             "has_override": bool(override),
+            "sort_order": 0,
         })
     return result

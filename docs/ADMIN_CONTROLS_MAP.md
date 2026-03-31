@@ -1,5 +1,5 @@
 # Admin Controls Map
-_Last updated: 2026-03-31 (category/hook override runtime verification + enabled=False bug fix)_
+_Last updated: 2026-03-31 (category/hook full CRUD — separate ORM tables, bootstrap seeding, builtin protection)_
 
 Maps every admin panel control to its concrete effect on the pipeline.
 Only settings that are actually read somewhere in the codebase are included.
@@ -98,63 +98,112 @@ in custom templates are silently ignored (`KeyError` caught, template used as-is
 
 ---
 
-## Category Content Override
+## Category CRUD
 
-**UI surface:** Master Promptlar → Kategoriler tab (`/admin/prompts`).
-**API:** `GET /api/admin/categories`, `PUT /api/admin/categories/{key}`.
-**Storage:** `settings` table, `scope=admin`, `scope_id=""`, `key=category_content_{key}`.
+**UI surface:** Master Promptlar → Kategoriler tab (`/admin/prompts`, `PromptManager.tsx`).
+**API:** Full CRUD — `GET`, `POST`, `PUT`, `DELETE /api/admin/categories[/{key}]`.
+**Storage:** `categories` table (dedicated ORM model — `backend/models/category.py`). No longer stored in `settings` table.
 
-**System type: Override/Edit. NOT full CRUD.**
+**System type: Full CRUD with builtin protection.**
+
+### ORM Fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `key` | string (PK) | Unique identifier, e.g. `science`, `true_crime` |
+| `name_tr` | string | Turkish display name |
+| `name_en` | string | English display name |
+| `tone` | string | LLM tone instruction |
+| `focus` | string | LLM focus instruction |
+| `style_instruction` | string | LLM style instruction |
+| `enabled` | bool | `False` → pipeline skips enhancement |
+| `is_builtin` | bool | `True` for the 6 seeded categories — cannot be deleted |
+| `sort_order` | int | Display order in UI |
+
+### Available Operations
 
 | Capability | Supported? | Notes |
 |---|---|---|
-| View all categories | YES | Hardcoded 6: general, true_crime, science, history, motivation, religion |
-| Edit tone/focus/style_instruction | YES | Override stored in DB; pipeline reads via `load_overrides_from_db()` |
-| Enable/disable category | YES | `enabled=False` → `build_enhanced_prompt()` skips enhancement. Bug fixed 2026-03-31. |
-| Reset to hardcoded default | YES | Empty body + `enabled=True` → DB row deleted |
-| Add new category | NO | Hardcoded set, requires Python code change |
-| Delete existing category | NO | Hardcoded set, removing from DB only removes override |
-| Rename category key | NO | Keys are fixed identifiers |
+| List all categories | YES | `GET /api/admin/categories` — returns all rows including builtins |
+| Create custom category | YES | `POST /api/admin/categories` → 201; 409 if key already exists |
+| Edit any category | YES | `PUT /api/admin/categories/{key}` → 200; 404 if not found |
+| Enable/disable category | YES | `PUT` with `enabled=false` → pipeline skips enhancement |
+| Delete custom category | YES | `DELETE /api/admin/categories/{key}` → 200 for `is_builtin=False` |
+| Delete builtin category | NO | `DELETE` on `is_builtin=True` → **403 Forbidden** |
+| Rename category key | NO | Keys are fixed identifiers (PK) |
 
-**Runtime wiring (verified 2026-03-31):**
+### Bootstrap Seeding
+
+On first startup, `_seed_categories_and_hooks(db)` (called in `main.py` lifespan) inserts the 6
+hardcoded categories as `is_builtin=True` if they do not already exist. Seeding is idempotent —
+subsequent startups skip existing rows.
+
+**Builtin category set:** `general`, `true_crime`, `science`, `history`, `motivation`, `religion`.
+`general` never adds enhancement regardless of content — the `category != "general"` guard in `build_enhanced_prompt()` ensures this.
+
+### Runtime wiring (verified 2026-03-31)
+
 ```
-PUT /api/admin/categories/{key} → settings table
-runner.py:141 → load_overrides_from_db(db) [every pipeline start]
-build_enhanced_prompt() → _get_effective_category() → override merged
+POST/PUT/DELETE /api/admin/categories[/{key}] → categories table (ORM)
+runner.py → config["_db"] = db  [injected at pipeline start]
+standard_video/pipeline.py → passes db=config.get("_db") to script step
+build_enhanced_prompt() → _get_effective_category(key, db=db)
+  ├── db provided → query categories table
+  └── db=None → hardcoded fallback dict
 enabled=False → enhancement block skipped entirely
 ```
 
-**Hardcoded category set:** `general`, `true_crime`, `science`, `history`, `motivation`, `religion`.
-`general` never adds enhancement regardless of override — the `category != "general"` guard in `build_enhanced_prompt()` ensures this.
-
 ---
 
-## Hook Content Override
+## Hook CRUD
 
-**UI surface:** Master Promptlar → Açılış Hook'ları tab (`/admin/prompts`).
-**API:** `GET /api/admin/hooks/{lang}`, `PUT /api/admin/hooks/{hook_type}/{lang}`.
-**Storage:** `settings` table, `scope=admin`, `scope_id=""`, `key=hook_content_{type}_{lang}`.
+**UI surface:** Master Promptlar → Açılış Hook'ları tab (`/admin/prompts`, `PromptManager.tsx`).
+**API:** Full CRUD — `GET /api/admin/hooks/{lang}`, `POST /api/admin/hooks`, `PUT /api/admin/hooks/{type}/{lang}`, `DELETE /api/admin/hooks/{type}/{lang}`.
+**Storage:** `hooks` table (dedicated ORM model — `backend/models/hook.py`). No longer stored in `settings` table.
 
-**System type: Override/Edit. NOT full CRUD.**
+**System type: Full CRUD with builtin protection.**
+
+### ORM Fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `type` | string (composite PK) | Hook type key, e.g. `shocking_fact`, `question` |
+| `lang` | string (composite PK) | Language code: `tr` or `en` |
+| `name` | string | Display name shown in UI |
+| `template` | string | Hook instruction text appended to the user prompt |
+| `enabled` | bool | `False` → excluded from pipeline hook pool |
+| `is_builtin` | bool | `True` for the 8×2 seeded hooks — cannot be deleted |
+
+### Available Operations
 
 | Capability | Supported? | Notes |
 |---|---|---|
-| View all hooks (tr + en) | YES | Hardcoded 8 types per language |
-| Edit hook name/template | YES | Override stored in DB |
-| Enable/disable individual hook | YES | `enabled=False` → filtered from pipeline hook pool by `_get_effective_hooks()` |
-| Reset to hardcoded default | YES | Empty body + `enabled=True` → DB row deleted |
+| List all hooks for a language | YES | `GET /api/admin/hooks/{lang}` — returns all rows for that lang |
+| Create custom hook | YES | `POST /api/admin/hooks` → 201; 409 if type+lang already exists; 400 if invalid lang |
+| Edit any hook | YES | `PUT /api/admin/hooks/{type}/{lang}` → 200; 404 if not found |
+| Enable/disable individual hook | YES | `PUT` with `enabled=false` → excluded from pipeline pool |
 | All hooks disabled → fallback | YES | `_get_effective_hooks()` returns full base list if filtered result is empty |
-| Add new hook type | NO | Hardcoded set, requires Python code change |
-| Delete existing hook type | NO | Hardcoded set |
+| Delete custom hook | YES | `DELETE` on `is_builtin=False` → 200 |
+| Delete builtin hook | NO | `DELETE` on `is_builtin=True` → **403 Forbidden** |
 
-**Runtime wiring (verified 2026-03-31):**
-```
-PUT /api/admin/hooks/{type}/{lang} → settings table
-runner.py:141 → load_overrides_from_db(db) [every pipeline start]
-select_opening_hook() → _get_effective_hooks() → filtered + override applied
-```
+### Bootstrap Seeding
 
-**Hardcoded hook types:** `shocking_fact`, `question`, `story`, `contradiction`, `future_peek`, `comparison`, `personal_address`, `countdown`.
+On first startup, `_seed_categories_and_hooks(db)` inserts 8 hook types × 2 languages (`tr`/`en`)
+as `is_builtin=True` if they do not already exist.
+
+**Builtin hook types:** `shocking_fact`, `question`, `story`, `contradiction`, `future_peek`, `comparison`, `personal_address`, `countdown`.
+
+### Runtime wiring (verified 2026-03-31)
+
+```
+POST/PUT/DELETE /api/admin/hooks[/{type}/{lang}] → hooks table (ORM)
+runner.py → config["_db"] = db  [injected at pipeline start]
+standard_video/pipeline.py → passes db=config.get("_db") to script step
+select_opening_hook() → _get_effective_hooks(language, db=db)
+  ├── db provided → query hooks table, filter enabled=True
+  └── db=None → hardcoded fallback list
+_get_effective_hooks() returns full base list if all hooks are disabled
+```
 
 ---
 

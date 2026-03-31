@@ -134,15 +134,10 @@ async def run_pipeline(job_id: str) -> None:
         config["_job_title"] = job.title
         config["_job_id"] = job_id
         config["_language"] = job.language
+        config["_db"] = db  # DB session — kategoriler ve hook'lar DB'den okunabilsin
 
-        # ── Kategori / hook override'larini DB'den yukle ──────────────────
-        # Admin panelden duzenlenmis kategori/hook metinleri runtime'a aktarilir.
-        # Bu cagri idempotent — her pipeline baslatmasinda taze yukler.
-        try:
-            from backend.pipeline.steps.script import load_overrides_from_db
-            load_overrides_from_db(db)
-        except Exception as _ov_err:
-            log.warning("Kategori/hook override yuklenemedi (hardcoded kullanilacak)", error=str(_ov_err))
+        # Kategori/hook'lar artik DB'den dogrudan okunuyor (config["_db"] araciligiyla).
+        # load_overrides_from_db() artik cagrilmiyor — yeni mimaride gereksiz.
 
         # ── CacheManager oluştur ───────────────────────────────────────────
         from pathlib import Path

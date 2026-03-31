@@ -135,11 +135,12 @@ async def step_script(
             language_name=language_name,
         )
 
-    # Kategori ve hook zenginleştirmesi
+    # Kategori ve hook zenginleştirmesi (DB session varsa DB'den okur)
     system_instruction, hook_instruction = build_enhanced_prompt(
         title=title,
         config=config,
         base_system_instruction=base_instruction,
+        db=config.get("_db"),
     )
 
     prompt = (

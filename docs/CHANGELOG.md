@@ -5,6 +5,46 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ve [Semantic Ver
 
 ---
 
+## [1.7.0] — 2026-03-31
+
+### Category/Hook Tam CRUD — Ayrı ORM Tabloları, Bootstrap Seeding, Builtin Koruma
+
+Override/Edit sisteminden **tam CRUD mimarisine** geçiş. Kategori ve hook'lar artık `settings` tablosuna override olarak değil, kendi ORM tablolarına tam kayıt olarak yazılıyor.
+
+**Yeni ORM Modelleri:**
+- `backend/models/category.py` — `categories` tablosu: `key` (PK), `name_tr`, `name_en`, `tone`, `focus`, `style_instruction`, `enabled`, `is_builtin`, `sort_order`
+- `backend/models/hook.py` — `hooks` tablosu: `type`+`lang` (composite PK), `name`, `template`, `enabled`, `is_builtin`
+- `backend/database.py` — `create_tables()` içine yeni modeller eklendi
+
+**Bootstrap Seeding:**
+- `backend/main.py` — `_seed_categories_and_hooks(db)` lifespan'da çağrılıyor
+- İlk başlatmada 6 hardcoded kategori + 8×2 hook `is_builtin=True` olarak ekleniyor
+- Seeding idempotent — varolan kayıtlar atlanıyor
+
+**Tam CRUD API:**
+- `GET/POST/PUT/DELETE /api/admin/categories[/{key}]` — POST → 201/409/422; DELETE `is_builtin=True` → **403 Forbidden**
+- `GET /api/admin/hooks/{lang}`, `POST /api/admin/hooks`, `PUT/DELETE /api/admin/hooks/{type}/{lang}` — aynı koruma mantığı
+
+**Builtin Koruma:**
+- `is_builtin=True` kayıtlar düzenlenebilir/disable edilebilir ama silinemez (403)
+- `is_builtin=False` (admin tarafından oluşturulan) kayıtlar tamamen silinebilir
+
+**DB-Aware Fonksiyonlar:**
+- `backend/pipeline/steps/script.py` — `_get_effective_category(key, db=None)` ve `_get_effective_hooks(language, db=None)`: `db` verilirse ORM'den okur; `db=None` ise hardcoded fallback kullanır
+- `backend/pipeline/runner.py` — `config["_db"] = db` injection ile pipeline'a DB erişimi sağlanıyor
+- `backend/modules/standard_video/pipeline.py` — script adımına `db=config.get("_db")` geçiriliyor
+
+**Admin UI (PromptManager.tsx):**
+- "Yeni Kategori" / "Yeni Hook" form alanları eklendi
+- Özel (custom) kayıtlar için silme butonu
+- Builtin kayıtlar için "Yerleşik — silinemez" etiketi
+
+**Testler:**
+- `backend/tests/test_category_hook_crud.py` — 20 test (19 passed, 1 skipped)
+- `tsc --noEmit` — temiz
+
+---
+
 ## [1.6.0] — 2026-03-30
 
 ### Zero-Defect Pipeline — Ölü Kod Temizliği, Hard Delete, Klasör Seçici, Senkronize Pipeline

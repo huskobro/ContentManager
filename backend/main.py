@@ -98,6 +98,140 @@ def _migrate_legacy_setting_keys(db) -> None:
         log.info("Legacy ayar anahtarı migrasyonu tamamlandı")
 
 
+def _seed_categories_and_hooks(db) -> None:
+    """
+    Kategori ve hook tablolarini hardcoded baslangic setiyle doldurur (idempotent).
+
+    Kural:
+    - categories tablosu BOSSsa: 6 hardcoded kategoriyi is_builtin=True ile seed et.
+    - hooks tablosu BOSSsa: 8 TR + 8 EN hook'u is_builtin=True ile seed et.
+    - Tablolar doluysa hicbir sey yapma (idempotent).
+
+    Ayrica settings tablosundaki eski override kayitlarini yeni tablolara tasir:
+    - category_content_{key} → categories.tone/focus/style_instruction/enabled
+    - hook_content_{type}_{lang} → hooks.name/template/enabled
+    Tasinan settings kayitlari silinir.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+    from backend.models.category import Category
+    from backend.models.hook import Hook
+    from backend.models.settings import Setting
+    from backend.pipeline.steps.script import CATEGORIES, _HOOKS_TR, _HOOKS_EN
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # ── Kategori seed ──────────────────────────────────────────────────────────
+    cat_count = db.query(Category).count()
+    if cat_count == 0:
+        for order, (key, info) in enumerate(CATEGORIES.items()):
+            cat = Category(
+                key=key,
+                name_tr=info["name_tr"],
+                name_en=info["name_en"],
+                tone=info["tone"],
+                focus=info["focus"],
+                style_instruction=info["style_instruction"],
+                enabled=True,
+                is_builtin=True,
+                sort_order=order,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(cat)
+        db.flush()
+        log.info("Kategoriler DB'ye seed edildi", count=len(CATEGORIES))
+
+    # ── Hook seed ──────────────────────────────────────────────────────────────
+    hook_count = db.query(Hook).count()
+    if hook_count == 0:
+        for lang, hook_list in (("tr", _HOOKS_TR), ("en", _HOOKS_EN)):
+            for order, h in enumerate(hook_list):
+                hook = Hook(
+                    type=h["type"],
+                    lang=lang,
+                    name=h["name"],
+                    template=h["template"],
+                    enabled=True,
+                    is_builtin=True,
+                    sort_order=order,
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(hook)
+        db.flush()
+        log.info("Hook'lar DB'ye seed edildi", count=len(_HOOKS_TR) + len(_HOOKS_EN))
+
+    # ── Eski settings override'larini yeni tablolara tasima ───────────────────
+    old_cat_rows = (
+        db.query(Setting)
+        .filter(Setting.scope == "admin", Setting.scope_id == "", Setting.key.like("category_content_%"))
+        .all()
+    )
+    migrated_cats = 0
+    for row in old_cat_rows:
+        try:
+            value = _json.loads(row.value) if isinstance(row.value, str) else row.value
+            if not isinstance(value, dict):
+                continue
+            cat_key = row.key[len("category_content_"):]
+            cat_row = db.query(Category).filter(Category.key == cat_key).first()
+            if cat_row:
+                if value.get("tone"):
+                    cat_row.tone = value["tone"]
+                if value.get("focus"):
+                    cat_row.focus = value["focus"]
+                if value.get("style_instruction"):
+                    cat_row.style_instruction = value["style_instruction"]
+                if "enabled" in value:
+                    cat_row.enabled = value["enabled"]
+                cat_row.updated_at = now
+            db.delete(row)
+            migrated_cats += 1
+        except Exception:
+            pass
+
+    old_hook_rows = (
+        db.query(Setting)
+        .filter(Setting.scope == "admin", Setting.scope_id == "", Setting.key.like("hook_content_%"))
+        .all()
+    )
+    migrated_hooks = 0
+    for row in old_hook_rows:
+        try:
+            value = _json.loads(row.value) if isinstance(row.value, str) else row.value
+            if not isinstance(value, dict):
+                continue
+            rest = row.key[len("hook_content_"):]
+            if "_" not in rest:
+                continue
+            last_underscore = rest.rfind("_")
+            hook_type = rest[:last_underscore]
+            lang = rest[last_underscore + 1:]
+            hook_row = db.query(Hook).filter(Hook.type == hook_type, Hook.lang == lang).first()
+            if hook_row:
+                if value.get("name"):
+                    hook_row.name = value["name"]
+                if value.get("template"):
+                    hook_row.template = value["template"]
+                if "enabled" in value:
+                    hook_row.enabled = value["enabled"]
+                hook_row.updated_at = now
+            db.delete(row)
+            migrated_hooks += 1
+        except Exception:
+            pass
+
+    if migrated_cats or migrated_hooks:
+        log.info(
+            "Eski override kayitlari yeni tablolara tasindi",
+            categories=migrated_cats,
+            hooks=migrated_hooks,
+        )
+
+    db.commit()
+
+
 def _repair_list_elements(items: list) -> list:
     """
     Bozuk serileştirilmiş list elemanlarını onarır.
@@ -294,6 +428,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # 0b. Çoklu encode olmuş ayar değerlerini onar (idempotent)
         _repair_multi_encoded_values(db)
+
+        # 0c. Kategori/hook tablolarini seed et + eski override'lari tasima (idempotent)
+        _seed_categories_and_hooks(db)
 
         # 1. Output_dir'i SettingsResolver üzerinden yükle
         try:

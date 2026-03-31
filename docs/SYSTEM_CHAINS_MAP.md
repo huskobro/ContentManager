@@ -1,5 +1,5 @@
 # System Chains Map
-_Last updated: 2026-03-31 (final hardcoded audit — tts_voice fallback chain corrected)_
+_Last updated: 2026-03-31 (category/hook full CRUD — DB-backed resolution chains, config["_db"] injection, bootstrap seeding)_
 
 This document maps every processing chain that is actually implemented in the
 codebase. Only chains that are wired end-to-end in source files are documented
@@ -154,7 +154,8 @@ defaults from `constants.ts` and module `config.py` files are:
 
 ## 5. Category System
 
-**6 categories** (defined in `backend/pipeline/steps/script.py`):
+**6 builtin categories** seeded at startup into the `categories` table (`backend/models/category.py`).
+Admin can add custom categories and edit/disable any category via the CRUD API.
 
 | Key          | Turkish Name                  | English Name               |
 |--------------|-------------------------------|----------------------------|
@@ -168,19 +169,31 @@ defaults from `constants.ts` and module `config.py` files are:
 **How selected:** config key `"category"` (default: `"general"`).
 
 **How it affects the pipeline:** `build_enhanced_prompt()` calls
-`_get_effective_category(category)` (which merges hardcoded values with any DB
-overrides) and then `get_category_prompt_enhancement(category)` to append a
-block containing `KATEGORI`, `TON`, `ODAK`, and `STIL TALIMATI` to the LLM
+`_get_effective_category(key, db=None)` and then `get_category_prompt_enhancement()` to
+append a block containing `KATEGORI`, `TON`, `ODAK`, and `STIL TALIMATI` to the LLM
 system instruction.
 
 **Skipped when:** `category == "general"` OR `_get_effective_category()["enabled"] == False`.
 
-**Override system (2026-03-31):** Tone, focus, and style_instruction for each category
-can be edited via **Master Promptlar → Kategoriler** (`/admin/prompts`). Changes are
-stored in the `settings` table (`scope=admin`, `key=category_content_{key}`) and loaded
-into memory at every pipeline start via `load_overrides_from_db()`.
+**Resolution chain (2026-03-31):**
 
-**System type: Override/Edit** — hardcoded 6 categories, new categories cannot be added via UI.
+```
+_get_effective_category(key, db=None)
+  ├── db provided (config["_db"] injected by runner.py)
+  │     └── query categories table WHERE key=key
+  │           → returns ORM row as dict (tone, focus, style_instruction, enabled, is_builtin)
+  └── db=None (no DB available, e.g. tests or direct calls)
+        └── hardcoded fallback dict in script.py
+```
+
+**Bootstrap seeding:** `_seed_categories_and_hooks(db)` called in `main.py` lifespan inserts
+the 6 builtin categories as `is_builtin=True` if not already present. Idempotent.
+
+**config["_db"] injection:** `runner.py` sets `config["_db"] = db` before calling the pipeline.
+`standard_video/pipeline.py` passes `db=config.get("_db")` to script step functions.
+
+**System type: Full CRUD** — builtin 6 categories (`is_builtin=True`) cannot be deleted (403);
+custom categories are fully deletable.
 
 ---
 
@@ -203,14 +216,27 @@ When `use_hook_variety` is `True`, `build_enhanced_prompt()` calls
 **When `use_hook_variety` is `False`:** `hook_instruction` is an empty string;
 no hook block is added to the prompt.
 
-**Override system (2026-03-31):** Hook name and template text can be edited per
-language via **Master Promptlar → Açılış Hook'ları** (`/admin/prompts`). Individual
-hooks can be disabled (removed from the pipeline pool). Overrides stored in `settings`
-table (`key=hook_content_{type}_{lang}`), loaded via `load_overrides_from_db()`.
-`_get_effective_hooks()` applies overrides and filters disabled hooks; if all hooks are
-disabled it falls back to the full hardcoded list.
+**Resolution chain (2026-03-31):**
 
-**System type: Override/Edit** — hardcoded 8 types, new hook types cannot be added via UI.
+```
+_get_effective_hooks(language, db=None)
+  ├── db provided (config["_db"] injected by runner.py)
+  │     └── query hooks table WHERE lang=language AND enabled=True
+  │           → returns list of hook dicts (type, name, template)
+  │           → if result is empty → falls back to hardcoded base list for language
+  └── db=None (no DB available)
+        └── hardcoded fallback list in script.py, filtered by enabled flag in memory
+```
+
+**Bootstrap seeding:** `_seed_categories_and_hooks(db)` inserts 8 types × 2 languages as
+`is_builtin=True` on first startup. Idempotent.
+
+Individual hooks can be disabled via `PUT /api/admin/hooks/{type}/{lang}` (`enabled=false`).
+Disabled hooks are excluded from `_get_effective_hooks()` — if all hooks are disabled,
+the full hardcoded base list is returned as fallback.
+
+**System type: Full CRUD** — builtin 8×2 hooks (`is_builtin=True`) cannot be deleted (403);
+custom hooks are fully deletable.
 
 ---
 

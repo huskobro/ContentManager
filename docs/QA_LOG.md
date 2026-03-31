@@ -109,6 +109,94 @@ Tüm backend testleri: 81 passed
 
 ---
 
+## 2026-03-31 — Category/Hook CRUD Sistemi — Tam CRUD Doğrulama
+
+### Değişiklik Özeti
+
+**Sistem tipi Override/Edit'ten tam CRUD'a yükseltildi.**
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/models/category.py` | Yeni ORM — `categories` tablosu (`key`, `name_tr`, `name_en`, `tone`, `focus`, `style_instruction`, `enabled`, `is_builtin`, `sort_order`) |
+| `backend/models/hook.py` | Yeni ORM — `hooks` tablosu (`type`, `lang`, `name`, `template`, `enabled`, `is_builtin`) |
+| `backend/database.py` | `create_tables()` — category ve hook modelleri import edilip tablo oluşturmaya dahil edildi |
+| `backend/main.py` | `_seed_categories_and_hooks(db)` — startup lifespan'da çağrılıyor; hardcoded 6 kategori + 8×2 hook `is_builtin=True` olarak ilk çalışmada seed ediliyor |
+| `backend/api/admin.py` | Categories ve hooks için tam CRUD endpoint'leri — POST/PUT/DELETE/GET |
+| `backend/pipeline/steps/script.py` | `_get_effective_category(key, db=None)` ve `_get_effective_hooks(language, db=None)` — `db` verilirse ORM'den okur; verilmezse hardcoded'a düşer |
+| `backend/pipeline/runner.py` | `config["_db"] = db` injection — pipeline'ın DB'ye erişimi |
+| `backend/modules/standard_video/pipeline.py` | `db=config.get("_db")` ile script adımına DB geçiriliyor |
+| `backend/tests/test_category_hook_crud.py` | 20 endpoint testi — tam CRUD, builtin koruma, 409 çakışma, 403 silme engeli |
+
+### Yeni API Endpoint'leri
+
+```
+GET    /api/admin/categories              → tüm kategorileri listeler
+POST   /api/admin/categories              → yeni özel kategori oluşturur (201/409/422)
+PUT    /api/admin/categories/{key}        → herhangi bir kategoriyi günceller (200/404)
+DELETE /api/admin/categories/{key}        → sadece özel kategorileri siler (200/403/404)
+
+GET    /api/admin/hooks/{lang}            → dil için hook'ları listeler
+POST   /api/admin/hooks                   → yeni özel hook oluşturur (201/409/422/400)
+PUT    /api/admin/hooks/{type}/{lang}     → herhangi bir hook'u günceller (200/404)
+DELETE /api/admin/hooks/{type}/{lang}     → sadece özel hook'ları siler (200/403/404)
+```
+
+### Builtin Koruma Mantığı
+
+- `is_builtin=True` olan kayıtlar (seed edilen hardcoded 6 kategori + 8×2 hook): **silinemez** (DELETE → 403)
+- `is_builtin=True` kayıtlar düzenlenebilir ve disable edilebilir (PUT → 200)
+- `is_builtin=False` kayıtlar (admin tarafından oluşturulan): **tamamen silinebilir** (DELETE → 200)
+- Aynı `key` ile ikinci POST → 409 Conflict
+
+### Çalıştırılan Testler
+
+```
+backend/tests/test_category_hook_crud.py — 19 passed, 1 skipped (0.04s)
+  test_list_categories_returns_seeded_data         PASSED
+  test_create_custom_category                      PASSED
+  test_create_duplicate_category_409               PASSED
+  test_update_builtin_category                     PASSED
+  test_update_nonexistent_category_404             PASSED
+  test_delete_custom_category                      PASSED
+  test_delete_builtin_category_403                 PASSED
+  test_delete_nonexistent_category_404             PASSED
+  test_list_hooks_by_lang                          PASSED
+  test_create_custom_hook                          PASSED
+  test_create_duplicate_hook_409                   PASSED
+  test_create_hook_invalid_lang_400                PASSED
+  test_update_builtin_hook                         PASSED
+  test_update_nonexistent_hook_404                 PASSED
+  test_delete_custom_hook                          PASSED
+  test_delete_builtin_hook_403                     PASSED
+  test_delete_nonexistent_hook_404                 PASSED
+  test_pipeline_reads_from_db_when_injected        PASSED
+  test_pipeline_fallback_hardcoded_when_no_db      PASSED
+  test_seed_idempotent_second_startup              SKIPPED (DB reset not implemented in fixture)
+
+Tüm backend testleri: geçen toplam artı 19 yeni → temiz
+```
+
+### tsc --noEmit
+
+```
+Çıktı yok → temiz
+```
+
+### Runtime Doğrulama
+
+- Startup logunda `_seed_categories_and_hooks` çağrıldı, 6 kategori + 16 hook seed edildi
+- `GET /api/admin/categories` → `is_builtin` alanı doğru dönüyor
+- `DELETE /api/admin/categories/science` (builtin) → 403 Forbidden
+- `POST /api/admin/categories` (yeni özel) + `DELETE` → 200 OK, DB'den silindi
+- `config["_db"]` pipeline'da script adımına ulaşıyor, `_get_effective_category` DB sorgusunu çalıştırıyor
+
+### Kalan Sınırlar (Planlı)
+
+- `news_bulletin` ve `product_review` pipeline'ları henüz `db=config.get("_db")` almıyor — düşük öncelik
+- Kategori listesinde `sort_order` sıralaması frontend'de henüz uygulanmıyor
+
+---
+
 ## Kayıt Formatı
 
 ```
