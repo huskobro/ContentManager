@@ -69,17 +69,26 @@ and `edge_tts_provider.py`.
 
 Admin-editable LLM prompt templates stored per module. When a template is set,
 it **replaces** the hardcoded system instruction. Unset (empty) → pipeline falls
-back to hardcoded instruction. All keys are aliased by `runner.py` from
-`{module_key}_{type}_prompt` → the config key the pipeline step reads.
+back to hardcoded instruction.
 
-| Admin Key | Module | Pipeline Config Key | Variables Supported | Wiring Status |
-|-----------|--------|---------------------|---------------------|---------------|
-| `standard_video_script_prompt` | `standard_video` | `script_prompt_template` | `{scene_count}`, `{language_name}` | **WIRED** — `standard_video/pipeline.py:step_script` |
-| `standard_video_metadata_prompt` | `standard_video` | `metadata_prompt_template` | _(free text, no required placeholders)_ | **WIRED** — `standard_video/pipeline.py:step_metadata` |
-| `news_bulletin_script_prompt` | `news_bulletin` | `script_prompt_template` | `{scene_count}`, `{language_name}` | **WIRED** — `news_bulletin/pipeline.py:step_script_bulletin` |
-| `news_bulletin_metadata_prompt` | `news_bulletin` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` from standard_video |
-| `product_review_script_prompt` | `product_review` | `script_prompt_template` | `{scene_count}`, `{pros_count}`, `{cons_count}`, `{score_range}`, `{language_name}` | **WIRED** — `product_review/pipeline.py:step_script_review` |
-| `product_review_metadata_prompt` | `product_review` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` from standard_video |
+**UI surface (2026-03-31):** All prompt templates are managed exclusively via the
+**Master Promptlar** page (`/admin/prompts`, `PromptManager.tsx`). The GlobalSettings
+page no longer contains prompt fields — the duplicate `PromptTemplatesCard` component
+was removed.
+
+**Save path:** PromptManager saves with `scope="module"`, `scope_id=<module_key>`,
+`key=script_prompt_template` (or `metadata_prompt_template`). The `runner.py` aliasing
+(`{module_key}_script_prompt → script_prompt_template`) remains in place for backwards
+compatibility with any admin-scope records already in the database.
+
+| Key Saved by PromptManager | Module | Pipeline Config Key | Variables Supported | Wiring Status |
+|---------------------------|--------|---------------------|---------------------|---------------|
+| `script_prompt_template` (scope=module, standard_video) | `standard_video` | `script_prompt_template` | `{scene_count}`, `{language_name}` | **WIRED** — `standard_video/pipeline.py:step_script` |
+| `metadata_prompt_template` (scope=module, standard_video) | `standard_video` | `metadata_prompt_template` | _(free text)_ | **WIRED** — `standard_video/pipeline.py:step_metadata` |
+| `script_prompt_template` (scope=module, news_bulletin) | `news_bulletin` | `script_prompt_template` | `{scene_count}`, `{language_name}` | **WIRED** — `news_bulletin/pipeline.py:step_script_bulletin` |
+| `metadata_prompt_template` (scope=module, news_bulletin) | `news_bulletin` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` |
+| `script_prompt_template` (scope=module, product_review) | `product_review` | `script_prompt_template` | `{scene_count}`, `{pros_count}`, `{cons_count}`, `{score_range}`, `{language_name}` | **WIRED** — `product_review/pipeline.py:step_script_review` |
+| `metadata_prompt_template` (scope=module, product_review) | `product_review` | `metadata_prompt_template` | _(free text)_ | **WIRED** — reuses `step_metadata` |
 
 **Fallback behaviour:** If the template field is empty or blank, the hardcoded
 system instruction is used without modification. Unknown `{placeholder}` values

@@ -1381,3 +1381,37 @@ npx tsc -p tsconfig.app.json --noEmit
 ---
 
 *Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*
+
+---
+
+## 2026-03-31 — Prompt Mimarisi Birleştirme + Final Sync
+
+### Değişiklik Özeti
+
+**Görev: Prompt yönetim yüzeyini tek yere topla (Master Promptlar sayfası)**
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/admin/GlobalSettings.tsx` | `PromptTemplatesCard` + `PromptRow` bileşenleri kaldırıldı; `PROMPT_SETTINGS_SCHEMA`, `PromptSettingDef`, `FileText` import'ları temizlendi; docstring güncellendi |
+| `frontend/src/components/layout/AppShell.tsx` | `PAGE_TITLES`'a `/admin/prompts → "Master Promptlar"` ve `/admin/costs → "Maliyet Takibi"` eklendi |
+
+**Mimari kararlar:**
+
+- `category` ve `use_hook_variety` Global Settings Script kategorisinde **kalmaya devam eder** — bunlar davranış kontrolleri (behavior toggles), metin şablonları değil.
+- Prompt yönetimi artık **tek yerde**: `/admin/prompts` (PromptManager.tsx), `scope="module"` ile kaydeder.
+- GlobalSettings `handleSave` artık yalnızca sistem/pipeline/script/video_audio kategorisi ayarlarını yönetir.
+- `runner.py`'daki aliasing mantığı hâlâ geçerli; PromptManager `script_prompt_template` key'i ile `scope=module` kaydeder.
+
+### Mimari Sonuç Durumu
+
+| Yüzey | Yönetilen Alanlar | Scope |
+|---|---|---|
+| Global Ayarlar (`/admin/global-settings`) | system, pipeline, script (behavior), video_audio | `admin` |
+| Master Promptlar (`/admin/prompts`) | script_prompt_template, metadata_prompt_template | `module` |
+| Provider Yönetimi (`/admin/providers`) | API anahtarları, fallback sırası | `admin` |
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| DB'de `scope=admin` kayıtlı eski prompt değerleri | Düşük | Eski GlobalSettings üzerinden kaydedilmiş admin-scope prompt'lar DB'de kalır; 5-layer'da module > admin olduğundan PromptManager ile üstüne yazılabilir |

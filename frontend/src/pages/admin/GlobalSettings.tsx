@@ -4,16 +4,23 @@
  * Bölümler:
  *   1. Sistem Ayarları (max_concurrent_jobs, output_dir, video_format, language)
  *   2. Pipeline Varsayılanları (default_tts/llm/visuals/subtitle, fallback orders)
+ *   3. Script Ayarları (scene_count, category, use_hook_variety, sıcaklık, token)
+ *   4. Video & Ses Ayarları (tts_voice, speed, resolution, fps, altyazı, ken burns)
+ *
+ * NOT: Tüm prompt/template alanları yalnızca /admin/prompts (Master Promptlar) sayfasında
+ * yönetilir. Bu sayfada prompt alanı bulunmaz.
  *
  * Faz 10.7 değişiklikleri:
- *   • "multiselect" tip: fallback order için checkbox-style butonlar (kullanıcı anahtar ezberlemez)
- *   • Silme (delete) işlemi yok
+ *   • "multiselect" tip: fallback order için checkbox-style butonlar
  *   • Master Promptlar ayrı PromptManager.tsx sayfasına taşındı
  *
  * Faz 10.8 değişiklikleri:
  *   • "providers" kategorisi kaldırıldı — API anahtarları yalnızca ProviderManager'da
- *   • Boş değer kaydı: empty/whitespace → deleteSetting (unset) yerine create/update değil
+ *   • Boş değer kaydı: empty/whitespace → deleteSetting (unset)
  *   • React state sync: useEffect dbRecord bağımlılığı ile yerel state senkronize
+ *
+ * Faz 10.9 değişiklikleri:
+ *   • PromptTemplatesCard tamamen kaldırıldı — çift yönetim yüzeyi ortadan kalktı
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -35,7 +42,6 @@ import {
   CheckCircle2,
   Home,
   X,
-  FileText,
   ToggleLeft,
   ToggleRight,
 } from "lucide-react";
@@ -43,10 +49,8 @@ import { useAdminStore, type SettingRecord } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import {
   SYSTEM_SETTINGS_SCHEMA,
-  PROMPT_SETTINGS_SCHEMA,
   SETTING_CATEGORY_META,
   type SystemSettingDef,
-  type PromptSettingDef,
   type SettingCategory,
 } from "@/lib/constants";
 import { api, APIError } from "@/api/client";
@@ -698,203 +702,6 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
   );
 }
 
-// ─── Prompt Template Satırı ──────────────────────────────────────────────────
-
-interface PromptRowProps {
-  def: PromptSettingDef;
-  dbRecord: SettingRecord | null;
-  onSave: (def: SystemSettingDef, value: unknown, locked: boolean) => Promise<void>;
-}
-
-function PromptRow({ def, dbRecord, onSave }: PromptRowProps) {
-  const initialValue = dbRecord ? String(dbRecord.value ?? "") : "";
-  const [value, setValue] = useState(initialValue);
-  const [locked, setLocked] = useState(dbRecord?.locked ?? false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
-  useEffect(() => {
-    setValue(dbRecord ? String(dbRecord.value ?? "") : "");
-    setLocked(dbRecord?.locked ?? false);
-  }, [dbRecord]);
-
-  const isDirty =
-    value !== (dbRecord ? String(dbRecord.value ?? "") : "") ||
-    locked !== (dbRecord?.locked ?? false);
-
-  async function handleSave() {
-    setSaving(true);
-    // Prompt key'leri scope="module" değil scope="admin" olarak kaydedilir,
-    // ardından pipeline config.get("script_prompt_template") ile okunur.
-    // Key adı doğrudan modül key prefix'ini içerir: standard_video_script_prompt
-    const syntheticDef: SystemSettingDef = {
-      key: def.key,
-      label: def.label,
-      description: def.description,
-      type: "textarea",
-      category: "system",
-      default: "",
-    };
-    await onSave(syntheticDef, value.trim() || null, locked);
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
-
-  const isSet = !!dbRecord && !!dbRecord.value;
-  const preview = value.slice(0, 120);
-
-  return (
-    <div className="border-t border-border first:border-t-0">
-      {/* Başlık satırı */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-3 hover:bg-accent/30 transition-colors text-left"
-      >
-        <FileText size={13} className={isSet ? "text-emerald-400" : "text-muted-foreground"} />
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-foreground">{def.label}</p>
-          <p className="text-[11px] text-muted-foreground leading-snug">
-            {isSet ? (
-              <span className="text-emerald-400/80">Özel prompt ayarlı · </span>
-            ) : (
-              <span className="text-amber-400/80">Varsayılan hardcoded prompt kullanılıyor · </span>
-            )}
-            {def.description}
-          </p>
-          {!expanded && isSet && (
-            <p className="mt-0.5 text-[10px] text-muted-foreground/60 font-mono truncate">
-              {preview}{value.length > 120 ? "…" : ""}
-            </p>
-          )}
-        </div>
-        {expanded ? (
-          <ChevronUp size={13} className="text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronDown size={13} className="text-muted-foreground shrink-0" />
-        )}
-      </button>
-
-      {/* Düzenleme alanı */}
-      {expanded && (
-        <div className="px-4 pb-4 space-y-2">
-          <textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={def.placeholder}
-            rows={8}
-            className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground font-mono outline-none focus:ring-2 focus:ring-ring transition-colors resize-y placeholder:text-muted-foreground/40"
-          />
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] text-muted-foreground/60">
-              Boş bırakırsanız pipeline varsayılan hardcoded prompt'u kullanır.
-              <br />
-              <span className="font-mono text-blue-400/60">{"{scene_count}"}</span> ve{" "}
-              <span className="font-mono text-blue-400/60">{"{language_name}"}</span> yer tutucuları desteklenir.
-            </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setLocked((v) => !v)}
-                title={locked ? "Kilidi kaldır" : "Kilitle"}
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
-                  locked
-                    ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"
-                    : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"
-                )}
-              >
-                {locked ? <Lock size={12} /> : <Unlock size={12} />}
-              </button>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving || !isDirty}
-                className={cn(
-                  "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
-                  saved
-                    ? "bg-emerald-500/15 text-emerald-400"
-                    : isDirty
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
-                )}
-              >
-                {saving ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : saved ? (
-                  <CheckCircle2 size={11} />
-                ) : (
-                  <Save size={11} />
-                )}
-                {saved ? "Kaydedildi" : "Kaydet"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Prompt Templates Kartı ───────────────────────────────────────────────────
-
-interface PromptTemplatesCardProps {
-  dbSettings: SettingRecord[];
-  onSave: (def: SystemSettingDef, value: unknown, locked: boolean) => Promise<void>;
-}
-
-function PromptTemplatesCard({ dbSettings, onSave }: PromptTemplatesCardProps) {
-  const [collapsed, setCollapsed] = useState(true);
-
-  const setPrompts = PROMPT_SETTINGS_SCHEMA.filter(
-    (p) => p.key.endsWith("_script_prompt")
-  );
-  const metadataPrompts = PROMPT_SETTINGS_SCHEMA.filter(
-    (p) => p.key.endsWith("_metadata_prompt")
-  );
-  const allPrompts = [...setPrompts, ...metadataPrompts];
-
-  return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setCollapsed((v) => !v)}
-        className="flex w-full items-center justify-between px-4 py-3 hover:bg-accent/40 transition-colors"
-      >
-        <div className="text-left">
-          <p className="text-sm font-semibold text-foreground">Master Promptlar</p>
-          <p className="text-xs text-muted-foreground">
-            Her modülün senaryo ve metadata LLM prompt şablonları. Boş bırakılırsa hardcoded varsayılan kullanılır.
-          </p>
-        </div>
-        {collapsed ? (
-          <ChevronDown size={16} className="text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronUp size={16} className="text-muted-foreground shrink-0" />
-        )}
-      </button>
-
-      {!collapsed && (
-        <div className="border-t border-border">
-          {allPrompts.map((def) => {
-            const dbRecord = dbSettings.find((r) => r.key === def.key) ?? null;
-            return (
-              <PromptRow
-                key={def.key}
-                def={def}
-                dbRecord={dbRecord}
-                onSave={onSave}
-              />
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function GlobalSettings() {
@@ -1059,9 +866,6 @@ export default function GlobalSettings() {
               />
             );
           })}
-
-          {/* Master Promptlar */}
-          <PromptTemplatesCard dbSettings={settings} onSave={handleSave} />
         </div>
       )}
 

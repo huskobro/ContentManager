@@ -18,6 +18,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/modules": "Modül Yönetimi",
   "/admin/providers": "Provider Yönetimi",
   "/admin/global-settings": "Global Ayarlar",
+  "/admin/prompts": "Master Promptlar",
+  "/admin/costs": "Maliyet Takibi",
   "/admin/jobs": "Tüm İşler",
 };
 
