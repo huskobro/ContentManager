@@ -102,7 +102,16 @@ async def run_pipeline(job_id: str) -> None:
         config = _load_resolved_settings(job)
 
         # ── Modül aktiflik kontrolü ────────────────────────────────────────
-        if config.get("enabled") is False:
+        # config["enabled"] ya Python bool ya da JSON-decoded değer olabilir.
+        # _decode_value('false') → False, _decode_value('true') → True.
+        # Defensive: string 'false' de kontrol et (çoklu encode kenarı durum).
+        _enabled_raw = config.get("enabled")
+        _is_disabled = (
+            _enabled_raw is False
+            or _enabled_raw == "false"
+            or _enabled_raw == 0
+        )
+        if _is_disabled:
             await manager.update_job_status(
                 job_id, "failed",
                 error_message="Bu modül sistem yöneticisi tarafından devre dışı bırakılmıştır.",

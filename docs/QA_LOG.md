@@ -5,6 +5,40 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Faz 11 Stabilizasyonu
+
+### Yapılan Değişiklikler
+
+| Bileşen | Değişiklik |
+|---|---|
+| `backend/pipeline/runner.py` | Modül aktiflik kontrolü: `is False` yerine string `"false"` ve integer `0` da kontrol ediliyor (defensive check) |
+| `contentmanager.db` | `settings` tablosu: `(scope='module', scope_id='news_bulletin', key='enabled')` değeri `'false'` → `'true'` düzeltildi |
+| `Sidebar.tsx` | "Kanal Yönetimi" nav girişi kaldırıldı; `/admin/channels` route App.tsx'te korundu (PlatformAccountManager üzerinden erişilebilir) |
+| `CreateVideo.tsx` | "Gelişmiş Ayarlar" bölümü tamamen kaldırıldı: `ttsProvider`, `subtitleStyle`, `showAdvanced` state ve ilgili UI + overrides |
+
+### Root Cause Analizleri
+
+**News Bulletin "modül devre dışı" hatası:**
+- Hata mesajı: `"Bu modül sistem yöneticisi tarafından devre dışı bırakılmıştır."`
+- Root cause: `settings` tablosunda `(scope='module', scope_id='news_bulletin', key='enabled', value='false')` kaydı vardı. Bu kayıt SettingsResolver 5-katman çözümlemesinde Katman 3 (module scope) olarak seçilip `resolved_settings_json` snapshot'ına `enabled: false` olarak yazılmıştı. Pipeline runner bu snapshot'ı okuyunca job'u başlamadan fail ediyordu.
+- Fix 1: DB kaydı `'true'` olarak güncellendi.
+- Fix 2: `runner.py` defensive check — artık `_enabled_raw == "false"` ve `_enabled_raw == 0` durumları da yakalanıyor (JSON çift-encode edge case'leri için).
+- **Ders:** ModuleManager.tsx'te bir modülü devre dışı bırakmak, o modül için yeni oluşturulan tüm job'ları anında keser. UI'da bu durumu gösterecek bir uyarı yok — backlog'a eklendi.
+
+**Kanal Yönetimi vs Platform Hesapları:**
+- Kanal Yönetimi (`/admin/channels` → ChannelManager.tsx): YouTube OAuth flow, erişim token'ı yönetimi, `youtube_channels` DB tablosu. Gerçek kimlik bilgisi katmanı.
+- Platform Hesapları (`/admin/platform-accounts` → PlatformAccountManager.tsx): Multi-platform yayın hesabı kaydı, `platform_accounts` DB tablosu. PlatformAccountManager'da "Kanal Bağla →" butonu ile ChannelManager'a yönlendirme var.
+- **Karar:** İkisi farklı sorumluluklar taşıyor — çakışmıyor. Sidebar'dan "Kanal Yönetimi" kaldırıldı (karmaşıklık azaltma), route korundu.
+
+### Test Sonuçları
+
+```
+225 passed, 1 skipped — backend/tests/ (değişmedi)
+tsc --noEmit — 0 hata (CreateVideo gelişmiş ayarlar kaldırıldıktan sonra doğrulandı)
+```
+
+---
+
 ## 2026-03-31 — Faz 11.3: Publishing Hub Frontend
 
 ### Yapılan Değişiklikler

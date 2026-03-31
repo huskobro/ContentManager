@@ -1,6 +1,6 @@
 # Compat Layer Durumu — Publishing Hub Geçişi
 
-**Son güncelleme:** 2026-03-31 (Faz 11.2C)
+**Son güncelleme:** 2026-03-31 (Faz 11.3 Stabilizasyon)
 
 Bu belge, YouTube-first mimarisinden Publishing Hub mimarisine geçiş sürecinde
 hangi compat (geriye uyumluluk) katmanlarının nerede olduğunu, neden tutulduğunu
@@ -113,6 +113,19 @@ Aşağıdakiler Faz 11.3'te sırasıyla kaldırılabilir:
 9. `backend/tests/test_youtube_upload_step.py` — dosya sil (test coverage taşındıktan sonra)
 
 **Önkoşul:** Tüm aktif production job'ların `job_steps` tablosunda `youtube_upload` key'ine sahip satır kalmamış olmalı.
+
+---
+
+## Kanal Yönetimi vs Platform Hesapları (Faz 11.3 Stabilizasyon)
+
+Bu iki yüzey farklı sorumluluklar taşır — biri diğerini kapsamamaktadır:
+
+| Yüzey | Route | Bileşen | Sorumluluk |
+|---|---|---|---|
+| Kanal Yönetimi | `/admin/channels` | `ChannelManager.tsx` | YouTube OAuth flow, `access_token` / `refresh_token` yönetimi, `youtube_channels` tablosu |
+| Platform Hesapları | `/admin/platform-accounts` | `PlatformAccountManager.tsx` | Multi-platform yayın hesabı kaydı, `platform_accounts` tablosu |
+
+**Faz 11.3'te yapılan:** "Kanal Yönetimi" nav girişi Sidebar'dan kaldırıldı (karışıklık azaltma). `/admin/channels` route App.tsx'te korunuyor — PlatformAccountManager içindeki "Kanal Bağla →" butonu bu URL'e yönlendirir. Hiçbir işlevsellik yitirilmedi.
 
 ---
 

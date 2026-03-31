@@ -144,3 +144,54 @@ ticker     → null            (NewsTicker render edilmez)
 breakingOverlay → görünmez   (breakingText yoksa)
 subtitles  → []              (Whisper başarısız olursa)
 ```
+
+---
+
+## Haber Kaynağı (NewsSource) Gerçek Kullanımı
+
+> Doğrulama tarihi: 2026-03-31 — kaynak: `backend/modules/news_bulletin/pipeline.py`
+
+### NewsSource Sadece CRUD mu?
+
+**Hayır.** `NewsSource` tablosu aktif olarak pipeline'da kullanılır.
+
+### Akış
+
+```
+step_script_bulletin()
+  1. config["_news_urls"] var mı?
+     ├── Evet → bu URL'leri kullan
+     └── Hayır → DB'den NewsSource sorgula:
+           db.query(NewsSource).filter(NewsSource.enabled == True).all()
+           → her kaynağın url'ini listeye ekle
+
+  2. Her URL için:
+     httpx.AsyncClient (timeout=15s) → GET isteği
+     BeautifulSoup → HTML tag'lerini sıyır
+     → düz metin içerik
+
+  3. Tüm içerik + job_title + konfigürasyon parametreleri
+     → LLM'e prompt olarak gönderilir
+     → scenes[] döner
+```
+
+### Önemli Detaylar
+
+| Parametre | Değer |
+|---|---|
+| HTTP timeout | 15 saniye (hard limit) |
+| HTML stripping | `BeautifulSoup` ile tüm tag'ler kaldırılır |
+| Hata yönetimi | URL fetch başarısız olursa o URL atlanır, diğerleri denenir |
+| Fallback | Hiçbir URL fetch edilemezse LLM sadece `job_title` ile çalışır (boş içerik) |
+| Filtre | `NewsSource.enabled == True` — pasif kaynaklar kullanılmaz |
+
+### config["_news_urls"] Nereden Gelir?
+
+`CreateVideo.tsx`'te "Haber bülteni" modülü seçildiğinde kullanıcının girdiği URL'ler `job_params["_news_urls"]` olarak backend'e gönderilir. Kullanıcı URL girmezse `_news_urls` boştur ve DB'deki aktif NewsSource'lar devreye girer.
+
+### Sonuç
+
+- NewsSource yönetimi (`/admin/news-sources`) işlevsel bir CRUD'dur — backend pipeline tarafından gerçekten okunur.
+- Kaynaklar devre dışı bırakılırsa (`enabled=False`) pipeline onları görmez.
+- Kaynaklar silinirse, o kaynaktan haber çekilmez.
+- Admin'in "Haber Kaynakları" sayfası, News Bulletin'in içerik kalitesini doğrudan etkiler.

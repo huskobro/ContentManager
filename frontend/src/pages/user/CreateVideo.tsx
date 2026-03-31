@@ -25,8 +25,6 @@ import {
   Video,
   Newspaper,
   ShoppingBag,
-  ChevronDown,
-  ChevronUp,
   Loader2,
   AlertCircle,
   Sparkles,
@@ -107,9 +105,6 @@ export default function CreateVideo() {
   const [videoFormat, setVideoFormat] = useState<"long" | "shorts">(
     (userDefaults.videoFormat as "long" | "shorts") || "long"
   );
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [ttsProvider, setTtsProvider] = useState(userDefaults.ttsProvider || "edge_tts");
-  const [subtitleStyle, setSubtitleStyle] = useState(userDefaults.subtitleStyle || "standard");
 
   // ── Product Review modül alanları ──────────────────────────────────────────
   // Fiyat Grubu
@@ -205,8 +200,6 @@ export default function CreateVideo() {
       video_format: videoFormat,
       video_resolution: resolveResolution(videoFormat),
     };
-    if (ttsProvider !== userDefaults.ttsProvider) overrides.tts_provider = ttsProvider;
-    if (subtitleStyle !== userDefaults.subtitleStyle) overrides.subtitle_style = subtitleStyle;
 
     // ── Product Review overrides ──────────────────────────────────────────
     if (selectedModule === "product_review") {
@@ -838,77 +831,6 @@ export default function CreateVideo() {
             </div>
           )}
         </div>
-
-        {/* Gelişmiş ayarlar toggle */}
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          Gelişmiş Ayarlar
-        </button>
-
-        {/* Gelişmiş ayarlar panel */}
-        {showAdvanced && (
-          <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5">
-                <label htmlFor="ttsProvider" className="text-sm font-medium text-foreground">
-                  TTS Provider
-                </label>
-                {lockedKeys.includes("tts_provider") && (
-                  <Lock size={11} className="text-amber-400" aria-label="Admin tarafından kilitlendi" />
-                )}
-              </div>
-              <select
-                id="ttsProvider"
-                value={ttsProvider}
-                onChange={(e) => setTtsProvider(e.target.value)}
-                disabled={lockedKeys.includes("tts_provider")}
-                className={cn(
-                  "w-full rounded-lg border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring",
-                  lockedKeys.includes("tts_provider")
-                    ? "border-border opacity-60 cursor-not-allowed"
-                    : "border-border"
-                )}
-              >
-                <option value="edge_tts">Edge TTS (Ücretsiz)</option>
-                <option value="elevenlabs">ElevenLabs (Premium)</option>
-                <option value="openai_tts">OpenAI TTS</option>
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5">
-                <label htmlFor="subtitleStyle" className="text-sm font-medium text-foreground">
-                  Altyazı Stili
-                </label>
-                {lockedKeys.includes("subtitle_style") && (
-                  <Lock size={11} className="text-amber-400" aria-label="Admin tarafından kilitlendi" />
-                )}
-              </div>
-              <select
-                id="subtitleStyle"
-                value={subtitleStyle}
-                onChange={(e) => setSubtitleStyle(e.target.value)}
-                disabled={lockedKeys.includes("subtitle_style")}
-                className={cn(
-                  "w-full rounded-lg border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring",
-                  lockedKeys.includes("subtitle_style")
-                    ? "border-border opacity-60 cursor-not-allowed"
-                    : "border-border"
-                )}
-              >
-                <option value="standard">Standard</option>
-                <option value="neon_blue">Neon Mavi</option>
-                <option value="gold">Altın</option>
-                <option value="minimal">Minimal</option>
-                <option value="hormozi">Hormozi Shorts</option>
-              </select>
-            </div>
-          </div>
-        )}
 
         {/* Gönder butonu */}
         <button
