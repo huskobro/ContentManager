@@ -168,10 +168,19 @@ defaults from `constants.ts` and module `config.py` files are:
 **How selected:** config key `"category"` (default: `"general"`).
 
 **How it affects the pipeline:** `build_enhanced_prompt()` calls
-`get_category_prompt_enhancement(category)` which appends a block containing
-`KATEGORI`, `TON`, `ODAK`, and `STIL TALIMATI` fields to the system instruction
-sent to the LLM. Category `"general"` skips this block entirely (no appended
-text).
+`_get_effective_category(category)` (which merges hardcoded values with any DB
+overrides) and then `get_category_prompt_enhancement(category)` to append a
+block containing `KATEGORI`, `TON`, `ODAK`, and `STIL TALIMATI` to the LLM
+system instruction.
+
+**Skipped when:** `category == "general"` OR `_get_effective_category()["enabled"] == False`.
+
+**Override system (2026-03-31):** Tone, focus, and style_instruction for each category
+can be edited via **Master Promptlar → Kategoriler** (`/admin/prompts`). Changes are
+stored in the `settings` table (`scope=admin`, `key=category_content_{key}`) and loaded
+into memory at every pipeline start via `load_overrides_from_db()`.
+
+**System type: Override/Edit** — hardcoded 6 categories, new categories cannot be added via UI.
 
 ---
 
@@ -193,6 +202,15 @@ When `use_hook_variety` is `True`, `build_enhanced_prompt()` calls
 
 **When `use_hook_variety` is `False`:** `hook_instruction` is an empty string;
 no hook block is added to the prompt.
+
+**Override system (2026-03-31):** Hook name and template text can be edited per
+language via **Master Promptlar → Açılış Hook'ları** (`/admin/prompts`). Individual
+hooks can be disabled (removed from the pipeline pool). Overrides stored in `settings`
+table (`key=hook_content_{type}_{lang}`), loaded via `load_overrides_from_db()`.
+`_get_effective_hooks()` applies overrides and filters disabled hooks; if all hooks are
+disabled it falls back to the full hardcoded list.
+
+**System type: Override/Edit** — hardcoded 8 types, new hook types cannot be added via UI.
 
 ---
 

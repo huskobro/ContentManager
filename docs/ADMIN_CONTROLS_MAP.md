@@ -1,5 +1,5 @@
 # Admin Controls Map
-_Last updated: 2026-03-31 (final hardcoded audit + tts_voice default corrected)_
+_Last updated: 2026-03-31 (category/hook override runtime verification + enabled=False bug fix)_
 
 Maps every admin panel control to its concrete effect on the pipeline.
 Only settings that are actually read somewhere in the codebase are included.
@@ -42,8 +42,8 @@ and `edge_tts_provider.py`.
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
 | `scene_count` | number (3–20) | 10 | Injected into the LLM system prompt as `{scene_count}`. Also used in `_normalize_script()` and `_fallback_parse_script()` to validate/pad scene lists. Per-module defaults: standard_video=10, news_bulletin=8, product_review=8. |
-| `category` | select | `general` | Determines which category block is appended to the LLM system instruction by `get_category_prompt_enhancement()`. `"general"` appends nothing. Other values append KATEGORI/TON/ODAK/STIL_TALIMATI fields. |
-| `use_hook_variety` | toggle | `true` | When `true`, `select_opening_hook()` picks one of 8 hook types (avoiding the last 6 used) and appends it to the user prompt. When `false`, no hook instruction is added. |
+| `category` | select | `general` | Determines which category block is appended to the LLM system instruction by `get_category_prompt_enhancement()`. `"general"` appends nothing. Other values append KATEGORI/TON/ODAK/STIL_TALIMATI fields. A category with `enabled=False` override is also silently skipped (same as `general`). The text content of each category can be overridden via **Master Promptlar → Kategoriler** tab — see Category Content Override section below. |
+| `use_hook_variety` | toggle | `true` | When `true`, `select_opening_hook()` picks one of 8 hook types (avoiding the last 6 used) and appends it to the user prompt. When `false`, no hook instruction is added. The text content of each hook type can be overridden via **Master Promptlar → Açılış Hook'ları** tab — see Hook Content Override section below. |
 | `script_temperature` | number (0–2) | 0.8 | LLM `temperature` parameter for the script step. Per-module defaults: standard_video=0.8, news_bulletin=0.6, product_review=0.7. |
 | `script_max_tokens` | number (1024–16384) | 4096 | LLM `max_output_tokens` parameter for the script step. All three modules default to 4096. |
 | `job_timeout_seconds` | number (300–7200) | 1800 | (Also listed under System Settings — same key, placed in "script" category in UI.) |
@@ -93,6 +93,68 @@ compatibility with any admin-scope records already in the database.
 **Fallback behaviour:** If the template field is empty or blank, the hardcoded
 system instruction is used without modification. Unknown `{placeholder}` values
 in custom templates are silently ignored (`KeyError` caught, template used as-is).
+
+---
+
+---
+
+## Category Content Override
+
+**UI surface:** Master Promptlar → Kategoriler tab (`/admin/prompts`).
+**API:** `GET /api/admin/categories`, `PUT /api/admin/categories/{key}`.
+**Storage:** `settings` table, `scope=admin`, `scope_id=""`, `key=category_content_{key}`.
+
+**System type: Override/Edit. NOT full CRUD.**
+
+| Capability | Supported? | Notes |
+|---|---|---|
+| View all categories | YES | Hardcoded 6: general, true_crime, science, history, motivation, religion |
+| Edit tone/focus/style_instruction | YES | Override stored in DB; pipeline reads via `load_overrides_from_db()` |
+| Enable/disable category | YES | `enabled=False` → `build_enhanced_prompt()` skips enhancement. Bug fixed 2026-03-31. |
+| Reset to hardcoded default | YES | Empty body + `enabled=True` → DB row deleted |
+| Add new category | NO | Hardcoded set, requires Python code change |
+| Delete existing category | NO | Hardcoded set, removing from DB only removes override |
+| Rename category key | NO | Keys are fixed identifiers |
+
+**Runtime wiring (verified 2026-03-31):**
+```
+PUT /api/admin/categories/{key} → settings table
+runner.py:141 → load_overrides_from_db(db) [every pipeline start]
+build_enhanced_prompt() → _get_effective_category() → override merged
+enabled=False → enhancement block skipped entirely
+```
+
+**Hardcoded category set:** `general`, `true_crime`, `science`, `history`, `motivation`, `religion`.
+`general` never adds enhancement regardless of override — the `category != "general"` guard in `build_enhanced_prompt()` ensures this.
+
+---
+
+## Hook Content Override
+
+**UI surface:** Master Promptlar → Açılış Hook'ları tab (`/admin/prompts`).
+**API:** `GET /api/admin/hooks/{lang}`, `PUT /api/admin/hooks/{hook_type}/{lang}`.
+**Storage:** `settings` table, `scope=admin`, `scope_id=""`, `key=hook_content_{type}_{lang}`.
+
+**System type: Override/Edit. NOT full CRUD.**
+
+| Capability | Supported? | Notes |
+|---|---|---|
+| View all hooks (tr + en) | YES | Hardcoded 8 types per language |
+| Edit hook name/template | YES | Override stored in DB |
+| Enable/disable individual hook | YES | `enabled=False` → filtered from pipeline hook pool by `_get_effective_hooks()` |
+| Reset to hardcoded default | YES | Empty body + `enabled=True` → DB row deleted |
+| All hooks disabled → fallback | YES | `_get_effective_hooks()` returns full base list if filtered result is empty |
+| Add new hook type | NO | Hardcoded set, requires Python code change |
+| Delete existing hook type | NO | Hardcoded set |
+
+**Runtime wiring (verified 2026-03-31):**
+```
+PUT /api/admin/hooks/{type}/{lang} → settings table
+runner.py:141 → load_overrides_from_db(db) [every pipeline start]
+select_opening_hook() → _get_effective_hooks() → filtered + override applied
+```
+
+**Hardcoded hook types:** `shocking_fact`, `question`, `story`, `contradiction`, `future_peek`, `comparison`, `personal_address`, `countdown`.
 
 ---
 

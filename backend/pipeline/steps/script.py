@@ -318,12 +318,19 @@ def load_overrides_from_db(db: Any) -> None:
 
 
 def _get_effective_category(key: str) -> dict[str, Any]:
-    """Hardcoded CATEGORIES uzerine override merge ederek efektif kategori bilgisini dondurur."""
+    """Hardcoded CATEGORIES uzerine override merge ederek efektif kategori bilgisini dondurur.
+
+    Returns:
+        Birlestirilmis dict — tone, focus, style_instruction, name_tr, name_en, enabled.
+        enabled: override'da acikca False set edilmedikce True kabul edilir.
+    """
     base = dict(CATEGORIES.get(key, CATEGORIES["general"]))
     override = _category_overrides.get(key, {})
     for field in ("tone", "focus", "style_instruction"):
         if override.get(field):
             base[field] = override[field]
+    # enabled alanini ekle: override'da False ise False, yoksa True
+    base["enabled"] = override.get("enabled", True)
     return base
 
 
@@ -441,8 +448,11 @@ def build_enhanced_prompt(
     enhanced_instruction = base_system_instruction
 
     if category and category != "general":
-        category_enhancement = get_category_prompt_enhancement(category)
-        enhanced_instruction += category_enhancement
+        # Kategori enabled=False ise enhancement ekleme
+        cat_info = _get_effective_category(category)
+        if cat_info.get("enabled", True):
+            category_enhancement = get_category_prompt_enhancement(category)
+            enhanced_instruction += category_enhancement
 
     # Acilis hook'u sec
     hook_instruction = ""

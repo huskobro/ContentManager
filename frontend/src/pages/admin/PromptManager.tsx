@@ -558,7 +558,7 @@ export default function PromptManager() {
               Kategori içerikleri (Ton, Odak, Stil Talimatı) LLM system prompt'una eklenir.{" "}
               <span className="text-amber-300/70">
                 Boş bırakılan alanlar hardcoded varsayılan değeri kullanır. Genel kategorinin içeriği hiçbir zaman eklenmez.
-                Pasif kategoriler Global Ayarlar seçim listesinde görünmeye devam eder ancak prompt'a eklenmez.
+                Pasif kategoriler prompt'a eklenmez; seçim listesinde görünmeye devam eder ancak enhancement atlanır.
               </span>
             </span>
           </div>

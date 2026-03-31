@@ -5,6 +5,110 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Kategori/Hook Override Runtime Doğrulaması + Bug Fix
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/pipeline/steps/script.py` | `_get_effective_category()` artık `enabled` alanını döndürüyor; `build_enhanced_prompt()` `enabled=False` kategorileri atlıyor |
+| `frontend/src/pages/admin/PromptManager.tsx` | Hatalı açıklama metni düzeltildi (pasif kategori davranışı artık kodla uyumlu) |
+| `backend/tests/test_script_overrides.py` | 16 yeni unit test — A/B kanıtı, disabled filtreleme, CRUD sınır testi |
+
+### Tespit Edilen Bug ve Düzeltme
+
+**Bug:** `build_enhanced_prompt()` içinde `category` `enabled=False` olsa bile prompt enhancement ekleniyordu.
+
+Kök neden: `_get_effective_category()` `enabled` alanını döndürmüyordu; `build_enhanced_prompt()` sadece `category != "general"` kontrolü yapıyordu.
+
+**Fix:**
+1. `_get_effective_category()` artık `base["enabled"] = override.get("enabled", True)` döndürüyor
+2. `build_enhanced_prompt()` artık `cat_info.get("enabled", True)` kontrolü yapıyor; `False` ise enhancement eklemiyor
+
+### Runtime Wiring Kanıtları
+
+**Kategori override pipeline'a gerçekten gidiyor mu:**
+
+| Adım | Kanıt |
+|---|---|
+| DB'ye yazma | `PUT /api/admin/categories/{key}` → `settings` tablosunda `scope=admin`, `key=category_content_{key}` |
+| Memory'ye yükleme | `runner.py:141` → `load_overrides_from_db(db)` her pipeline başlangıcında çağrılıyor |
+| Prompt'a ekleme | `build_enhanced_prompt()` → `_get_effective_category()` → override değerleri kullanılıyor |
+| enabled=False atlama | `build_enhanced_prompt()` satır 443-446: `cat_info.get("enabled", True)` → False ise enhancement eklenmez |
+
+**A/B test sonucu (statik, unit test ile kanıtlandı):**
+
+```
+DEFAULT (science):
+  TON: Merakli, kesfedici, bilimsel ama anlasilir
+  ODAK: Karmasik kavramlari basitlestir...
+
+OVERRIDE (science, tone="SON DERECE RESMİ"):
+  TON: SON DERECE RESMİ
+  ODAK: Karmasik kavramlari basitlestir... (override yok, hardcoded kalır)
+```
+
+**Hook override pipeline'a gerçekten gidiyor mu:**
+
+| Adım | Kanıt |
+|---|---|
+| DB'ye yazma | `PUT /api/admin/hooks/{type}/{lang}` → `settings` tablosunda `scope=admin`, `key=hook_content_{type}_{lang}` |
+| Memory'ye yükleme | Aynı `load_overrides_from_db(db)` çağrısı hook'ları da yükliyor |
+| Filtreleme | `_get_effective_hooks()` satır 338: `enabled=False` olan hook'lar atlanıyor |
+| Tüm hook'lar disabled → fallback | satır 346: `return result if result else base_list` |
+
+### CRUD Gerçeği (Dürüst Belgeleme)
+
+**Sistem: Override/Edit sistemi. Tam CRUD DEĞİL.**
+
+| Soru | Cevap |
+|---|---|
+| Yeni kategori eklenebilir mi? | **HAYIR.** 6 hardcoded kategori, `admin.py:312` bilinmeyen key'e 404 döner |
+| Yeni hook tipi eklenebilir mi? | **HAYIR.** 8 hardcoded tip, `admin.py:412` bilinmeyen type'a 404 döner |
+| Mevcut kategori içeriği düzenlenebilir mi? | **EVET.** tone/focus/style_instruction override edilebilir |
+| Mevcut hook içeriği düzenlenebilir mi? | **EVET.** name/template override edilebilir |
+| Kategori enabled/disabled? | **EVET.** DB'ye yazılıyor, pipeline'da kontrol ediliyor (bug düzeltildi) |
+| Hook enabled/disabled? | **EVET.** DB'ye yazılıyor, `_get_effective_hooks()` filtreliyor |
+| Override sıfırlanabilir mi? | **EVET.** Boş body + enabled=True → DB kaydı siliniyor, hardcoded'a dönüyor |
+
+### Çalıştırılan Testler
+
+```
+backend/tests/test_script_overrides.py — 16 passed (0.02s)
+  test_effective_category_no_override_returns_hardcoded   PASSED
+  test_effective_category_with_override_replaces_fields   PASSED
+  test_effective_category_enabled_false                   PASSED
+  test_prompt_enhancement_differs_with_override           PASSED
+  test_build_enhanced_prompt_skips_disabled_category      PASSED  ← bug fix kanıtı
+  test_build_enhanced_prompt_adds_enabled_category        PASSED
+  test_build_enhanced_prompt_general_never_added          PASSED
+  test_effective_hooks_no_override_returns_all            PASSED
+  test_effective_hooks_disabled_hook_excluded             PASSED
+  test_effective_hooks_template_override_applied          PASSED
+  test_effective_hooks_all_disabled_fallback_to_base      PASSED
+  test_effective_hooks_en_language                        PASSED
+  test_ab_category_before_after                           PASSED  ← A/B kanıt
+  test_ab_hook_before_after                               PASSED  ← A/B kanıt
+  test_unknown_category_key_uses_general_fallback         PASSED
+  test_categories_are_fixed_set                           PASSED
+
+Tüm backend testleri: 81 passed
+```
+
+### tsc --noEmit
+
+```
+Çıktı yok → temiz
+```
+
+### Kalan Sınırlar (Planlı)
+
+- Yeni kategori / hook tipi ekleme desteklenmiyor (Python kodu değişikliği gerekir)
+- PromptManager'da "Yeni Ekle" butonu kasıtlı yok — sistem override/edit tasarımında
+- Kategori seçim listesinde disabled kategoriler görünüyor (backend filtrelemesi hâlâ settings_resolver'a eklenmedi — düşük öncelik)
+
+---
+
 ## Kayıt Formatı
 
 ```
