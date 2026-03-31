@@ -1297,3 +1297,87 @@ npx tsc --noEmit
 | DB'de `tts_voice: "tr-TR-AhmetNeural"` kayıtlı olabilir | Düşük | Admin geçmişte kaydetmişse DB override olarak kalır. Admin'den değiştirmeli. |
 
 ---
+
+## 2026-03-31 — Dashboard Runtime Doğrulama + Final Hardcoded Audit
+
+### Değişiklik Özeti
+
+İki bölümlü görev:
+1. Dashboard etkileşim modelinin 8 davranışının statik kod analizi ile doğrulanması
+2. Tüm sistemin hardcoded değer envanteri — kalan yanlış hardcode'ların düzeltilmesi + `HARDCODED_FINAL_AUDIT.md` oluşturulması
+
+---
+
+### Bölüm A — Dashboard Runtime Doğrulama (Statik Kod İzleme)
+
+Önceki oturumda yapılan Dashboard eşitleme çalışması için 8 etkileşim davranışı kod yolu izlenerek doğrulandı.
+
+| # | Davranış | Kod Yolu | Sonuç |
+|---|----------|----------|-------|
+| 1 | Sol tık → JobDetailSheet | `RecentJobRow.onClick` → `setSheetJob(job)` → `<JobDetailSheet open={true}>` | ✅ |
+| 2 | Sağ tık → JobQuickLook | `onContextMenu → e.preventDefault() + openQuickLook(job)` → `setQuickLookJob(job)` | ✅ |
+| 3 | Enter → JobDetailSheet | `useScopedKeyboardNavigation.onEnter` → `captureForRestore + setSheetJob(recentJobs[idx])` | ✅ |
+| 4 | Space → JobQuickLook | `onSpace(idx)` → `openQuickLook(recentJobs[idx])` | ✅ |
+| 5 | ESC → en üstteki panel kapanır | `useDismissOnEsc(QuickLook, priority=20)` > `useDismissOnEsc(Sheet, priority=10)` — LIFO sıralı kapatma | ✅ |
+| 6 | Panel kapanınca odak geri döner | `closeQuickLook → restoreFocusDeferred(80)`, `closeSheet → restoreFocusDeferred(150)` | ✅ |
+| 7 | Hover → klavye odak sync | `onMouseEnter → setFocusedIdx(idx)`, `lastWasKeyboardRef=false` → DOM focus() çağrılmaz | ✅ |
+| 8 | ARIA/role davranışı | `role="listbox" + aria-activedescendant`, `role="option" + aria-selected/setsize/posinset` + roving tabindex | ✅ |
+
+**Güvenlik doğrulaması:**
+- Panel açıkken (`anyPanelOpen=true`) `disabled=true` → scope pop → `isActive()=false` → klavye handler devre dışı ✅
+- `useDismissOnEsc` capture phase listener — Radix'in `defaultPrevented` seti ile çakışmaz ✅
+
+---
+
+### Bölüm B — Final Hardcoded Audit Bulguları
+
+Tam envanter `docs/HARDCODED_FINAL_AUDIT.md` dosyasında.
+
+**Tespit edilen ve düzeltilen sorunlar:**
+
+| Dosya | Eski Değer | Yeni Değer | Açıklama |
+|---|---|---|---|
+| `backend/modules/standard_video/pipeline.py:289` | `config.get("tts_voice", "tr-TR-AhmetNeural")` | `config.get("tts_voice") or _app_settings.default_tts_voice` | Voice chain'de tek kalan hardcoded erkek ses referansı — önceki oturumda provider ve module config'den kaldırıldı ama bu satır kaçmıştı |
+| `frontend/src/lib/constants.ts:333` | `default: "tr-TR-AhmetNeural"` | `default: "tr-TR-EmelNeural"` | UI schema placeholder default'u runtime default ile eşitlendi |
+| `docs/ADMIN_CONTROLS_MAP.md` | `tts_voice` default `tr-TR-AhmetNeural` | `tr-TR-EmelNeural` | Stale doküman güncellendi |
+| `docs/SYSTEM_CHAINS_MAP.md` | `"tr-TR-AhmetNeural" (when tts_voice absent)` | `app_settings.default_tts_voice → "tr-TR-EmelNeural"` | Stale doküman güncellendi |
+
+**Kabul edilen technical fallback'ler (değiştirilmedi):**
+- 6 kategori promptu, 8 hook tipi, 5 altyazı stili — admin'den değiştirilemez, kasıtlı tasarım kararı
+- `providers/registry.py:16` health check test voice = `"tr-TR-AhmetNeural"` — yalnızca sağlık kontrolü, pipeline default değil
+
+**Kalan NOT WIRED durum:**
+- `video_format` — CreateVideo tarafında `resolveResolution()` ile `video_resolution`'a çevrilir; pipeline doğrudan `video_resolution` okur. Bug değil.
+
+**Kalan VISIBLE BUT DISABLED:**
+- UserSettings "Yayın & Ek Özellikler" bölümü (metadata_enabled, thumbnail_enabled, publish_to_youtube, youtube_privacy) — amber banner ile bildirilmiş, YouTube OAuth implemente edilince aktif olacak.
+
+---
+
+### Çalıştırılan Testler
+
+```
+python3 -m pytest backend/tests/ -q
+65 passed in 0.46s  ✅
+
+npx vitest run
+Test Files  4 passed (4)
+Tests       107 passed (107)  ✅
+
+npx tsc -p tsconfig.app.json --noEmit
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| DB'de `tts_voice: "tr-TR-AhmetNeural"` kayıtlı kalabilir | Düşük | Admin geçmişte kaydetmişse DB override olarak kalır — admin panelden değiştirmeli |
+| `video_format` pipeline'da okunmuyor | Bilgi | Tasarım kararı; `CreateVideo.tsx` format → resolution dönüşümünü client-side yapıyor |
+| UserSettings etkisiz togglelar | Bilgi | Amber banner ile dürüstçe belgelenmiş; YouTube OAuth implemente edilince aktif olacak |
+
+---
+
+*Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*

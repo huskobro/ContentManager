@@ -1,5 +1,5 @@
 # System Chains Map
-_Last updated: 2026-03-31_
+_Last updated: 2026-03-31 (final hardcoded audit — tts_voice fallback chain corrected)_
 
 This document maps every processing chain that is actually implemented in the
 codebase. Only chains that are wired end-to-end in source files are documented
@@ -60,7 +60,7 @@ cache.load_json("script")  →  scenes[]
 ```
 
 **Hardcoded values:**
-- Default voice fallback: `"tr-TR-AhmetNeural"` (when `tts_voice` absent)
+- Default voice fallback: `app_settings.default_tts_voice` → `"tr-TR-EmelNeural"` (overridable via `.env`). Both `edge_tts_provider.py` and `standard_video/pipeline.py` use `config.get("tts_voice") or _app_settings.default_tts_voice` — no hardcoded string.
 - Audio filename pattern: `scene_{scene_num:02d}.{format}` where format comes from provider (`mp3`)
 - `duration_sec = duration_ms / 1000.0`
 - Step is **fatal** — any scene TTS failure raises `RuntimeError`

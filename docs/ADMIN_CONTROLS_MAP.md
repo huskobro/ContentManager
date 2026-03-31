@@ -1,5 +1,5 @@
 # Admin Controls Map
-_Last updated: 2026-03-31 (wiring audit + fixes)_
+_Last updated: 2026-03-31 (final hardcoded audit + tts_voice default corrected)_
 
 Maps every admin panel control to its concrete effect on the pipeline.
 Only settings that are actually read somewhere in the codebase are included.
@@ -54,7 +54,7 @@ and `edge_tts_provider.py`.
 
 | Admin Key | Type | Default | Pipeline Effect |
 |-----------|------|---------|-----------------|
-| `tts_voice` | select | `tr-TR-AhmetNeural` | Passed directly as `voice` in the TTS provider `input_data`. Available options: `tr-TR-AhmetNeural`, `tr-TR-EmelNeural`, `en-US-AriaNeural`, `en-US-GuyNeural`, `de-DE-ConradNeural`. |
+| `tts_voice` | select | `tr-TR-EmelNeural` | Passed directly as `voice` in the TTS provider `input_data`. Available options: `tr-TR-EmelNeural`, `tr-TR-AhmetNeural`, `en-US-AriaNeural`, `en-US-GuyNeural`, `de-DE-ConradNeural`. Default changed from AhmetNeural to EmelNeural in 2026-03-31 voice resolution fix. |
 | `tts_speed` | number (0–3) | 1.0 | TTS speed multiplier. Read by `edge_tts_provider.py:81` as `config.get("tts_speed", 1.0)` and applied as rate offset in Edge TTS synthesis. Other TTS providers (ElevenLabs, OpenAI) receive `config` but may not read this key — effect is guaranteed only for Edge TTS. Per-module defaults: standard_video=1.0, news_bulletin=1.05, product_review=1.0. |
 | `video_resolution` | select | `1920x1080` | Parsed by composition step to set Remotion `width` and `height`. Options: `1920x1080` (Full HD), `1080x1920` (Shorts/Vertical), `1280x720` (HD). |
 | `video_fps` | select | `30` | Passed to Remotion as `fps`. Options: 24, 30, 60. |

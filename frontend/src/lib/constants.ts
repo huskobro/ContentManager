@@ -327,10 +327,10 @@ export const SYSTEM_SETTINGS_SCHEMA: SystemSettingDef[] = [
   {
     key: "tts_voice",
     label: "TTS Sesi",
-    description: "Edge TTS için varsayılan ses kimliği. tr-TR-AhmetNeural (erkek) veya tr-TR-EmelNeural (kadın).",
+    description: "Edge TTS için varsayılan ses kimliği. tr-TR-EmelNeural (kadın) veya tr-TR-AhmetNeural (erkek).",
     type: "select",
     category: "video_audio",
-    default: "tr-TR-AhmetNeural",
+    default: "tr-TR-EmelNeural",
     options: [
       { value: "tr-TR-AhmetNeural", label: "Ahmet (Türkçe Erkek)" },
       { value: "tr-TR-EmelNeural", label: "Emel (Türkçe Kadın)" },

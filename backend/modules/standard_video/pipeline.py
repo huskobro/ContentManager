@@ -26,6 +26,7 @@ import json
 import random
 from typing import Any
 
+from backend.config import settings as _app_settings
 from backend.modules.base import Capability, ContentModule, PipelineStepDef
 from backend.modules.standard_video.config import DEFAULT_CONFIG
 from backend.pipeline.cache import CacheManager
@@ -286,7 +287,7 @@ async def step_tts(
     if not scenes:
         raise RuntimeError("Script'te sahne bulunamadı.")
 
-    voice = config.get("tts_voice", "tr-TR-AhmetNeural")
+    voice = config.get("tts_voice") or _app_settings.default_tts_voice
 
     tts_results = []
     total_audio_duration = 0.0
