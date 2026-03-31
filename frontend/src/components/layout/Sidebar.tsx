@@ -12,8 +12,6 @@ import {
   BarChart3,
   Sliders,
   FileText,
-  Rss,
-  Palette,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -41,8 +39,6 @@ const ADMIN_NAV: NavItem[] = [
   { label: "Provider Yönetimi", to: "/admin/providers", icon: <Plug size={18} /> },
   { label: "Global Ayarlar", to: "/admin/global-settings", icon: <Sliders size={18} /> },
   { label: "Master Promptlar", to: "/admin/prompts", icon: <FileText size={18} /> },
-  { label: "Haber Kaynakları", to: "/admin/news-sources", icon: <Rss size={18} /> },
-  { label: "Kategori→Stil", to: "/admin/category-style-mappings", icon: <Palette size={18} /> },
   { label: "Maliyet Takibi", to: "/admin/cost-tracker", icon: <BarChart3 size={18} /> },
   { label: "Tüm İşler", to: "/admin/jobs", icon: <ListVideo size={18} /> },
 ];

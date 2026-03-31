@@ -64,6 +64,48 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Admin Bilgi Mimarisi Yeniden Yapılandırması
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/admin/ModuleManager.tsx` | **TAM YENİDEN YAZIM** — aktif/pasif bug düzeltmesi + inline News/Review panel'leri |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | `module_news` + `module_review` kategorileri kaldırıldı |
+| `frontend/src/components/layout/Sidebar.tsx` | "Haber Kaynakları" + "Kategori→Stil" nav linkleri kaldırıldı |
+| `frontend/src/App.tsx` | Eski route'lar `/admin/modules`'a yönlendirildi |
+
+### Yapısal Değişiklikler
+
+**Aktif/Pasif Bug Düzeltmesi:**
+- Kök neden: Accordion kapıyken `moduleSettingsMap[key]` tanımsız → `isModuleEnabled()` default `true` döndürüyordu → "Aktif" gösteriyordu. Accordion açılınca DB sorgusu yapılıyor → `enabled: false` bulunuyor → "Pasif" gösteriliyor. Tutarsızlık buradan geliyordu.
+- Düzeltme: `loadAllEnabledStates()` mount sırasında tüm 3 modülün ayarlarını paralel fetch ile yükler. Kullanıcı herhangi bir accordion'a dokunmadan önce `moduleSettingsMap` dolu olur.
+
+**ModuleManager Konsolidasyonu:**
+- News Bulletin modülü 3 sekme alıyor: Ayarlar / Haber Kaynakları / Kategori→Stil
+- Haber Kaynakları sekmesi: tam inline CRUD (daha önce `/admin/news-sources` sayfasında)
+- Kategori→Stil sekmesi: tam inline CRUD (daha önce `/admin/category-style-mappings` sayfasında)
+- Product Review modülü 4 bölüm alıyor: Görsel Stil / Fiyat Badge / Yıldız Puanı / Floating Yorumlar
+- `AdminSettingRow`: şema güdümlü component, SYSTEM_SETTINGS_SCHEMA'dan toggle/select/input render eder
+- `useAdminSave`: modül kapsamlı kayıt hook'u
+
+**Global Settings Temizliği:**
+- `module_news` ve `module_review` kategorileri kaldırıldı
+- Artık yalnızca gerçek global/sistem ayarları gösteriliyor: system, pipeline, script, video_audio, tts_processing
+
+**Sidebar Sadeleştirilmesi:**
+- "Haber Kaynakları" ve "Kategori→Stil" bağımsız nav linkleri kaldırıldı
+- Eski URL'ler (`/admin/news-sources`, `/admin/category-style-mappings`) `/admin/modules`'a redirect ediyor
+
+### Test Sonuçları
+
+| Test Türü | Sonuç | Detay |
+|---|---|---|
+| `frontend tsc --noEmit` | ✅ PASS | Hata yok |
+| `pytest backend/tests/` | ✅ PASS | 124 geçti, 1 atlandı |
+
+---
+
 ## 2026-03-31 — YTRobot-v3 Controlled Port (Phase 1)
 
 ### Değişiklik Özeti

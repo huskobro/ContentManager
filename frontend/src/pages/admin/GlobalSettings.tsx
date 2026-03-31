@@ -813,8 +813,7 @@ export default function GlobalSettings() {
   );
 
   const categories: SettingCategory[] = [
-    "system", "pipeline", "script", "video_audio",
-    "tts_processing", "module_news", "module_review",
+    "system", "pipeline", "script", "video_audio", "tts_processing",
   ];
 
   return (
