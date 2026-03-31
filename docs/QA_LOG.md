@@ -252,6 +252,83 @@ npx tsc --noEmit
 
 ---
 
+## 2026-03-31 — TTS/Subtitle Zinciri Derinlemesine Yeniden Doğrulama + Whisper Değerlendirmesi
+
+### Kapsam
+
+Kullanıcı isteği: TTS ve altyazı metninin gerçekten aynı olduğunu yeniden doğrula, senkron kalitesini ölç, Whisper'ın birincil kaynak yapılıp yapılmaması gerektiğini değerlendir.
+
+### Session
+
+`c2261ada354448c7b2153a36dfb246a0` — "Ateş Nasıl Bulundu?" (en güncel job, 10 sahne, 203.86s)
+
+### Değişen Dosyalar
+
+Kod değişikliği yok — tüm testler geçti, sorun bulunamadı.
+
+| Dosya | Değişiklik |
+|---|---|
+| `docs/TTS_SUBTITLE_TRACE.md` | Güncellendi — yeni session, ffmpeg doğrulaması, tam timing tablosu |
+| `docs/TIMING_COMPARISON.md` | Yeni — Edge TTS vs Whisper karşılaştırması |
+
+### Metin Eşleşmesi (2. tur)
+
+| Kontrol | Sonuç |
+|---|---|
+| normalize_narration(script) == subtitle.text | 10/10 EXACT MATCH |
+| Karakter sayısı | 10/10 eşit |
+| Kelime sayısı TTS==subtitle | 10/10 eşit (383 kelime toplam) |
+| Trailing space veya encoding farkı | YOK |
+
+### Timing Kalitesi
+
+| Kontrol | Sonuç |
+|---|---|
+| Word timing drift (TTS→subtitle) | max 0.5ms (fp yuvarlama) |
+| Sahne sınırı uyumu | max 3ms inter-scene gap |
+| Büyük boşluklar gerçek mi | ffmpeg doğruladı — 5/5 eşleşme ±58ms |
+| Overlap | 0 |
+| <60ms kelime | 0 |
+| timing_source | tts_word_timing (10/10 sahne) |
+
+### Sistematik End_ms Underestimate
+
+Edge TTS `end_ms` fonetik sınırı işaretler (sessizlik bitişini değil). Ölçülen: ~30-100ms erken kapanış.
+Perceptual threshold: ~150ms. **Etki: algılanamaz.**
+
+Karaoke/hormozi stili için: highlight ~50-100ms erken söner. Standard stil: hiç etkisi yok.
+
+### Whisper Değerlendirmesi
+
+**Karar: Whisper birincil yapılmamalı.**
+
+| Kriter | Edge TTS | Whisper |
+|---|---|---|
+| Granülarite | 12.5ms | ~50-200ms |
+| Maliyet | $0 | ~$0.02/video |
+| Gecikme | 0ms | +50-300s |
+| Word mismatch riski | 0 (exact) | ~5-15% (ASR WER) |
+| Hallucination | Yok | Düşük ama var |
+
+**Mevcut fallback mimarisi doğru:** TTS→Whisper→EşitDağıtım. Değişiklik önerilmiyor.
+
+### Çalıştırılan Testler
+
+```
+python3 -m pytest backend/tests/ -q
+100 passed, 1 skipped in 0.62s
+
+npx tsc --noEmit
+(no output — clean)
+```
+
+### Doğrulanamayan Noktalar
+
+- Gerçek Whisper API karşılaştırması — OpenAI API key yok, karşılaştırma analitik/mimari bazlı yapıldı
+- ElevenLabs, OpenAI TTS gibi diğer sağlayıcılarda word_timings kalitesi (sadece Edge TTS test edildi)
+
+---
+
 ## Kayıt Formatı
 
 ```
