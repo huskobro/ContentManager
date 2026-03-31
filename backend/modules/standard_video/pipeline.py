@@ -342,6 +342,7 @@ async def step_tts(
             "duration_seconds": round(duration_sec, 2),
             "size_bytes": len(audio_bytes),
             "word_timings": word_timings,
+            "text": tts_text,
         })
 
         total_audio_duration += duration_sec

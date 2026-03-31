@@ -197,6 +197,61 @@ Tüm backend testleri: geçen toplam artı 19 yeni → temiz
 
 ---
 
+## 2026-03-31 — Output Picker UI E2E Doğrulama + TTS Subtitle Zinciri Doğrulama
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/modules/standard_video/pipeline.py` | `tts_results.append()` içine `"text": tts_text` alanı eklendi — manifest audit gap fix |
+| `docs/OUTPUT_PICKER_TRACE.md` | Yeni: output picker E2E kanıt dokümanı |
+| `docs/TTS_SUBTITLE_TRACE.md` | Yeni: TTS→subtitle text zinciri kanıt dokümanı |
+
+### Output Picker UI E2E Kanıtları (browser network log)
+
+| Test | Network Kanıtı | Sonuç |
+|---|---|---|
+| Kaydet → backend | `POST /api/settings/admin/output-folder → 200` `{"absolute_path": "/private/tmp/ui_output_test"}` | PASS |
+| Sayfa yenileme sonrası persistence | `GET /api/settings?scope=admin` → input shows `/private/tmp/ui_output_test` | PASS |
+| FolderPickerDialog açılışı | `GET /api/admin/directories?path=%2Fprivate%2Ftmp%2Fui_output_test → 200` | PASS |
+| "Bu Klasörü Seç" | Dialog kapandı, input doğru path | PASS |
+| Finder butonu | `POST /api/settings/admin/open-folder → 200` | PASS |
+
+### TTS → Subtitle Zinciri Kanıtları (gerçek job artifacts)
+
+Session: `7835389a3699457da9d76a8e7fecf1f4`
+
+| Check | Sonuç |
+|---|---|
+| Script narration → TTS text (normalize_narration) | 10/10 eşleşme |
+| TTS narration → subtitle text (normalize_narration) | 10/10 eşleşme |
+| TTS word_timings → subtitle word_timings | 10/10 eşleşme |
+| timing_source | Tüm sahneler: `tts_word_timing` |
+| Sahne 2 cumulative offset | 20.3s (doğru) |
+
+### Bug Fix — TTS manifest `text` alanı eksikti
+
+**Sorun:** `step_tts.json` içindeki tüm sahneler `"text": ""` olarak kaydediliyordu.
+**Etki:** Audit edilemezlik — word_timings doğruydu, sessiz bir veri eksikliğiydi.
+**Fix:** `pipeline.py:343` — `"text": tts_text` tts_results dict'ine eklendi.
+
+### Çalıştırılan Testler
+
+```
+python3 -m pytest backend/tests/ -q
+100 passed, 1 skipped in 0.62s
+
+npx tsc --noEmit
+(no output — clean)
+```
+
+### Doğrulanamayan Noktalar
+
+- Gerçek bir yeni job'un `/private/tmp/ui_output_test` klasörüne çıktı yazması — pipeline provider'ları gerçek API key'i olmadan çalıştırılamadı
+- `step_tts.json` `text` fix'inin gerçek bir job çalıştırılarak doğrulanması
+
+---
+
 ## Kayıt Formatı
 
 ```
