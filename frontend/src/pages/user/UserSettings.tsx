@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useAutoSave } from "@/hooks/useAutoSave";
 import {
   Settings,
   Globe,
@@ -23,6 +24,8 @@ import {
   Youtube,
   Palette,
   Zap,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { useSettingsStore, type UserVideoDefaults } from "@/stores/settingsStore";
 import { useUIStore } from "@/stores/uiStore";
@@ -136,6 +139,8 @@ export default function UserSettings() {
   } = useSettingsStore();
 
   const addToast = useUIStore((s) => s.addToast);
+  const autoSaveEnabled = useUIStore((s) => s.autoSaveEnabled);
+  const setAutoSaveEnabled = useUIStore((s) => s.setAutoSaveEnabled);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<UserVideoDefaults>({ ...userDefaults });
 
@@ -158,27 +163,20 @@ export default function UserSettings() {
     return isSettingAdminOnly(key);
   }
 
-  // Auto-save: select/toggle değişince anında kaydet
-  // Tek bir key→value pair'i backend'e yazar, sonra store'u günceller
-  async function autoSaveKey<K extends keyof UserVideoDefaults>(
-    key: K,
-    value: UserVideoDefaults[K]
-  ) {
-    if (isLocked(key) || isSettingAdminOnly(key)) return;
+  const { shouldAutoSave, saveState, triggerSave } = useAutoSave();
+  // saveState yalnızca son işlemin durumunu gösterir
+  const autoSaving = saveState === "saving";
+  const autoSaved = saveState === "saved";
+
+  // Her select/toggle değişimi için tek key save fonksiyonu
+  function buildKeySaveFn<K extends keyof UserVideoDefaults>(key: K, value: UserVideoDefaults[K]) {
     const backendKey = KEY_MAP[key] ?? key;
-    setSaving(true);
-    try {
+    return async () => {
       await api.post("/settings/user", {
         settings: [{ scope: "user" as const, scope_id: "", key: backendKey, value }],
       });
       setUserDefaults({ ...userDefaults, [key]: value });
-      setForm((prev) => ({ ...prev, [key]: value }));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Kayıt başarısız";
-      addToast({ type: "error", title: "Kaydedilemedi", description: message });
-    } finally {
-      setSaving(false);
-    }
+    };
   }
 
   function handleChange<K extends keyof UserVideoDefaults>(
@@ -187,7 +185,9 @@ export default function UserSettings() {
   ) {
     if (isLocked(key)) return;
     setForm((prev) => ({ ...prev, [key]: value }));
-    autoSaveKey(key, value);
+    if (shouldAutoSave && !isSettingAdminOnly(key as string)) {
+      triggerSave(buildKeySaveFn(key, value));
+    }
   }
 
   async function handleSave() {
@@ -245,6 +245,20 @@ export default function UserSettings() {
           <h2 className="text-lg font-semibold text-foreground">Kullanıcı Ayarları</h2>
         </div>
         <div className="flex items-center gap-2">
+          {/* Otomatik kayıt toggle */}
+          <button
+            onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors",
+              autoSaveEnabled
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                : "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+            )}
+            title={autoSaveEnabled ? "Otomatik kayıt açık — tıklayarak kapat" : "Otomatik kayıt kapalı — tıklayarak aç"}
+          >
+            {autoSaveEnabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+            Otomatik kayıt
+          </button>
           <button
             onClick={handleReset}
             className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
@@ -252,25 +266,35 @@ export default function UserSettings() {
             <RotateCcw size={12} />
             Sıfırla
           </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !hasChanges}
-            className={cn(
-              "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-              hasChanges
-                ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                : "bg-muted text-muted-foreground cursor-not-allowed"
-            )}
-          >
-            {saving ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : hasChanges ? (
-              <Save size={12} />
-            ) : (
-              <CheckCircle2 size={12} />
-            )}
-            {saving ? "Kaydediliyor..." : hasChanges ? "Kaydet" : "Güncel"}
-          </button>
+          {/* Auto-save açıksa durum göstergesi, kapalıysa Kaydet butonu */}
+          {shouldAutoSave ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground">
+              {autoSaving && <Loader2 size={12} className="animate-spin" />}
+              {autoSaved && <CheckCircle2 size={12} className="text-emerald-400" />}
+              {!autoSaving && !autoSaved && <CheckCircle2 size={12} className="text-muted-foreground/40" />}
+              <span>{autoSaving ? "Kaydediliyor..." : autoSaved ? "Kaydedildi" : "Otomatik kayıt"}</span>
+            </div>
+          ) : (
+            <button
+              onClick={handleSave}
+              disabled={saving || !hasChanges}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                hasChanges
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-muted text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              {saving ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : hasChanges ? (
+                <Save size={12} />
+              ) : (
+                <CheckCircle2 size={12} />
+              )}
+              {saving ? "Kaydediliyor..." : hasChanges ? "Kaydet" : "Güncel"}
+            </button>
+          )}
         </div>
       </div>
 

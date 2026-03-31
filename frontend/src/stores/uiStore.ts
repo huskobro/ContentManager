@@ -31,6 +31,15 @@ interface UIState {
   unlockAdmin: () => void;
   lockAdmin: () => void;
 
+  // ── Auto-Save ─────────────────────────────────────────────────────────────
+  /**
+   * Otomatik kayıt modu. true iken toggle/select anında, text/number blur sonrası kaydedilir.
+   * false iken tüm yüzeylerde açık bir "Kaydet" butonu gösterilir.
+   * Varsayılan: true. Admin ve kullanıcı ayar sayfalarında değiştirilebilir.
+   */
+  autoSaveEnabled: boolean;
+  setAutoSaveEnabled: (enabled: boolean) => void;
+
   // ── Toast / Bildirim (basit mesaj kuyruğu) ────────────────────────────────
   toasts: Toast[];
   addToast: (toast: Omit<Toast, "id">) => void;
@@ -96,6 +105,11 @@ export const useUIStore = create<UIState>()(
 
       lockAdmin: () => set({ adminUnlocked: false }),
 
+      // ── Auto-Save ─────────────────────────────────────────────────────────
+      autoSaveEnabled: true,
+
+      setAutoSaveEnabled: (enabled) => set({ autoSaveEnabled: enabled }),
+
       // ── Toasts ────────────────────────────────────────────────────────────
       toasts: [],
 
@@ -120,6 +134,7 @@ export const useUIStore = create<UIState>()(
       partialize: (s) => ({
         theme: s.theme,
         sidebarCollapsed: s.sidebarCollapsed,
+        autoSaveEnabled: s.autoSaveEnabled,
       }),
       // Hydration sonrası temayı DOM'a uygula
       onRehydrateStorage: () => (state) => {

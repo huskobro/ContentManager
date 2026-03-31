@@ -1,7 +1,7 @@
 # Ayar Yüzeyi Haritası
 
 **Son Guncelleme:** 2026-03-31
-**Durum:** Phase 2 Dogrulama Tamamlandi
+**Durum:** Auto-Save Entegrasyonu Tamamlandi
 
 ---
 
@@ -119,6 +119,20 @@ Not: metadata_enabled, thumbnail_enabled, publish_to_youtube user panelde gorunu
 10. `review_comments_enabled` — Veri bagimli feature flag
 
 Not: `adminOnly` flagi constants.ts'de tanimli ama frontend'de **filtreleme icin kullanilmiyor**. Admin/user ayrimi, panellerin farkli sayfalarda olmasi ve user panelin sadece bilinen ayarlari gostermesi ile saglanmistir.
+
+---
+
+## Auto-Save Kapsam Matrisi
+
+| Yüzey | Auto-Save | Toggle/Select | Text/Number | Çoklu Seçim |
+|---|---|---|---|---|
+| `GlobalSettings` → `SettingRow` | ✅ | Anında | 800ms debounce + blur | Manuel Kaydet |
+| `ModuleManager` → `AdminSettingRow` | ✅ | Anında | 800ms debounce + blur | Manuel Kaydet |
+| `UserSettings` | ✅ | Anında | 800ms debounce + blur | — |
+| `PromptManager` | ⏳ | — | Manuel Kaydet (büyük textarea) | — |
+
+**`uiStore.autoSaveEnabled`** toggle butonu GlobalSettings ve UserSettings sayfa başlıklarında görünür.
+Detaylar için: `docs/AUTOSAVE_BEHAVIOR.md`
 
 ---
 

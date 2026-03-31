@@ -2,19 +2,22 @@
  * ModuleManager — Modül yönetimi sayfası.
  *
  * Her modül için accordion paneli içinde:
- *   - Genel Modül Ayarları (admin scope settings)
  *   - Modüle özel bölümler:
- *       news_bulletin: Görsel Stil · Kategori→Stil · Haber Kaynakları · Breaking/Branding
+ *       news_bulletin: Ayarlar · Haber Kaynakları · Kategori→Stil
  *       product_review: Görsel Stil · Fiyat · Yıldız Puanı · Yorumlar
  *       standard_video:  Genel DB ayarları
  *
- * Bug fix (aktif/pasif tutarsızlığı):
- *   Önceki versiyonda accordion kapalıyken fetchSettings çağrılmadığından
- *   moduleSettingsMap[key] = undefined → isModuleEnabled() her zaman true dönüyordu.
- *   Düzeltme: sayfa mount'ta tüm modüllerin "enabled" key'i paralel yükleniyor.
+ * Aktif/Pasif Bug Fix (final):
+ *   moduleSettingsMap türü Record<string, SettingRecord[] | null> olarak değiştirildi.
+ *   - undefined: henüz yüklenmedi (fetch devam ediyor) → Loader göster
+ *   - null:      yüklendi, kayıt yok (aktif varsayım geçerli)
+ *   - SettingRecord[]: yüklendi, değeri kullan
+ *   Bu ayrım sayesinde fetch tamamlanmadan "Aktif" flash sorunu ortadan kalktı.
+ *   handleToggleEnabled tamamen adminStore'dan bağımsız, direkt fetch kullanıyor.
  */
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useAutoSave } from "@/hooks/useAutoSave";
 import {
   Boxes,
   Video,
@@ -94,20 +97,28 @@ function getAdminPin() {
 // ─── Ana Bileşen ──────────────────────────────────────────────────────────────
 
 export default function ModuleManager() {
-  const { loading, error, createSetting, updateSetting } =
-    useAdminStore();
+  // adminStore yalnızca enabled toggle create/update için kullanılır
+  const { loading, error, createSetting, updateSetting } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
 
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
 
-  // Her modülün admin-scope ayarlarını ayrı map'te tut
-  const [moduleSettingsMap, setModuleSettingsMap] = useState<Record<string, SettingRecord[]>>({});
+  /**
+   * moduleSettingsMap türü: Record<string, SettingRecord[] | null | undefined>
+   *   undefined → henüz fetch yapılmadı (loading göster)
+   *   null      → fetch tamamlandı ama kayıt yok (default aktif)
+   *   array     → fetch tamamlandı, kayıtlar var
+   *
+   * Bu ayrım "Aktif flash" bug'ını önler: undefined iken badge Loader gösterir,
+   * gerçek değer gelmeden "Aktif"/"Pasif" yazmaz.
+   */
+  const [moduleSettingsMap, setModuleSettingsMap] = useState<Record<string, SettingRecord[] | null | undefined>>({});
   const [moduleLoadingMap, setModuleLoadingMap] = useState<Record<string, boolean>>({});
 
-  // ── Sayfa açılışında tüm modüllerin enabled state'ini yükle (bug fix) ─────
-  // Önceki versiyon: sadece açık accordion için fetchSettings çağırıyordu.
-  // Bu sebeple kapalı modüllerin "enabled" kaydı bilinmiyordu → her zaman true görünüyordu.
-  // Düzeltme: mount'ta tüm modüller için hafif bir "enabled" sorgusu yap.
+  // ── Sayfa açılışında tüm modüllerin enabled state'ini yükle ─────────────
+  // moduleSettingsMap[key] başlangıçta undefined → yükleniyor gösterilir.
+  // Fetch tamamlanınca SettingRecord[] (kayıt var) veya null (kayıt yok) set edilir.
+  // Bu sayede "Aktif flash" sorunu ortadan kalkar.
 
   const loadAllEnabledStates = useCallback(async () => {
     const pin = getAdminPin();
@@ -118,11 +129,19 @@ export default function ModuleManager() {
             `/api/settings?scope=module&scope_id=${mod.key}`,
             { headers: { "X-Admin-Pin": pin } }
           );
-          if (!res.ok) return;
+          if (!res.ok) {
+            // Fetch başarısız → null yaz (varsayılan aktif, ama "yüklendi" olarak işaretle)
+            setModuleSettingsMap((prev) => ({ ...prev, [mod.key]: null }));
+            return;
+          }
           const data: SettingRecord[] = await res.json();
-          setModuleSettingsMap((prev) => ({ ...prev, [mod.key]: data }));
+          // Kayıt yoksa da null, varsa array
+          setModuleSettingsMap((prev) => ({
+            ...prev,
+            [mod.key]: data.length > 0 ? data : null,
+          }));
         } catch {
-          // Sessizce atla — enabled varsayılan true kalır
+          setModuleSettingsMap((prev) => ({ ...prev, [mod.key]: null }));
         }
       })
     );
@@ -132,8 +151,8 @@ export default function ModuleManager() {
     loadAllEnabledStates();
   }, [loadAllEnabledStates]);
 
-  // Belirli bir modülün tüm ayarlarını yükle (accordion açılırken)
-  // Global adminStore settings[] state'ine dokunmadan direkt moduleSettingsMap'e yazar.
+  // Accordion açılırken tüm modül ayarlarını yükle.
+  // adminStore.settings[] global state'e hiç dokunmaz.
   const loadModuleSettings = useCallback(
     async (moduleKey: string) => {
       setModuleLoadingMap((prev) => ({ ...prev, [moduleKey]: true }));
@@ -145,10 +164,13 @@ export default function ModuleManager() {
         );
         if (res.ok) {
           const data: SettingRecord[] = await res.json();
-          setModuleSettingsMap((prev) => ({ ...prev, [moduleKey]: data }));
+          setModuleSettingsMap((prev) => ({
+            ...prev,
+            [moduleKey]: data.length > 0 ? data : null,
+          }));
         }
       } catch {
-        // sessizce atla
+        // sessizce atla — mevcut state korunur
       } finally {
         setModuleLoadingMap((prev) => ({ ...prev, [moduleKey]: false }));
       }
@@ -166,48 +188,81 @@ export default function ModuleManager() {
   }
 
   // ── enabled state ─────────────────────────────────────────────────────────
+
+  /** Modülün yüklenip yüklenmediğini kontrol et (undefined → henüz yüklenmedi) */
+  function isModuleSettingsLoaded(moduleKey: string): boolean {
+    return moduleSettingsMap[moduleKey] !== undefined;
+  }
+
   function isModuleEnabled(moduleKey: string): boolean {
-    const s = moduleSettingsMap[moduleKey] ?? [];
+    const s = moduleSettingsMap[moduleKey]; // undefined | null | SettingRecord[]
+    if (!s) return true; // null (kayıt yok) veya undefined (yüklenmedi) → varsayılan aktif
     const rec = s.find((r) => r.key === "enabled");
-    if (!rec) return true; // DB'de kayıt yok → varsayılan aktif
+    if (!rec) return true;
     return rec.value === true || rec.value === "true";
   }
 
+  /**
+   * handleToggleEnabled — tamamen adminStore bağımsız, direkt fetch kullanır.
+   * Bu sayede global settings[] state'i karışmaz ve moduleSettingsMap tek source of truth kalır.
+   */
   async function handleToggleEnabled(moduleKey: string) {
     const currentSettings = moduleSettingsMap[moduleKey] ?? [];
-    const enabledRec = currentSettings.find((r) => r.key === "enabled");
+    const enabledRec = Array.isArray(currentSettings)
+      ? currentSettings.find((r) => r.key === "enabled")
+      : undefined;
     const current = isModuleEnabled(moduleKey);
+    const pin = getAdminPin();
 
-    if (enabledRec) {
-      const result = await updateSetting(enabledRec.id, { value: !current });
-      if (result) {
-        setModuleSettingsMap((prev) => ({
-          ...prev,
-          [moduleKey]: prev[moduleKey]?.map((r) =>
-            r.key === "enabled" ? { ...r, value: !current } : r
-          ) ?? [],
-        }));
+    try {
+      let saved: SettingRecord | null = null;
+
+      if (enabledRec) {
+        // PATCH existing record
+        const res = await fetch(`/api/settings/${enabledRec.id}`, {
+          method: "PUT",
+          headers: adminHeaders(pin),
+          body: JSON.stringify({ value: !current }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        saved = await res.json();
+      } else {
+        // CREATE new record
+        const res = await fetch("/api/settings", {
+          method: "POST",
+          headers: adminHeaders(pin),
+          body: JSON.stringify({
+            scope: "module",
+            scope_id: moduleKey,
+            key: "enabled",
+            value: !current,
+            description: "Modülün aktif/pasif durumu",
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        saved = await res.json();
+      }
+
+      if (saved) {
+        setModuleSettingsMap((prev) => {
+          const existing = Array.isArray(prev[moduleKey]) ? prev[moduleKey]! : [];
+          const updated = existing.find((r) => r.key === "enabled")
+            ? existing.map((r) => (r.key === "enabled" ? saved! : r))
+            : [...existing, saved!];
+          return { ...prev, [moduleKey]: updated };
+        });
         addToast({
-          type: "info",
-          title: !current ? "Modül etkinleştirildi" : "Modül devre dışı",
-          description: moduleKey,
+          type: "success",
+          title: !current ? "Modül etkinleştirildi" : "Modül devre dışı bırakıldı",
+          description: MODULES.find((m) => m.key === moduleKey)?.label ?? moduleKey,
         });
       }
-    } else {
-      const result = await createSetting({
-        scope: "module",
-        scope_id: moduleKey,
-        key: "enabled",
-        value: false,
-        description: "Modülün aktif/pasif durumu",
+    } catch (err) {
+      addToast({
+        type: "error",
+        title: "Durum değiştirilemedi",
+        description: err instanceof Error ? err.message : String(err),
       });
-      if (result) {
-        setModuleSettingsMap((prev) => ({
-          ...prev,
-          [moduleKey]: [...(prev[moduleKey] ?? []), result],
-        }));
-        addToast({ type: "info", title: "Modül devre dışı bırakıldı", description: moduleKey });
-      }
     }
   }
 
@@ -259,19 +314,26 @@ export default function ModuleManager() {
                   <p className="text-xs text-muted-foreground">{mod.description}</p>
                 </div>
 
-                {/* Aktif/Pasif toggle — her zaman doğru kaynaktan okur */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleToggleEnabled(mod.key); }}
-                  className={cn(
-                    "shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                    enabled
-                      ? "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25"
-                      : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
-                  )}
-                >
-                  {enabled ? <Power size={12} /> : <PowerOff size={12} />}
-                  {enabled ? "Aktif" : "Pasif"}
-                </button>
+                {/* Aktif/Pasif toggle — undefined iken Loader gösterir */}
+                {!isModuleSettingsLoaded(mod.key) ? (
+                  <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground">
+                    <Loader2 size={12} className="animate-spin" />
+                    <span>Yükleniyor</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleToggleEnabled(mod.key); }}
+                    className={cn(
+                      "shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                      enabled
+                        ? "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25"
+                        : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                    )}
+                  >
+                    {enabled ? <Power size={12} /> : <PowerOff size={12} />}
+                    {enabled ? "Aktif" : "Pasif"}
+                  </button>
+                )}
 
                 {/* Genişlet/Daralt */}
                 <button
@@ -294,33 +356,35 @@ export default function ModuleManager() {
                     </div>
                   ) : mod.key === "news_bulletin" ? (
                     <NewsBulletinPanel
-                      moduleSettings={moduleSettingsMap[mod.key] ?? []}
+                      moduleSettings={Array.isArray(moduleSettingsMap[mod.key]) ? (moduleSettingsMap[mod.key] as SettingRecord[]) : []}
                       onReload={() => loadModuleSettings(mod.key)}
                       onSettingUpdated={(updated) => {
-                        setModuleSettingsMap((prev) => ({
-                          ...prev,
-                          [mod.key]: prev[mod.key]?.map((r) =>
-                            r.id === updated.id ? updated : r
-                          ) ?? [updated],
-                        }));
+                        setModuleSettingsMap((prev) => {
+                          const existing = Array.isArray(prev[mod.key]) ? (prev[mod.key] as SettingRecord[]) : [];
+                          const merged = existing.find((r) => r.id === updated.id)
+                            ? existing.map((r) => (r.id === updated.id ? updated : r))
+                            : [...existing, updated];
+                          return { ...prev, [mod.key]: merged };
+                        });
                       }}
                     />
                   ) : mod.key === "product_review" ? (
                     <ProductReviewPanel
-                      moduleSettings={moduleSettingsMap[mod.key] ?? []}
+                      moduleSettings={Array.isArray(moduleSettingsMap[mod.key]) ? (moduleSettingsMap[mod.key] as SettingRecord[]) : []}
                       onReload={() => loadModuleSettings(mod.key)}
                       onSettingUpdated={(updated) => {
-                        setModuleSettingsMap((prev) => ({
-                          ...prev,
-                          [mod.key]: prev[mod.key]?.map((r) =>
-                            r.id === updated.id ? updated : r
-                          ) ?? [updated],
-                        }));
+                        setModuleSettingsMap((prev) => {
+                          const existing = Array.isArray(prev[mod.key]) ? (prev[mod.key] as SettingRecord[]) : [];
+                          const merged = existing.find((r) => r.id === updated.id)
+                            ? existing.map((r) => (r.id === updated.id ? updated : r))
+                            : [...existing, updated];
+                          return { ...prev, [mod.key]: merged };
+                        });
                       }}
                     />
                   ) : (
                     <StandardModulePanel
-                      moduleSettings={moduleSettingsMap[mod.key] ?? []}
+                      moduleSettings={Array.isArray(moduleSettingsMap[mod.key]) ? (moduleSettingsMap[mod.key] as SettingRecord[]) : []}
                       onReload={() => loadModuleSettings(mod.key)}
                     />
                   )}
@@ -341,6 +405,7 @@ function AdminSettingRow({ def, dbSettings, onSave }: {
   dbSettings: SettingRecord[];
   onSave: (def: SystemSettingDef, value: unknown) => Promise<void>;
 }) {
+  const { shouldAutoSave, saveState, triggerSave, onChangeTrigger, onBlurTrigger } = useAutoSave();
   const rec = dbSettings.find((s) => s.key === def.key);
   const rawVal = rec !== undefined ? rec.value : def.default;
 
@@ -352,8 +417,6 @@ function AdminSettingRow({ def, dbSettings, onSave }: {
   }
 
   const [localVal, setLocalVal] = useState(toDisplay(rawVal));
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -361,16 +424,15 @@ function AdminSettingRow({ def, dbSettings, onSave }: {
     setDirty(false);
   }, [rawVal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleSave() {
-    setSaving(true);
-    let parsed: unknown = localVal;
-    if (def.type === "toggle") parsed = localVal === "true";
-    else if (def.type === "number") parsed = parseFloat(localVal) || def.default;
-    await onSave(def, parsed);
-    setSaving(false);
-    setDirty(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const saving = saveState === "saving";
+  const saved = saveState === "saved";
+  const hasError = saveState === "error";
+
+  function buildSaveFn(value: unknown) {
+    let parsed: unknown = value;
+    if (def.type === "toggle") parsed = String(value) === "true";
+    else if (def.type === "number") parsed = parseFloat(String(value)) || def.default;
+    return () => onSave(def, parsed);
   }
 
   return (
@@ -383,67 +445,89 @@ function AdminSettingRow({ def, dbSettings, onSave }: {
             <p className="text-[10px] text-blue-400/60 mt-0.5">{def.pipelineStage}</p>
           )}
         </div>
-        {saved && <CheckCircle2 size={13} className="shrink-0 text-emerald-400" />}
+        <div className="flex items-center gap-1 shrink-0">
+          {saving && <Loader2 size={12} className="animate-spin text-muted-foreground" />}
+          {saved && <CheckCircle2 size={12} className="text-emerald-400" />}
+          {hasError && <AlertCircle size={12} className="text-red-400" />}
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
         {def.type === "toggle" ? (
+          // Toggle: her zaman immediate save (auto-save toggle'ından bağımsız)
           <button
             type="button"
-            onClick={async () => {
+            disabled={saving}
+            onClick={() => {
               const next = localVal !== "true";
               setLocalVal(String(next));
-              setSaving(true);
-              await onSave(def, next);
-              setSaving(false);
-              setSaved(true);
-              setTimeout(() => setSaved(false), 2000);
+              triggerSave(buildSaveFn(next));
             }}
             className={cn(
               "flex items-center gap-1.5 text-sm transition-colors",
-              localVal === "true" ? "text-emerald-400" : "text-muted-foreground"
+              localVal === "true" ? "text-emerald-400" : "text-muted-foreground",
+              saving && "opacity-60 cursor-not-allowed"
             )}
           >
             {localVal === "true" ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
             {localVal === "true" ? "Açık" : "Kapalı"}
           </button>
         ) : def.type === "select" && def.options ? (
+          // Select: immediate save
           <div className="flex items-center gap-2 flex-1">
             <select
               value={localVal}
-              onChange={async (e) => {
+              disabled={saving}
+              onChange={(e) => {
                 const next = e.target.value;
                 setLocalVal(next);
-                setSaving(true);
-                await onSave(def, next);
-                setSaving(false);
-                setSaved(true);
-                setTimeout(() => setSaved(false), 2000);
+                triggerSave(buildSaveFn(next));
               }}
-              disabled={saving}
               className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
             >
               {def.options.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-            {saving && <Loader2 size={11} className="animate-spin text-muted-foreground" />}
           </div>
         ) : (
+          // Text/number: auto-save açıksa blur + debounce, kapalıysa Kaydet butonu
           <div className="flex items-center gap-2 flex-1">
             <input
               type={def.type === "number" ? "number" : "text"}
               value={localVal}
-              onChange={(e) => { setLocalVal(e.target.value); setDirty(true); }}
-              onKeyDown={(e) => e.key === "Enter" && dirty && handleSave()}
+              onChange={(e) => {
+                setLocalVal(e.target.value);
+                setDirty(true);
+                if (shouldAutoSave) {
+                  onChangeTrigger(buildSaveFn(e.target.value));
+                }
+              }}
+              onBlur={() => {
+                if (shouldAutoSave && dirty) {
+                  onBlurTrigger(buildSaveFn(localVal));
+                  setDirty(false);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dirty) {
+                  if (shouldAutoSave) {
+                    onBlurTrigger(buildSaveFn(localVal));
+                    setDirty(false);
+                  } else {
+                    triggerSave(buildSaveFn(localVal));
+                    setDirty(false);
+                  }
+                }
+              }}
               placeholder={String(def.default ?? "")}
               min={def.min}
               max={def.max}
               className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
             />
-            {dirty && (
+            {!shouldAutoSave && dirty && (
               <button
-                onClick={handleSave}
+                onClick={() => { triggerSave(buildSaveFn(localVal)); setDirty(false); }}
                 disabled={saving}
                 className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >

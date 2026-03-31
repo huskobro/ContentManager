@@ -24,6 +24,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { useAutoSave } from "@/hooks/useAutoSave";
 import {
   Sliders,
   Lock,
@@ -489,36 +490,53 @@ interface SettingRowProps {
 
 function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
   const addToast = useUIStore((s) => s.addToast);
+  const { shouldAutoSave, saveState, triggerSave, onChangeTrigger, onBlurTrigger } = useAutoSave();
+
   const initialDisplay = dbRecord
     ? rawToDisplay(def, dbRecord.value)
     : defaultToDisplay(def);
 
   const [display, setDisplay] = useState(initialDisplay);
   const [locked, setLocked] = useState(dbRecord?.locked ?? false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [openingFolder, setOpeningFolder] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     setDisplay(dbRecord ? rawToDisplay(def, dbRecord.value) : defaultToDisplay(def));
     setLocked(dbRecord?.locked ?? false);
+    setDirty(false);
   }, [dbRecord, def]);
 
+  const saving = saveState === "saving";
+  const saved = saveState === "saved";
+  const hasError = saveState === "error";
+
   const isDirty =
+    dirty ||
     display !== (dbRecord ? rawToDisplay(def, dbRecord.value) : defaultToDisplay(def)) ||
     locked !== (dbRecord?.locked ?? false);
 
   const isWideType = def.type === "multiselect" || def.type === "textarea";
 
-  async function handleSave() {
-    setSaving(true);
-    const payload = displayToPayload(def, display);
-    await onSave(def, payload, locked);
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  function buildSaveFn(val: string = display) {
+    return async () => {
+      const payload = displayToPayload(def, val);
+      await onSave(def, payload, locked);
+    };
+  }
+
+  // Lock toggle her zaman anında kaydeder (kilit değişince değer de kaydedilmeli)
+  async function handleLockToggle() {
+    setLocked((v) => {
+      const next = !v;
+      triggerSave(async () => {
+        const payload = displayToPayload(def, display);
+        await onSave(def, payload, next);
+      });
+      return next;
+    });
   }
 
   return (
@@ -544,16 +562,24 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
       <div className="flex flex-1 items-start gap-2">
         <div className="flex-1 min-w-0">
           {def.type === "multiselect" ? (
+            // Multiselect: Kaydet butonu (array değişikliği karmaşık, blur yok)
             <MultiSelectInput
               value={display}
-              onChange={setDisplay}
+              onChange={(v) => { setDisplay(v); setDirty(true); }}
               options={def.options ?? []}
             />
           ) : def.type === "select" ? (
+            // Select: immediate save
             <select
               value={display}
-              onChange={(e) => setDisplay(e.target.value)}
-              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
+              disabled={saving}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDisplay(next);
+                setDirty(false);
+                triggerSave(buildSaveFn(next));
+              }}
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors disabled:opacity-60"
             >
               {def.options?.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -562,20 +588,35 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
               ))}
             </select>
           ) : def.type === "number" ? (
+            // Number: blur + debounce
             <input
               type="number"
               value={display}
               min={def.min}
               max={def.max}
-              onChange={(e) => setDisplay(e.target.value)}
+              onChange={(e) => {
+                setDisplay(e.target.value);
+                setDirty(true);
+                if (shouldAutoSave) onChangeTrigger(buildSaveFn(e.target.value));
+              }}
+              onBlur={() => {
+                if (shouldAutoSave && dirty) { onBlurTrigger(buildSaveFn(display)); setDirty(false); }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dirty) { triggerSave(buildSaveFn(display)); setDirty(false); }
+              }}
               className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
             />
           ) : def.type === "password" ? (
+            // Password: blur save (güvenlik: debounce + blur)
             <div className="relative">
               <input
                 type={showPassword ? "text" : "password"}
                 value={display}
-                onChange={(e) => setDisplay(e.target.value)}
+                onChange={(e) => { setDisplay(e.target.value); setDirty(true); }}
+                onBlur={() => {
+                  if (shouldAutoSave && dirty) { onBlurTrigger(buildSaveFn(display)); setDirty(false); }
+                }}
                 placeholder={display === "" ? "Ayarlanmamış" : undefined}
                 className="w-full rounded-lg border border-border bg-input px-3 py-2 pr-8 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors font-mono"
               />
@@ -589,19 +630,17 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
               </button>
             </div>
           ) : def.type === "toggle" ? (
+            // Toggle: immediate save
             <button
               type="button"
               role="switch"
               aria-checked={display === "true"}
               disabled={saving}
-              onClick={async () => {
+              onClick={() => {
                 const next = display === "true" ? "false" : "true";
                 setDisplay(next);
-                setSaving(true);
-                await onSave(def, next === "true", locked);
-                setSaving(false);
-                setSaved(true);
-                setTimeout(() => setSaved(false), 2000);
+                setDirty(false);
+                triggerSave(buildSaveFn(next));
               }}
               className={cn(
                 "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all w-full sm:w-auto",
@@ -621,14 +660,21 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
               {display === "true" ? "Etkin" : "Devre Dışı"}
             </button>
           ) : def.type === "array" ? (
-            <ArrayTagInput value={display} onChange={setDisplay} />
+            <ArrayTagInput value={display} onChange={(v) => { setDisplay(v); setDirty(true); }} />
           ) : def.type === "path" ? (
+            // Path: blur save + klasör seçici
             <>
               <div className="flex gap-1.5">
                 <input
                   type="text"
                   value={display}
-                  onChange={(e) => setDisplay(e.target.value)}
+                  onChange={(e) => { setDisplay(e.target.value); setDirty(true); }}
+                  onBlur={() => {
+                    if (shouldAutoSave && dirty) { onBlurTrigger(buildSaveFn(display)); setDirty(false); }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && dirty) { triggerSave(buildSaveFn(display)); setDirty(false); }
+                  }}
                   placeholder="/tam/dizin/yolu"
                   className="flex-1 rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors font-mono"
                 />
@@ -640,7 +686,6 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
                 >
                   <FolderOpen size={13} />
                 </button>
-                {/* Finder/Explorer'da aç — yalnızca kaydedilmiş path varsa aktif */}
                 <button
                   type="button"
                   disabled={!display.trim() || openingFolder}
@@ -662,15 +707,31 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
               <FolderPickerDialog
                 isOpen={folderPickerOpen}
                 onClose={() => setFolderPickerOpen(false)}
-                onSelect={(path) => setDisplay(path)}
+                onSelect={(path) => {
+                  setDisplay(path);
+                  // Klasör seçilince anında kaydet (kullanıcı seçti = intent net)
+                  triggerSave(buildSaveFn(path));
+                  setDirty(false);
+                }}
                 initialPath={display || undefined}
               />
             </>
           ) : (
+            // Default text: blur + debounce
             <input
               type="text"
               value={display}
-              onChange={(e) => setDisplay(e.target.value)}
+              onChange={(e) => {
+                setDisplay(e.target.value);
+                setDirty(true);
+                if (shouldAutoSave) onChangeTrigger(buildSaveFn(e.target.value));
+              }}
+              onBlur={() => {
+                if (shouldAutoSave && dirty) { onBlurTrigger(buildSaveFn(display)); setDirty(false); }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dirty) { triggerSave(buildSaveFn(display)); setDirty(false); }
+              }}
               className="w-full rounded-lg border border-border bg-input px-3 py-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring transition-colors"
             />
           )}
@@ -678,9 +739,17 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
 
         {/* Kontroller */}
         <div className="flex items-center gap-2 shrink-0 mt-0.5">
+          {/* Durum göstergesi */}
+          <div className="flex items-center">
+            {saving && <Loader2 size={12} className="animate-spin text-muted-foreground" />}
+            {saved && <CheckCircle2 size={12} className="text-emerald-400" />}
+            {hasError && <AlertCircle size={12} className="text-red-400" />}
+          </div>
+
+          {/* Kilit */}
           <button
             type="button"
-            onClick={() => setLocked((v) => !v)}
+            onClick={handleLockToggle}
             title={locked ? "Kilidi kaldır" : "Kilitle (kullanıcı değiştiremez)"}
             className={cn(
               "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
@@ -692,28 +761,23 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
             {locked ? <Lock size={12} /> : <Unlock size={12} />}
           </button>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !isDirty}
-            className={cn(
-              "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
-              saved
-                ? "bg-emerald-500/15 text-emerald-400"
-                : isDirty
-                ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
-            )}
-          >
-            {saving ? (
-              <Loader2 size={11} className="animate-spin" />
-            ) : saved ? (
-              <CheckCircle2 size={11} />
-            ) : (
-              <Save size={11} />
-            )}
-            {saved ? "Kaydedildi" : "Kaydet"}
-          </button>
+          {/* Auto-save kapalıyken veya multiselect/array için manuel Kaydet butonu */}
+          {(!shouldAutoSave || ["multiselect", "array"].includes(def.type)) && isDirty && (
+            <button
+              type="button"
+              onClick={() => { triggerSave(buildSaveFn(display)); setDirty(false); }}
+              disabled={saving}
+              className={cn(
+                "flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+                saved
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              )}
+            >
+              {saving ? <Loader2 size={11} className="animate-spin" /> : saved ? <CheckCircle2 size={11} /> : <Save size={11} />}
+              {saved ? "Kaydedildi" : "Kaydet"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -735,6 +799,8 @@ export default function GlobalSettings() {
     resetOutputFolder,
   } = useAdminStore();
   const addToast = useUIStore((s) => s.addToast);
+  const autoSaveEnabled = useUIStore((s) => s.autoSaveEnabled);
+  const setAutoSaveEnabled = useUIStore((s) => s.setAutoSaveEnabled);
 
   const loadData = useCallback(() => {
     fetchSettings("admin", "");
@@ -836,21 +902,42 @@ export default function GlobalSettings() {
           <Sliders size={20} className="text-purple-400" />
           <h2 className="text-lg font-semibold text-foreground">Global Ayarlar</h2>
         </div>
-        <button
-          onClick={loadData}
-          disabled={loading}
-          className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          Yenile
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Otomatik kayıt toggle */}
+          <button
+            onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+            className={cn(
+              "flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs transition-colors",
+              autoSaveEnabled
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                : "border-border text-muted-foreground hover:text-foreground hover:bg-accent"
+            )}
+            title={autoSaveEnabled ? "Otomatik kayıt açık — tıklayarak kapat" : "Otomatik kayıt kapalı — tıklayarak aç"}
+          >
+            {autoSaveEnabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+            Otomatik kayıt
+          </button>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+            Yenile
+          </button>
+        </div>
       </div>
 
       {/* Bilgi bandı */}
       <div className="flex items-start gap-2 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2.5 text-xs text-blue-300">
         <AlertCircle size={13} className="mt-0.5 shrink-0" />
         <span>
-          Ayarlar veritabanında saklanır. Değiştirip <strong>Kaydet</strong>'e basın.{" "}
+          Ayarlar veritabanında saklanır.{" "}
+          {autoSaveEnabled ? (
+            <span>Toggle ve seçim alanları <strong>anında</strong>, metin alanları <strong>odak kaybedince</strong> otomatik kaydedilir.</span>
+          ) : (
+            <span>Otomatik kayıt kapalı — değiştirip <strong>Kaydet</strong>'e basın.</span>
+          )}{" "}
           <span className="text-blue-300/70">
             Kilit ikonu, kullanıcıların o ayarı değiştiremeyeceği anlamına gelir. API anahtarları
             yalnızca <strong>Provider Yönetimi</strong> sayfasından girilir.

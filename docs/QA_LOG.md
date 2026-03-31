@@ -155,6 +155,49 @@ YTRobot-v3 referans analizi: benzer bir auto-save yok, tüm ayarlar form gönder
 
 ---
 
+## 2026-03-31 — Tam Kapsamlı Auto-Save Sistemi + Toggle UI
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/stores/uiStore.ts` | `autoSaveEnabled` state + `setAutoSaveEnabled` action + persist partialize eklendi |
+| `frontend/src/hooks/useAutoSave.ts` | **YENİ** — `useAutoSave` hook: `triggerSave`, `onChangeTrigger` (800ms debounce), `onBlurTrigger`, `cancelDebounce` |
+| `frontend/src/pages/admin/ModuleManager.tsx` | `AdminSettingRow` auto-save entegrasyonu: toggle/select=anında, text/number=blur+debounce |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | `SettingRow` tam auto-save + otomatik kayıt toggle butonu sayfa başlığına eklendi |
+| `frontend/src/pages/user/UserSettings.tsx` | Select/toggle anında auto-save + otomatik kayıt toggle butonu sayfa başlığına eklendi |
+
+### Auto-Save Mimarisi
+
+**`useAutoSave` hook — alan türüne göre strateji:**
+
+| Alan Türü | Metot | Gecikme |
+|---|---|---|
+| toggle, select, radio | `triggerSave(fn)` | Anında (0ms) |
+| text, textarea, number, password, path | `onChangeTrigger(fn)` + `onBlurTrigger(fn)` | 800ms debounce + blur flush |
+| multiselect/array | Manuel Kaydet butonu | — |
+
+**`uiStore.autoSaveEnabled` (varsayılan: `true`):**
+- localStorage'a persist edilir (`cm-ui` key altında)
+- GlobalSettings ve UserSettings sayfa başlıklarında toggle butonu
+- Kapalıyken: tüm yüzeylerde manuel Kaydet butonu görünür
+
+**Aktif/Pasif Flash Bug — Kesin Düzeltme:**
+- `moduleSettingsMap` tipi: `Record<string, SettingRecord[] | null | undefined>`
+  - `undefined` = henüz fetch edilmedi → badge spinner gösterir
+  - `null` = fetch edildi, kayıt yok (default aktif)
+  - `SettingRecord[]` = fetch edildi, veri var
+- `handleToggleEnabled` artık `adminStore` kullanmıyor — direkt `fetch()` ile PUT/POST
+
+### Test Sonuçları
+
+| Test Türü | Sonuç | Detay |
+|---|---|---|
+| `frontend tsc --noEmit` | ✅ PASS | Hata yok |
+| `pytest backend/tests/` | ✅ PASS | 124 geçti, 1 atlandı |
+
+---
+
 ## 2026-03-31 — YTRobot-v3 Controlled Port (Phase 1)
 
 ### Değişiklik Özeti
