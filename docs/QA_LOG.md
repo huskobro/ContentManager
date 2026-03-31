@@ -1061,6 +1061,105 @@ npx tsc --noEmit
 
 ---
 
+## 2026-03-31 — Kullanıcı Tarafında Görünür 3 Sorun Düzeltmesi
+
+### Root Cause ve Değişiklik Özeti
+
+#### Sorun 1 — JobDetail Süreç Görünürlüğü
+
+**Root Cause:**
+- `RenderProgressWidget`'ta `pct > 0` guard → bundling %0'da progress bar tamamen gizliydi
+- Bundling başladığında `bundling_pct` null olduğunda "başlatılıyor..." metni yoktu
+- `ElapsedTimer` `started_at` null gelirse sessizce gizleniyordu — step çalışıyor ama süre gösterilmiyordu
+- 5 dakikayı aşan adımlar için "takılmış olabilir" uyarısı yoktu
+
+**Fix:**
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/user/JobDetail.tsx` | `RenderProgressWidget`: `pct=0`'da indeterminate pulse bar gösterilir (blank değil); bundling_pct null → "başlatılıyor..." metni; `overall_pct=0` → "hesaplanıyor" etiketi |
+| `frontend/src/pages/user/JobDetail.tsx` | `ElapsedTimer`: `startedAt` null/undefined kabul eder → "çalışıyor" etiketi; 5 dakika (300s) aşılınca amber renk + "uzun!" uyarısı |
+| `frontend/src/pages/user/JobDetail.tsx` | `StepRow`: `started_at` null olsa da running step için ElapsedTimer gösterilir (önceki: `step.started_at` truthy guard vardı) |
+
+---
+
+#### Sorun 2 — Output Folder Finder/Explorer Açılışı
+
+**Root Cause:**
+- GlobalSettings output_dir alanında "Klasör Seç" (FolderPickerDialog) vardı ama "Finder'da Aç" butonu yoktu
+- Backend'de `subprocess` ile sistem dosya gezginini açan endpoint hiç yoktu
+
+**Fix:**
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/api/settings.py` | `POST /api/settings/admin/open-folder` yeni endpoint: macOS `open`, Windows `explorer`, Linux `xdg-open` çağırır |
+| `frontend/src/pages/admin/GlobalSettings.tsx` | `openFolderInFinder()` helper; `path` tipindeki `SettingRow`'a `ExternalLink` ikonu ile "Klasörü Aç" butonu eklendi; `openingFolder` state ile yükleme ikonu; hata toast |
+
+---
+
+#### Sorun 3 — JobDetail Çıktı Klasörüne Git
+
+**Root Cause:**
+- JobDetail tamamlanan iş için `output_path` yalnızca truncate'li text olarak gösteriliyordu
+- Tıklanabilir, gerçek klasörü açan bir buton yoktu
+- `job.output_path` dosya disk üzerinde yoksa sessiz hata — kullanıcıya mesaj verilmiyordu
+
+**Fix:**
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/api/jobs.py` | `POST /api/jobs/{job_id}/open-output` yeni endpoint: output_path'i kontrol eder, macOS `-R` (reveal in Finder), Windows `/select,`, Linux parent dir açar; dosya yoksa 404 döner |
+| `frontend/src/pages/user/JobDetail.tsx` | `OutputPathRow` bileşeni: path text + "Klasörü Aç" butonu (`ExternalLink` ikonu); hata durumunda inline error banner gösterir |
+
+---
+
+### Runtime Doğrulama
+
+**Finder open (macOS):**
+```
+Platform: Darwin
+Would use: open
+Opening: /Users/.../ContentManager/output
+Exists: True
+Return code: 0
+RUNTIME CHECK: Finder open executed successfully
+```
+
+**Import check:**
+```
+IMPORT CHECK: open_folder_in_explorer and open_job_output_folder imported OK
+```
+
+---
+
+### Test Sonuçları
+
+```
+python3 -m pytest backend/tests/ -q
+65 passed in 0.52s  ✅
+
+npx vitest run
+Test Files  4 passed (4)
+Tests       107 passed (107)  ✅
+
+npx tsc --noEmit
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| Finder open Linux'ta `xdg-open` gerektirir | Düşük | Headless sunucuda çalışmaz — localhost-first sistem bu riski taşımaz |
+| `open-output` endpoint admin PIN gerektirmez | Bilgi | Kasıtlı: normal kullanıcı kendi işinin çıktısını açabilmeli |
+| `open-folder` endpoint admin PIN gerektirir | Bilgi | GlobalSettings admin panelinde, PIN zaten mevcut — doğru davranış |
+| ElapsedTimer "uzun!" 5dk sabit — tuneable değil | Bilgi | Hardcoded `STALE_THRESHOLD_S = 300` — yeterli başlangıç değeri |
+
+---
+
 ## 2026-03-31 — Provider Fallback UI Düzeltmesi + EdgeTTS Voice Resolution Zinciri Fix
 
 ### Değişiklik Özeti

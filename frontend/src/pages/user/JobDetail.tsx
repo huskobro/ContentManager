@@ -29,6 +29,7 @@ import {
   Zap,
   Ban,
   Download,
+  ExternalLink,
 } from "lucide-react";
 import {
   useJobStore,
@@ -315,12 +316,9 @@ export default function JobDetail() {
           </div>
         )}
 
-        {/* Tamamlandı — çıktı linki */}
+        {/* Tamamlandı — çıktı dosyası + Finder/Explorer'da aç */}
         {job.status === "completed" && job.output_path && (
-          <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-400">
-            <FileVideo size={14} className="shrink-0" />
-            <span className="truncate">Çıktı: {job.output_path}</span>
-          </div>
+          <OutputPathRow jobId={jobId!} outputPath={job.output_path} />
         )}
 
         {/* Maliyet özeti */}
@@ -383,28 +381,77 @@ export default function JobDetail() {
   );
 }
 
+// ─── Output Path Row — Finder/Explorer'da aç ─────────────────────────────
+
+function OutputPathRow({ jobId, outputPath }: { jobId: string; outputPath: string }) {
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  async function handleReveal() {
+    setOpening(true);
+    setOpenError(null);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/open-output`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setOpenError(data.detail ?? `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      setOpenError(err instanceof Error ? err.message : "Ağ hatası");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-400">
+        <FileVideo size={14} className="shrink-0" />
+        <span className="flex-1 truncate font-mono" title={outputPath}>
+          {outputPath}
+        </span>
+        <button
+          type="button"
+          onClick={handleReveal}
+          disabled={opening}
+          title="Finder/Explorer'da klasörü aç"
+          className="shrink-0 flex items-center gap-1 rounded-md border border-emerald-500/30 px-2 py-1 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+        >
+          {opening ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            <ExternalLink size={11} />
+          )}
+          Klasörü Aç
+        </button>
+      </div>
+      {openError && (
+        <div className="flex items-center gap-1.5 rounded-md bg-red-500/10 border border-red-500/20 px-3 py-1.5 text-[10px] text-red-400">
+          <AlertCircle size={11} className="shrink-0" />
+          {openError}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Elapsed Timer (çalışan adımlar için canlı süre) ──────────────────────
 
-function ElapsedTimer({ startedAt }: { startedAt: string }) {
-  const [elapsed, setElapsed] = useState("");
+// 5 dakikayı aşan running adım "takılmış olabilir" uyarısı gösterir
+const STALE_THRESHOLD_S = 300;
+
+function ElapsedTimer({ startedAt }: { startedAt: string | null | undefined }) {
+  const [elapsedSec, setElapsedSec] = useState<number | null>(null);
 
   useEffect(() => {
+    if (!startedAt) return;
     const start = new Date(startedAt).getTime();
     if (isNaN(start)) return;
 
     function update() {
-      const diff = Math.max(0, Math.floor((Date.now() - start) / 1000));
-      if (diff < 60) {
-        setElapsed(`${diff}s`);
-      } else if (diff < 3600) {
-        const m = Math.floor(diff / 60);
-        const s = diff % 60;
-        setElapsed(`${m}dk ${s}s`);
-      } else {
-        const h = Math.floor(diff / 3600);
-        const m = Math.floor((diff % 3600) / 60);
-        setElapsed(`${h}sa ${m}dk`);
-      }
+      setElapsedSec(Math.max(0, Math.floor((Date.now() - start) / 1000)));
     }
 
     update();
@@ -412,14 +459,50 @@ function ElapsedTimer({ startedAt }: { startedAt: string }) {
     return () => clearInterval(interval);
   }, [startedAt]);
 
+  if (elapsedSec === null) {
+    // started_at yok — step çalışıyor ama süre bilinmiyor
+    return (
+      <span
+        className="shrink-0 flex items-center gap-1 text-xs text-blue-400/60 tabular-nums"
+        title="Adım başlangıç zamanı alınamadı"
+      >
+        <Clock size={11} />
+        <span className="text-[10px]">çalışıyor</span>
+      </span>
+    );
+  }
+
+  const isStale = elapsedSec >= STALE_THRESHOLD_S;
+
+  function fmt(s: number): string {
+    if (s < 60) return `${s}s`;
+    if (s < 3600) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${m}dk ${sec}s`;
+    }
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h}sa ${m}dk`;
+  }
+
   return (
     <span
-      className="shrink-0 flex items-center gap-1 text-xs text-blue-400 tabular-nums"
-      title="Geçen süre (bu adım başladığından beri)"
+      className={cn(
+        "shrink-0 flex items-center gap-1 text-xs tabular-nums",
+        isStale ? "text-amber-400" : "text-blue-400"
+      )}
+      title={
+        isStale
+          ? "Bu adım 5 dakikayı aştı — takılmış olabilir. İptal edip tekrar deneyebilirsiniz."
+          : "Geçen süre (bu adım başladığından beri)"
+      }
     >
       <Clock size={11} />
-      <span className="text-blue-400/60 text-[10px]">geçen</span>
-      {elapsed}
+      <span className={cn("text-[10px]", isStale ? "text-amber-400/70" : "text-blue-400/60")}>
+        {isStale ? "uzun!" : "geçen"}
+      </span>
+      {fmt(elapsedSec)}
     </span>
   );
 }
@@ -433,9 +516,16 @@ const PHASE_LABELS: Record<RenderProgress["phase"], string> = {
   done:      "Tamamlandı",
 };
 
+// Bundling aşamasında overall_pct genellikle 0–10 arası gelir.
+// Rendering/encoding daha yüksek. Bar görünmesi için min %2 padding.
+const MIN_BAR_PCT = 2;
+
 function RenderProgressWidget({ progress }: { progress: RenderProgress }) {
-  const pct = progress.overall_pct ?? 0;
+  const rawPct = progress.overall_pct ?? 0;
+  // Bar daima görünür: veri varsa gerçek değer, yoksa animasyonlu indeterminate
+  const barPct = rawPct > 0 ? Math.max(rawPct, MIN_BAR_PCT) : 0;
   const isActive = progress.phase !== "done";
+  const indeterminate = isActive && rawPct === 0;
 
   return (
     <div className="mx-4 mb-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
@@ -449,8 +539,10 @@ function RenderProgressWidget({ progress }: { progress: RenderProgress }) {
               {progress.rendered_frames} / {progress.total_frames} frame
             </span>
           )}
-          {progress.phase === "bundling" && progress.bundling_pct != null && (
-            <span className="text-blue-400/70">%{progress.bundling_pct}</span>
+          {progress.phase === "bundling" && (
+            <span className="text-blue-400/70">
+              {progress.bundling_pct != null ? `%${progress.bundling_pct}` : "başlatılıyor..."}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-3 text-muted-foreground">
@@ -460,21 +552,27 @@ function RenderProgressWidget({ progress }: { progress: RenderProgress }) {
               {progress.eta}
             </span>
           )}
-          {pct > 0 && (
-            <span className="font-mono tabular-nums">%{pct.toFixed(0)}</span>
-          )}
+          {rawPct > 0 ? (
+            <span className="font-mono tabular-nums">%{rawPct.toFixed(0)}</span>
+          ) : isActive ? (
+            <span className="text-blue-400/50 text-[10px]">hesaplanıyor</span>
+          ) : null}
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar — indeterminate (pulse) veya determinate */}
       <div className="h-1.5 w-full rounded-full bg-blue-500/15 overflow-hidden">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all duration-500",
-            progress.phase === "done" ? "bg-emerald-400" : "bg-blue-400"
-          )}
-          style={{ width: `${Math.min(pct, 100)}%` }}
-        />
+        {indeterminate ? (
+          <div className="h-full w-1/3 rounded-full bg-blue-400/60 animate-pulse" />
+        ) : (
+          <div
+            className={cn(
+              "h-full rounded-full transition-all duration-500",
+              progress.phase === "done" ? "bg-emerald-400" : "bg-blue-400"
+            )}
+            style={{ width: `${Math.min(barPct, 100)}%` }}
+          />
+        )}
       </div>
     </div>
   );
@@ -524,8 +622,8 @@ function StepRow({ step, renderProgress }: { step: PipelineStep; renderProgress?
           </span>
         )}
 
-        {/* Süre: tamamlanmış → statik, çalışan → canlı sayaç */}
-        {step.status === "running" && step.started_at ? (
+        {/* Süre: tamamlanmış → statik, çalışan → canlı sayaç (started_at null ise "çalışıyor" gösterir) */}
+        {step.status === "running" ? (
           <ElapsedTimer startedAt={step.started_at} />
         ) : durationStr ? (
           <span className="shrink-0 text-xs text-muted-foreground w-14 text-right">

@@ -28,6 +28,7 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
+  ExternalLink,
   ChevronDown,
   ChevronUp,
   ChevronRight,
@@ -51,6 +52,28 @@ import {
 import { api, APIError } from "@/api/client";
 
 import { cn } from "@/lib/utils";
+
+// Klasörü yerel dosya gezgininde açar (macOS Finder, Windows Explorer).
+async function openFolderInFinder(path: string): Promise<{ ok: boolean; error?: string }> {
+  const adminPin = localStorage.getItem("cm-admin-pin") ?? "";
+  try {
+    const res = await fetch("/api/settings/admin/open-folder", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Pin": adminPin,
+      },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: data.detail ?? `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Ağ hatası" };
+  }
+}
 
 // Değer "boş" mı? Boş ise unset (deleteSetting) yapılacak.
 function isEmpty(value: unknown): boolean {
@@ -461,6 +484,7 @@ interface SettingRowProps {
 }
 
 function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
+  const addToast = useUIStore((s) => s.addToast);
   const initialDisplay = dbRecord
     ? rawToDisplay(def, dbRecord.value)
     : defaultToDisplay(def);
@@ -471,6 +495,7 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
   const [saved, setSaved] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [openingFolder, setOpeningFolder] = useState(false);
 
   useEffect(() => {
     setDisplay(dbRecord ? rawToDisplay(def, dbRecord.value) : defaultToDisplay(def));
@@ -592,6 +617,24 @@ function SettingRow({ def, dbRecord, onSave }: SettingRowProps) {
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                 >
                   <FolderOpen size={13} />
+                </button>
+                {/* Finder/Explorer'da aç — yalnızca kaydedilmiş path varsa aktif */}
+                <button
+                  type="button"
+                  disabled={!display.trim() || openingFolder}
+                  title={display.trim() ? "Klasörü Finder/Explorer'da aç" : "Önce bir klasör kaydedin"}
+                  onClick={async () => {
+                    if (!display.trim()) return;
+                    setOpeningFolder(true);
+                    const result = await openFolderInFinder(display.trim());
+                    setOpeningFolder(false);
+                    if (!result.ok) {
+                      addToast({ type: "error", title: "Klasör açılamadı", description: result.error });
+                    }
+                  }}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {openingFolder ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
                 </button>
               </div>
               <FolderPickerDialog

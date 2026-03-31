@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import platform
+import subprocess
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -434,6 +436,63 @@ def download_job_output(
         filename=f"video_{job_id[:8]}.mp4",
         media_type="video/mp4",
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/jobs/{job_id}/open-output — Çıktı klasörünü Finder/Explorer'da aç
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/jobs/{job_id}/open-output",
+    summary="Çıktı klasörünü dosya gezgininde aç",
+    description=(
+        "İşin çıktı dosyasını veya bulunduğu klasörü işletim sisteminin "
+        "dosya gezgininde açar. macOS: open -R (dosyayı seçer), "
+        "Windows: explorer /select, Linux: xdg-open (klasör). "
+        "İş tamamlanmış ve output_path mevcut olmalıdır."
+    ),
+)
+def open_job_output_folder(
+    job_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Çıktı klasörünü dosya gezgininde açar.
+    output_path varsa dosyayı seçer (macOS/Windows), yoksa klasörü açar.
+    """
+    manager = JobManager(db)
+    job = manager.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"İş bulunamadı: {job_id}")
+
+    if not job.output_path:
+        raise HTTPException(status_code=404, detail="Bu iş için çıktı dosyası yok.")
+
+    output_file = Path(job.output_path)
+    if not output_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Çıktı dosyası disk üzerinde bulunamadı: {job.output_path}",
+        )
+
+    sys_name = platform.system()
+    try:
+        if sys_name == "Darwin":
+            # -R: Finder'da dosyayı vurgular (reveal)
+            subprocess.Popen(["open", "-R", str(output_file)])
+        elif sys_name == "Windows":
+            # /select: Explorer'da dosyayı seçer
+            subprocess.Popen(["explorer", "/select,", str(output_file)])
+        else:
+            # Linux: klasörü aç
+            subprocess.Popen(["xdg-open", str(output_file.parent)])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Dosya gezgini açılamadı: {exc}")
+
+    log.info("Çıktı klasörü açıldı", job_id=job_id[:8], path=str(output_file))
+
+    return {"opened": True, "path": str(output_file)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

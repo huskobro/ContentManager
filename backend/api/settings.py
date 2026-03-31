@@ -17,6 +17,8 @@ Yetkilendirme:
 from __future__ import annotations
 
 import json
+import platform
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -518,4 +520,68 @@ def reset_output_folder(
     return OutputFolderResetResponse(
         default_path=str(default_path),
         message=f"Output klasörü varsayılana sıfırlandı: {default_path}",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/settings/admin/open-folder — Klasörü Finder/Explorer'da aç
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OpenFolderRequest(BaseModel):
+    path: str
+
+
+class OpenFolderResponse(BaseModel):
+    opened: bool
+    path: str
+    message: str
+
+
+@router.post(
+    "/settings/admin/open-folder",
+    response_model=OpenFolderResponse,
+    summary="Klasörü Finder/Explorer'da aç",
+    description=(
+        "Verilen path'i işletim sisteminin dosya gezgininde açar. "
+        "macOS: open, Windows: explorer, Linux: xdg-open. "
+        "Admin PIN gereklidir."
+    ),
+)
+def open_folder_in_explorer(
+    payload: OpenFolderRequest,
+    _pin: str = Depends(_require_admin),
+) -> OpenFolderResponse:
+    """
+    Klasörü yerel dosya gezgininde açar.
+    Path mevcut değilse 404 döner.
+    """
+    target = Path(payload.path).expanduser().resolve()
+
+    if not target.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Klasör bulunamadı: {target}",
+        )
+
+    sys_name = platform.system()
+    try:
+        if sys_name == "Darwin":
+            subprocess.Popen(["open", str(target)])
+        elif sys_name == "Windows":
+            subprocess.Popen(["explorer", str(target)])
+        else:
+            # Linux / diğer
+            subprocess.Popen(["xdg-open", str(target)])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dosya gezgini açılamadı: {exc}",
+        )
+
+    log.info("Klasör dosya gezgininde açıldı", path=str(target), platform=sys_name)
+
+    return OpenFolderResponse(
+        opened=True,
+        path=str(target),
+        message=f"Açıldı: {target}",
     )
