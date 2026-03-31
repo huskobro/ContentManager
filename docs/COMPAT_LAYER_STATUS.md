@@ -1,6 +1,6 @@
 # Compat Layer Durumu — Publishing Hub Geçişi
 
-**Son güncelleme:** 2026-03-31 (Faz 11.3 Stabilizasyon)
+**Son güncelleme:** 2026-04-01 (Bug Fix: OAuth + NewsSource)
 
 Bu belge, YouTube-first mimarisinden Publishing Hub mimarisine geçiş sürecinde
 hangi compat (geriye uyumluluk) katmanlarının nerede olduğunu, neden tutulduğunu
@@ -125,7 +125,9 @@ Bu iki yüzey farklı sorumluluklar taşır — biri diğerini kapsamamaktadır:
 | Kanal Yönetimi | `/admin/channels` | `ChannelManager.tsx` | YouTube OAuth flow, `access_token` / `refresh_token` yönetimi, `youtube_channels` tablosu |
 | Platform Hesapları | `/admin/platform-accounts` | `PlatformAccountManager.tsx` | Multi-platform yayın hesabı kaydı, `platform_accounts` tablosu |
 
-**Faz 11.3'te yapılan:** "Kanal Yönetimi" nav girişi Sidebar'dan kaldırıldı (karışıklık azaltma). `/admin/channels` route App.tsx'te korunuyor — PlatformAccountManager içindeki "Kanal Bağla →" butonu bu URL'e yönlendirir. Hiçbir işlevsellik yitirilmedi.
+**Faz 11.3'te yapılan:** "Kanal Yönetimi" nav girişi Sidebar'dan kaldırıldı (karışıklık azaltma). `/admin/channels` route App.tsx'te korunuyor (compat/internal).
+
+**2026-04-01 Bug Fix'te yapılan:** PlatformAccountManager içindeki "Kanal Bağla" butonu artık `/admin/channels`'a **yönlendirmiyor**. Inline OAuth popup akışı doğrudan PlatformAccountManager'dan başlıyor. OAuth tamamlandığında kullanıcı `/admin/platform-accounts?oauth_success=1`'e döndürülüyor. ChannelManager sayfası internal yedek olarak korunuyor.
 
 ---
 

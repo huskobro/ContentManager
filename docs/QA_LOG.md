@@ -5,6 +5,105 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-04-01 — Kritik Bug Fix: NewsSource Create + YouTube OAuth
+
+### Başlangıç Commit: 57fff21
+
+### Bug 1 — NewsSource Create (category_key null)
+
+**Root cause:**
+`NewsSourceManager.tsx` → `handleSave()` → `body.JSON.stringify({...})` içinde:
+```
+category_key: form.category_key.trim() || null,
+```
+Backend `NewsSourceCreateRequest` Pydantic modeli `category_key: str = ""` tanımlıyor. JSON'dan `null` gelince Pydantic tipi string beklerken null alıyor → 422 Unprocessable Entity. Kayıt asla oluşmuyordu. Hata toast gösterilse de root cause örtülüydü.
+
+**Fix:** `frontend/src/pages/admin/NewsSourceManager.tsx`
+```
+category_key: form.category_key.trim() || "",  // null → "" (backend str beklentisiyle uyumlu)
+```
+
+**Doğrulama:** 225 test passed — POST /api/admin/news-sources backend zinciri sağlam.
+
+---
+
+### Bug 2 — YouTube OAuth Kanal Bağlama
+
+**Root cause 1: PlatformAccountManager → `/admin/channels` yönlendirmesi**
+`PLATFORM_META.youtube.connectRoute = "/admin/channels"` tanımlandığı için "Kanal Bağla" butonu kullanıcıyı eski ChannelManager sayfasına yönlendiriyordu. Oradan da tekrar "Kanal Bağla" gerekirdi — gereksiz 2 adım.
+
+**Fix:** `PlatformAccountManager.tsx`
+- `connectRoute` kaldırıldı; yerine `connectAction: "youtube_oauth"` eklendi
+- `handleConnectYouTube()` inline OAuth popup fonksiyonu eklendi (ChannelManager'dakiyle aynı akış)
+- `oauth_success`/`oauth_error` URL param handler eklendi
+- `Link` import kaldırıldı (artık gerekmiyor)
+
+---
+
+**Root cause 2: `prompt="consent"` → kullanıcı hesap seçemiyor**
+`backend/api/youtube.py` → `get_oauth_url()` → `flow.authorization_url(prompt="consent")` her seferinde tüm consent flow'u gösteriyordu. Kullanıcı mevcut Google oturumunu bypass edemiyordu.
+
+**Fix:** `prompt="select_account"` — Google hesap seçim ekranı her OAuth başlatmada gösterilir.
+
+---
+
+**Root cause 3: Hardcoded `frontend_base = "http://localhost:5173"`**
+OAuth callback başarıyla tamamlandıktan sonra backend `/admin/channels` sayfasına redirect atıyordu. Bu:
+1. Frontend URL'i hardcoded'dı — port değişirse kırılır
+2. `/admin/channels` PlatformAccountManager değil eski ChannelManager'a yönlendiriyordu
+
+**Fix:**
+- `backend/config.py` → `frontend_url` field eklendi (default: `http://localhost:5173`)
+- `.env` → `FRONTEND_URL=http://localhost:5173` eklendi
+- `backend/api/youtube.py` → `frontend_base = app_settings.frontend_url.rstrip("/")`
+- `get_oauth_url()` → `redirect` query param aldı (default: `/admin/platform-accounts`)
+- `_OAUTH_STATE_STORE` dict'i `str` → `dict` (pin + redirect path saklıyor)
+- OAuth callback → `redirect_path` ile frontend'e yönlendiriyor
+- Varsayılan redirect: `/admin/platform-accounts` (artık ChannelManager'a gitmez)
+
+---
+
+**redirect_uri_mismatch Hatası:**
+Bu hata backend kodundan değil, Google Cloud Console konfigürasyonundan kaynaklanıyor.
+Backend `YOUTUBE_OAUTH_REDIRECT_URI=http://localhost:8000/api/youtube/oauth/callback` üretiyor.
+**Google Cloud Console'a eklenmesi gereken redirect URI:**
+```
+http://localhost:8000/api/youtube/oauth/callback
+```
+Bu URI Google Cloud Console → OAuth 2.0 Client ID → Authorized redirect URIs listesinde **tam olarak** bu şekilde bulunmalıdır. Trailing slash, http/https veya port farkı mismatch'e neden olur.
+
+---
+
+**Client ID / Secret nerede?**
+- `.env` → `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (primary)
+- `.env` → `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` (alias, fallback)
+- `backend/config.py` → `_get_oauth_client_id()` + `_get_oauth_client_secret()` — google_ öncelikli
+- Yönetim yüzeyi: `.env` dosyası (geliştirici erişimi). Admin panelde UI yok — güvenli.
+- `credentials_json` hiçbir zaman frontend response'larına dönmez.
+
+---
+
+### Değiştirilen Dosyalar
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/admin/NewsSourceManager.tsx` | `category_key: null` → `""` |
+| `frontend/src/pages/admin/PlatformAccountManager.tsx` | Inline OAuth flow, `connectRoute` kaldırıldı, `handleConnectYouTube`, URL param handler |
+| `backend/api/youtube.py` | `prompt=select_account`, `FRONTEND_URL` config, `redirect` param, `_OAUTH_STATE_STORE` dict |
+| `backend/config.py` | `frontend_url` field eklendi |
+| `.env` | `FRONTEND_URL=http://localhost:5173` eklendi |
+| `docs/YOUTUBE_OAUTH_SETUP.md` | Yeni — OAuth kurulum kılavuzu |
+| `docs/COMPAT_LAYER_STATUS.md` | OAuth flow güncellendi |
+
+### Test Sonuçları
+
+```
+225 passed, 1 skipped — backend/tests/
+tsc --noEmit — 0 hata
+```
+
+---
+
 ## 2026-03-31 — Faz 11 Stabilizasyonu
 
 ### Yapılan Değişiklikler

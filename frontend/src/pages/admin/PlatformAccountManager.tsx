@@ -10,7 +10,7 @@
  *   • Aktif/pasif toggling (PATCH /{id}/active)
  *   • Varsayılan hesap seçimi (PATCH /{id}/default)
  *   • Hesap silme — iki aşamalı onay (DELETE /{id})
- *   • YouTube kanalı bağlamak için ChannelManager'a yönlendirme
+ *   • YouTube kanalı bağlama: inline OAuth popup (ChannelManager'a gitmez)
  *
  * Save standardı:
  *   toggle/default → anında kayıt + rollback on error
@@ -22,11 +22,8 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Link } from "react-router-dom";
 import {
   Globe,
-  CheckCircle2,
-  XCircle,
   Star,
   StarOff,
   ToggleLeft,
@@ -35,7 +32,6 @@ import {
   AlertCircle,
   RefreshCw,
   Trash2,
-  ExternalLink,
   Youtube,
   Instagram,
   Twitter,
@@ -67,15 +63,14 @@ interface PlatformAccountListResponse {
 
 const PLATFORM_META: Record<
   string,
-  { label: string; color: string; bg: string; icon: React.ReactNode; connectRoute?: string; connectLabel?: string; soon?: boolean }
+  { label: string; color: string; bg: string; icon: React.ReactNode; connectAction?: string; soon?: boolean }
 > = {
   youtube: {
     label: "YouTube",
     color: "text-red-400",
     bg: "bg-red-500/10 border-red-500/20",
     icon: <Youtube size={16} />,
-    connectRoute: "/admin/channels",
-    connectLabel: "Kanal Bağla",
+    connectAction: "youtube_oauth",
   },
   instagram: {
     label: "Instagram",
@@ -126,6 +121,29 @@ export default function PlatformAccountManager() {
   const pendingToggle = useRef<Set<number>>(new Set());
   const pendingDefault = useRef<Set<number>>(new Set());
 
+  const [connectingOAuth, setConnectingOAuth] = useState(false);
+
+  // ─── URL param: oauth_success / oauth_error ─────────────────────────────────
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get("oauth_success");
+    const error = params.get("oauth_error");
+    if (success) {
+      addToast({ type: "success", title: "Kanal bağlandı", description: "YouTube kanalı başarıyla bağlandı." });
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (error) {
+      const messages: Record<string, string> = {
+        missing_code: "OAuth kodu eksik. Tekrar deneyin.",
+        invalid_state: "Güvenlik doğrulaması başarısız. Tekrar deneyin.",
+        no_channel: "Google hesabına bağlı YouTube kanalı bulunamadı.",
+        server_error: "Sunucu hatası. Lütfen tekrar deneyin.",
+      };
+      addToast({ type: "error", title: "Kanal bağlanamadı", description: messages[error] ?? `OAuth hatası: ${error}` });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ─── Hesap listesi yükle ────────────────────────────────────────────────────
 
   const loadAccounts = useCallback(async () => {
@@ -149,6 +167,33 @@ export default function PlatformAccountManager() {
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
+
+  // ─── YouTube OAuth: doğrudan popup ──────────────────────────────────────────
+
+  const handleConnectYouTube = useCallback(async () => {
+    if (connectingOAuth) return;
+    setConnectingOAuth(true);
+    try {
+      const { url } = await api.get<{ url: string; state: string }>(
+        "/youtube/oauth/url?redirect=/admin/platform-accounts",
+        { adminPin }
+      );
+      const popup = window.open(url, "youtube_oauth", "width=600,height=700");
+      if (popup) {
+        const interval = setInterval(() => {
+          if (popup.closed) {
+            clearInterval(interval);
+            loadAccounts();
+          }
+        }, 500);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast({ type: "error", title: "OAuth başlatılamadı", description: msg });
+    } finally {
+      setConnectingOAuth(false);
+    }
+  }, [adminPin, addToast, connectingOAuth, loadAccounts]);
 
   // ─── Toggle aktif ───────────────────────────────────────────────────────────
 
@@ -332,14 +377,14 @@ export default function PlatformAccountManager() {
                   : `${getPlatformMeta(platformFilter).label} hesabı bulunamadı.`}
               </p>
               {platformFilter === "youtube" || platformFilter === "all" ? (
-                <Link
-                  to="/admin/channels"
-                  className="mt-3 inline-flex items-center gap-1.5 text-xs text-red-400 hover:underline"
+                <button
+                  onClick={handleConnectYouTube}
+                  disabled={connectingOAuth}
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs text-red-400 hover:underline disabled:opacity-50"
                 >
-                  <Youtube size={12} />
+                  {connectingOAuth ? <Loader2 size={12} className="animate-spin" /> : <Youtube size={12} />}
                   YouTube kanalı bağla
-                  <ExternalLink size={10} />
-                </Link>
+                </button>
               ) : null}
             </div>
           ) : (
@@ -483,17 +528,18 @@ export default function PlatformAccountManager() {
                   )}
                 </div>
               </div>
-              {meta.connectRoute ? (
-                <Link
-                  to={meta.connectRoute}
+              {meta.connectAction === "youtube_oauth" ? (
+                <button
+                  onClick={handleConnectYouTube}
+                  disabled={connectingOAuth}
                   className={cn(
                     "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors",
-                    "border-border text-muted-foreground hover:bg-accent"
+                    "border-border text-muted-foreground hover:bg-accent disabled:opacity-50"
                   )}
                 >
-                  {meta.connectLabel ?? "Bağla"}
-                  <ExternalLink size={10} />
-                </Link>
+                  {connectingOAuth ? <Loader2 size={12} className="animate-spin" /> : null}
+                  Kanal Bağla
+                </button>
               ) : (
                 <span className="text-[10px] text-muted-foreground px-3 py-1.5 rounded-md border border-border bg-muted">
                   Yakında

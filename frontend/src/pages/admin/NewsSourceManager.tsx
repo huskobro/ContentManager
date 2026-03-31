@@ -186,7 +186,7 @@ export default function NewsSourceManager() {
         body: JSON.stringify({
           name: form.name.trim(),
           url: form.url.trim(),
-          category_key: form.category_key.trim() || null,
+          category_key: form.category_key.trim() || "",
           lang: form.lang,
           enabled: form.enabled,
           sort_order: form.sort_order,

@@ -137,6 +137,11 @@ class Settings(BaseSettings):
         default="http://localhost:8000/api/youtube/oauth/callback",
         description="Google OAuth2 redirect URI",
     )
+    # Frontend base URL — OAuth callback sonrası redirect hedefi
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        description="Frontend uygulama adresi (OAuth callback redirect'i için)",
+    )
 
     # ── D) Pipeline Varsayılanları ──────────────────────────────────────────
     # Bu değerler admin panelinden SQLite'a yazılabilir; burası sadece

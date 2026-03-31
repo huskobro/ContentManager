@@ -37,8 +37,9 @@ log = get_logger(__name__)
 
 router = APIRouter()
 
-# OAuth state → admin_pin geçici haritası (process-local, restart'ta temizlenir)
-_OAUTH_STATE_STORE: dict[str, str] = {}
+# OAuth state → {"pin": admin_pin, "redirect": frontend_path} geçici haritası
+# (process-local, restart'ta temizlenir)
+_OAUTH_STATE_STORE: dict[str, dict] = {}
 
 # Google OAuth scopes
 _YOUTUBE_SCOPES = [
@@ -137,10 +138,13 @@ def oauth_status(
 def get_oauth_url(
     _pin: str = Depends(_require_admin),
     x_admin_pin: str | None = Header(default=None),
+    redirect: str = "/admin/platform-accounts",
 ) -> dict:
     """
     Frontend bu URL'yi popup/redirect olarak açar.
     State parametresi admin PIN ile eşleştirilir (CSRF koruması).
+    redirect: OAuth tamamlandıktan sonra frontend'in yönlendirileceği path
+              (varsayılan: /admin/platform-accounts)
     """
     client_id = _get_oauth_client_id()
     if not client_id:
@@ -152,11 +156,11 @@ def get_oauth_url(
     try:
         flow = _build_flow()
         state = secrets.token_urlsafe(32)
-        _OAUTH_STATE_STORE[state] = x_admin_pin or ""
+        _OAUTH_STATE_STORE[state] = {"pin": x_admin_pin or "", "redirect": redirect}
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
-            prompt="consent",  # her seferinde refresh_token al
+            prompt="select_account",  # kullanıcıya hesap seçim ekranı göster
             state=state,
         )
         return {"url": auth_url, "state": state}
@@ -182,27 +186,31 @@ def oauth_callback(
     Başarılıysa: frontend'e redirect (kanal kaydedildi)
     Başarısızsa: frontend'e hata redirect
     """
-    frontend_base = "http://localhost:5173"
+    frontend_base = app_settings.frontend_url.rstrip("/")
+    # Fallback redirect path (state bulunamazsa kullanılır)
+    _fallback_redirect = "/admin/platform-accounts"
 
     if error:
         log.warning("OAuth callback hata", error=error)
         return RedirectResponse(
-            url=f"{frontend_base}/admin/channels?oauth_error={error}",
+            url=f"{frontend_base}{_fallback_redirect}?oauth_error={error}",
             status_code=302,
         )
 
     if not code or not state:
         return RedirectResponse(
-            url=f"{frontend_base}/admin/channels?oauth_error=missing_code",
+            url=f"{frontend_base}{_fallback_redirect}?oauth_error=missing_code",
             status_code=302,
         )
 
-    # State doğrulama
-    if state not in _OAUTH_STATE_STORE:
+    # State doğrulama + redirect path al
+    stored = _OAUTH_STATE_STORE.get(state)
+    if stored is None:
         return RedirectResponse(
-            url=f"{frontend_base}/admin/channels?oauth_error=invalid_state",
+            url=f"{frontend_base}{_fallback_redirect}?oauth_error=invalid_state",
             status_code=302,
         )
+    redirect_path = stored.get("redirect", _fallback_redirect)
     _OAUTH_STATE_STORE.pop(state, None)
 
     try:
@@ -274,14 +282,14 @@ def oauth_callback(
             log.info("Yeni YouTube kanalı bağlandı", channel_id=channel_id, is_default=is_first)
 
         return RedirectResponse(
-            url=f"{frontend_base}/admin/channels?oauth_success=1",
+            url=f"{frontend_base}{redirect_path}?oauth_success=1",
             status_code=302,
         )
 
     except Exception as exc:
         log.error("OAuth callback işlenemedi", error=str(exc))
         return RedirectResponse(
-            url=f"{frontend_base}/admin/channels?oauth_error=server_error",
+            url=f"{frontend_base}{redirect_path}?oauth_error=server_error",
             status_code=302,
         )
 
