@@ -278,6 +278,71 @@ class ResolvedSettingsResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Publishing Hub Şemaları
+# ─────────────────────────────────────────────────────────────────────────────
+
+PublishTargetStatus = Literal["pending", "publishing", "published", "failed", "skipped"]
+PublishAttemptStatus = Literal["pending", "success", "failed", "cancelled"]
+PublishActionType = Literal["publish", "retry", "cancel"]
+
+
+class PublishAttemptResponse(BaseModel):
+    """Bir yayın girişiminin API yanıt temsili (audit log kaydı)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    publish_target_id: str
+    status: PublishAttemptStatus
+    action_type: PublishActionType
+    error_message: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    created_at: str
+
+
+class PublishTargetResponse(BaseModel):
+    """Bir job'un platform yayın hedefinin API yanıt temsili."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    job_id: str
+    platform_account_id: int | None = None
+    platform: str
+    publish_type: str
+    content_type: str
+    status: PublishTargetStatus
+    privacy_status: str
+    scheduled_publish_time: str | None = None
+    external_object_id: str | None = None
+    external_url: str | None = None
+    error_message: str | None = None
+    attempts_count: int
+    last_attempt_at: str | None = None
+    created_at: str
+    updated_at: str
+    attempts: list[PublishAttemptResponse] = Field(default_factory=list)
+
+
+class PublishTargetListResponse(BaseModel):
+    """Job'a ait tüm yayın hedeflerinin listesi."""
+
+    job_id: str
+    targets: list[PublishTargetResponse] = Field(default_factory=list)
+    total: int
+
+
+class PublishRetryRequest(BaseModel):
+    """Manuel yeniden yayın denemesi isteği."""
+
+    force: bool = Field(
+        default=False,
+        description="True ise 'published' durumundaki hedef bile yeniden denenir",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Health / Sistem Şemaları
 # ─────────────────────────────────────────────────────────────────────────────
 

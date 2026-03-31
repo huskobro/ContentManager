@@ -25,7 +25,7 @@ import {
   Loader2,
   AlertCircle,
 } from "lucide-react";
-import { useJobStore, type Job } from "@/stores/jobStore";
+import { useJobStore, type Job, type PublishTarget } from "@/stores/jobStore";
 import {
   STATUS_CONFIG,
   MODULE_INFO,
@@ -454,7 +454,15 @@ function JobRow({
     >
       {/* Başlık */}
       <div className="min-w-0 flex-1 sm:flex-none">
-        <p className="truncate text-sm font-medium text-foreground">{job.title}</p>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{job.title}</p>
+          {job.status === "completed" && (
+            <PublishBadge
+              targets={job.publishTargets}
+              ytVideoId={job.youtube_video_id}
+            />
+          )}
+        </div>
         <p className="truncate text-xs text-muted-foreground sm:hidden">{modLabel}</p>
       </div>
 
@@ -504,6 +512,57 @@ function JobRow({
       </span>
     </button>
   );
+}
+
+// ─── Yayın Rozeti ────────────────────────────────────────────────────────────
+
+interface PublishBadgeProps {
+  targets?: PublishTarget[];
+  /** @deprecated compat fallback */
+  ytVideoId?: string | null;
+}
+
+function PublishBadge({ targets, ytVideoId }: PublishBadgeProps) {
+  // publishTargets yüklüyse onlardan türet
+  if (targets && targets.length > 0) {
+    const published = targets.filter((t) => t.status === "published").length;
+    const failed    = targets.filter((t) => t.status === "failed").length;
+    const publishing = targets.filter((t) => t.status === "publishing").length;
+
+    if (publishing > 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-blue-500/10 text-blue-600">
+          Yayınlanıyor
+        </span>
+      );
+    }
+    if (published > 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-emerald-500/10 text-emerald-600">
+          Yayınlandı {targets.length > 1 ? `(${published}/${targets.length})` : ""}
+        </span>
+      );
+    }
+    if (failed > 0 && published === 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-red-500/10 text-red-600">
+          Yayın Hatası
+        </span>
+      );
+    }
+    return null;
+  }
+
+  // Compat fallback: deprecated youtube_video_id
+  if (ytVideoId) {
+    return (
+      <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-emerald-500/10 text-emerald-600">
+        Yayınlandı
+      </span>
+    );
+  }
+
+  return null;
 }
 
 // ─── Tarih Formatlama ─────────────────────────────────────────────────────────

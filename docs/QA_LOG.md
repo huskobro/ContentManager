@@ -5,6 +5,38 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-03-31 — Faz 11.3: Publishing Hub Frontend
+
+### Yapılan Değişiklikler
+
+| Bileşen | Değişiklik |
+|---|---|
+| `App.tsx` | `/admin/platform-accounts` route eklendi |
+| `Sidebar.tsx` | "Platform Hesapları" nav girişi + `Share2` ikonu eklendi |
+| `PlatformAccountManager.tsx` | Yeni admin sayfası: hesap listesi, toggle active, set default, delete (2-step confirm), YouTube OAuth link |
+| `platformAccountStore.ts` | Yeni store: `fetchPlatformAccounts`, `toggleActive`, `setDefault`, `deletePlatformAccount`, optimistic patch/revert |
+| `JobList.tsx` | `PublishBadge` bileşeni: completed job'larda platform publish durumu rozeti |
+| `JobQuickLook.tsx` | Publish özet bölümü (platform, durum, external_url link), "YT Meta" → "Meta Kopyala" |
+| `CreateVideo.tsx` | "Platform Yayını" bölümü: toggle, hesap seçici, gizlilik seçeneği; `publish_to_platform` + `publish_platform_account_id` + `publish_privacy` overrides'a eklendi |
+| `UserSettings.tsx` | `Youtube` → `Share2` ikonu, "YouTube Yayını" → "Platform Yayını", "YouTube'a Yayınla" → "Otomatik Yayınla" |
+| `backend/tests/test_platform_accounts_api.py` | 15 yeni test (list, filter, get, 404, toggle, default, delete, PIN auth, credentials güvenliği) |
+
+### Test Sonuçları
+
+```
+225 passed, 1 skipped — backend/tests/
+tsc --noEmit — 0 hata
+```
+
+### Önemli Kararlar
+
+- `platformAccountStore.ts` ayrı store olarak tutuldu (jobStore şişirmemek için)
+- `PublishBadge` yalnızca `job.status === "completed"` durumunda render edilir
+- `credentials_json` API yanıtında asla dönmez (güvenlik — `PlatformAccountResponse` şemasına dahil edilmedi)
+- CreateVideo'daki platform hesap seçicisi `is_active` filtrelidir (pasif hesaplar listelenmez)
+
+---
+
 ## 2026-03-31 — Faz 11 Öncesi: Sistem Geneli Save Standardizasyonu
 
 ### Envanter ve Sorun Tespiti
@@ -2993,3 +3025,269 @@ Pydantic v2 deprecation warning → ConfigDict ile giderildi
   Beklenen davranış: state doğrulama başarısız → kullanıcı tekrar bağlar.
 - `frontend_base` hardcoded `http://localhost:5173` — production'da `.env`'den alınmalı.
 - Token refresh: `access_token` expire olunca `refresh_token` ile yenileme henüz implement edilmedi (Faz 11.2 kapsamı).
+
+---
+
+## 2026-03-31 — Faz 11.2: YouTube Upload Pipeline Adımı
+
+### Yapılan Değişiklikler
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/models/job.py` | +6 youtube_* alan: `youtube_video_id`, `youtube_video_url`, `youtube_channel_id`, `youtube_upload_status`, `youtube_error_code`, `youtube_uploaded_at` |
+| `backend/main.py` | `_add_youtube_columns_if_missing()` — startup migration (ALTER TABLE idempotent) |
+| `backend/services/youtube_upload_service.py` | YtUploadError, 9 hata kodu, token refresh, metadata normalizer, upload_video_async |
+| `backend/pipeline/steps/youtube_upload.py` | `step_youtube_upload` — order=6, is_fatal=False, SSE emit |
+| `backend/modules/standard_video/pipeline.py` | youtube_upload adımı register edildi |
+| `frontend/src/stores/settingsStore.ts` | `mapResolvedToDefaults`'a `publish_to_youtube` + `youtube_privacy` eklendi |
+| `frontend/src/pages/user/UserSettings.tsx` | YouTube yayın toggle + privacy select (conditional) |
+| `frontend/src/api/client.ts` | `SSEHandlers.onUploadProgress` + `upload_progress` event listener |
+| `frontend/src/stores/jobStore.ts` | Job interface'e youtube_* alanlar, `patchJob` action, `onUploadProgress` SSE handler |
+| `frontend/src/pages/user/JobDetail.tsx` | `YoutubeUploadCard` bileşeni + Youtube icon import |
+| `backend/tests/test_youtube_upload_step.py` | 19 yeni test (tümü geçiyor) |
+
+### Test Sonuçları
+
+```
+19 passed — test_youtube_upload_step.py (upload step + service birim testleri)
+tsc --noEmit → temiz
+```
+
+### Hata Kodları (upload_progress SSE payload'da `error_code`)
+
+| Kod | Neden Tetiklenir |
+|---|---|
+| `YT_DUPLICATE_UPLOAD_BLOCKED` | `job.youtube_video_id` zaten dolu — çift upload engellendi |
+| `YT_NO_DEFAULT_CHANNEL` | `is_active=True AND is_default=True` kanal yok |
+| `YT_FILE_NOT_FOUND` | `job.output_path` ve cache `final.mp4` yok |
+| `YT_TOKEN_REFRESH_FAILED` | Google OAuth token yenilemesi başarısız |
+| `YT_QUOTA_EXCEEDED` | YouTube API HTTP 403 quotaExceeded |
+| `YT_AUTH_ERROR` | YouTube API HTTP 401 / authError |
+| `YT_UPLOAD_FAILED` | Diğer YouTube API hataları |
+
+### Tasarım Kararları
+
+- **is_fatal=False**: Upload başarısız olursa job yine de `completed` — video hâlâ üretildi.
+- **Migration stratejisi**: `Base.metadata.create_all` ALTER etmez. `_add_youtube_columns_if_missing` startup'ta `ALTER TABLE ADD COLUMN` çalıştırır, `OperationalError` yakalar (idempotent).
+- **Token refresh**: Pipeline step'i `refresh_channel_token()` çağırır; token süresi dolmuşsa otomatik yeniler, DB'ye yazar.
+- **Thread pool**: `upload_video_async` blokayıcı `MediaFileUpload` I/O'sunu `loop.run_in_executor` ile thread pool'a gönderir.
+
+---
+
+## 2026-03-31 — Faz 11.1A: Publishing Hub Refactor
+
+### Mevcut YouTube-First Implementasyon Denetimi
+
+| Bileşen | Durum | Karar |
+|---|---|---|
+| `Job.youtube_*` 6 alan | Dar: YouTube-only | Compat olarak korundu, artık source of truth değil |
+| `youtube_upload_service.py` | Kurtarılabilir: iyi yazılmış | Korundu, adapter'ın alt servisi oldu |
+| `youtube_upload` pipeline step (order=6) | Dar ama çalışıyor | Korundu (order=6), yeni step order=7 eklendi |
+| `YouTubeChannel` modeli | Korunabilir | Korundu, lazy bridge ile PlatformAccount'a dönüştürülür |
+| 19 mevcut test | Geçerli regresyon testi | Korundu, tümü hâlâ geçiyor |
+
+### Yapılan Değişiklikler
+
+| Dosya | İşlem | Açıklama |
+|---|---|---|
+| `backend/models/platform_account.py` | YENİ | PlatformAccount ORM modeli |
+| `backend/models/publish_target.py` | YENİ | JobPublishTarget + PublishAttempt ORM modelleri |
+| `backend/database.py` | GÜNCELLENDİ | create_tables'a 2 yeni model import eklendi |
+| `backend/publishing/__init__.py` | YENİ | Paket dosyası |
+| `backend/publishing/adapters/__init__.py` | YENİ | Paket dosyası |
+| `backend/publishing/adapters/base.py` | YENİ | BasePublishAdapter ABC + PublishError |
+| `backend/publishing/adapters/youtube_adapter.py` | YENİ | YouTubeAdapter + _ChannelProxy |
+| `backend/publishing/orchestrator.py` | YENİ | PublishOrchestrator + adapter registry |
+| `backend/pipeline/steps/publish.py` | YENİ | Generic multi-platform step (order=7) |
+| `backend/modules/standard_video/pipeline.py` | GÜNCELLENDİ | publish step (order=7) eklendi |
+| `backend/main.py` | GÜNCELLENDİ | `_log_publishing_tables_status` + lifespan çağrısı |
+| `backend/tests/test_platform_account.py` | YENİ | 7 test |
+| `backend/tests/test_publish_target.py` | YENİ | 5 test |
+| `backend/tests/test_youtube_adapter.py` | YENİ | 8 test |
+| `backend/tests/test_publish_orchestrator.py` | YENİ | 10 test |
+| `backend/tests/test_publish_step.py` | YENİ | 10 test |
+| `docs/PUBLISHING_HUB_ARCHITECTURE.md` | YENİ | Mimari dokümantasyonu |
+| `docs/PUBLISHING_HUB_REFACTOR_PLAN.md` | YENİ | Refactor kararları ve geçiş planı |
+| `docs/YOUTUBE_TO_ADAPTER_MIGRATION.md` | YENİ | YouTubeChannel → PlatformAccount geçiş rehberi |
+
+### Test Sonuçları
+
+```
+40 yeni test geçti (5 yeni dosya):
+  test_platform_account.py     → 7 geçti
+  test_publish_target.py       → 5 geçti
+  test_youtube_adapter.py      → 8 geçti
+  test_publish_orchestrator.py → 10 geçti
+  test_publish_step.py         → 10 geçti
+
+34 regresyon testi geçti (kırılmadı):
+  test_youtube_upload_step.py  → 19 geçti
+  test_youtube_channel_crud.py → 15 geçti
+
+tsc --noEmit → temiz
+```
+
+### Uyumluluk Köprüleri
+
+| Köprü | Açıklama |
+|---|---|
+| `_youtube_channel_bridge()` | Mevcut YouTubeChannel → PlatformAccount lazy migration |
+| `_ChannelProxy` | PlatformAccount.credentials_json ↔ YouTubeChannel duck-type arayüzü |
+| `_mirror_youtube_compat()` | Her YouTube publish'te Job.youtube_* compat alanları güncellenir |
+| `step_youtube_upload` order=6 korundu | Geçiş döneminde eski adım çalışmaya devam eder |
+
+### Bir Sonraki Faz
+
+- Frontend `JobDetail.tsx` → `JobPublishTarget` API'sinden okuma → **Faz 11.2B'de tamamlandı**
+- `step_youtube_upload` (order=6) pipeline'dan kaldırma → Backlog (çift yükleme koruması eklendi)
+- TikTok adapter iskeleti → Backlog
+- `/api/publish/` endpoint seti → **Faz 11.2B'de tamamlandı**
+
+---
+
+## 2026-03-31 — Faz 11.2B: Publishing Hub API + Frontend Geçişi
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/models/schemas.py` | `PublishAttemptResponse`, `PublishTargetResponse`, `PublishTargetListResponse`, `PublishRetryRequest` eklendi |
+| `backend/api/publish_targets.py` | **YENİ** — Publish targets router: GET list, GET history, POST retry |
+| `backend/main.py` | `publish_targets_router` register edildi |
+| `frontend/src/stores/jobStore.ts` | `PublishTarget`, `PublishAttempt`, `PublishTargetListResponse` tipleri eklendi; `fetchPublishTargets`, `retryPublishTarget`, `updatePublishTargets`, `patchPublishTarget` aksiyonları eklendi; `onPublishProgress` SSE handler eklendi |
+| `frontend/src/api/client.ts` | `SSEHandlers.onPublishProgress` eklendi; `publish_progress` event listener eklendi |
+| `frontend/src/pages/user/JobDetail.tsx` | `PublishHubCard` bileşeni eklendi; `YoutubeUploadCard` fallback olarak korundu; `fetchPublishTargets` mount'ta çağrılır |
+| `backend/pipeline/steps/youtube_upload.py` | Publishing Hub çift yükleme koruması eklendi (2b guard): `JobPublishTarget.status == "published"` ise atlanır |
+| `backend/tests/test_publish_targets_api.py` | **YENİ** — 12 API testi |
+
+### Yeni Endpoint'ler
+
+| Endpoint | Açıklama |
+|---|---|
+| `GET /api/jobs/{job_id}/publish-targets` | Job'a ait tüm yayın hedeflerini + girişim geçmişini döndürür |
+| `GET /api/publish-targets/{id}/history` | Hedef için kronolojik girişim geçmişi |
+| `POST /api/publish-targets/{id}/retry` | Başarısız/bekleyen hedef için yeni deneme (202 Accepted) |
+
+### Frontend Değişiklikleri
+
+**PublishHubCard:**
+- Platform-agnostik, multi-platform yayın durumu kartı
+- Her hedef için: durum badge, URL linki, hata kodu, son deneme zamanı
+- Retry butonu (failed/skipped/pending için) + Force retry (published için)
+- Girişim geçmişi accordion (açılır/kapanır)
+- SSE `publish_progress` eventi ile gerçek zamanlı güncelleme
+
+**Geçiş stratejisi:**
+- `publishTargets` yüklüyse → `PublishHubCard` gösterilir
+- Yüklenmemişse → eski `YoutubeUploadCard` fallback (compat, kırılmaz)
+
+### Çift Yükleme Koruması (step_youtube_upload 2b guard)
+
+```
+step_publish (order=7) başarılı → JobPublishTarget.status = "published"
+step_youtube_upload (order=6) çalışırsa → "published" target bulunur → SKIP
+```
+
+Mevcut guard (2a): `job.youtube_video_id` zaten doluysa SKIP
+Yeni guard (2b): `JobPublishTarget.status == "published"` ise SKIP
+İkisi birlikte: çift yükleme riski sıfır.
+
+### Test Sonuçları
+
+```
+12 yeni test geçti:
+  test_publish_targets_api.py → 12 geçti
+
+Regresyon kontrol:
+  Toplam: 210 geçti, 1 atlandı (önceki ile aynı)
+
+tsc --noEmit → temiz
+```
+
+### Geçiş Tamamlanma Durumu (YOUTUBE_TO_ADAPTER_MIGRATION.md)
+
+| Görev | Durum |
+|---|---|
+| `YouTubeChannel` → `PlatformAccount` lazy migration | ✅ Faz 11.1A'da tamamlandı |
+| Frontend `JobDetail.tsx` `JobPublishTarget` API'sinden okuma | ✅ Bu fazda tamamlandı |
+| `step_youtube_upload` (order=6) pipeline'dan kaldırma | ⏳ Backlog (çift yükleme koruması eklendi) |
+| `Job.youtube_*` sütunları kaldırma | ⏳ Backlog (frontend geçişi tamamlandı, compat korunuyor) |
+
+### Bir Sonraki Faz (11.2C/11.3)
+
+- `step_youtube_upload` (order=6) pipeline'dan kaldırılabilir (koşul: tüm aktif job'lar order=7'ye geçmiş olmalı)
+- `Job.youtube_*` DB sütunlarını kaldırma (frontend `YoutubeUploadCard` kaldırılınca)
+- TikTok adapter iskeleti
+- Planlı yayın (`scheduled_publish_time`) desteği
+- Admin paneli: kota durumu göstergesi
+
+---
+
+## 2026-03-31 — Faz 11.2C: Compat Katman Temizliği
+
+### Geçiş Denetimi Özeti
+
+| Bileşen | Faz 11.2B Durumu | Faz 11.2C Kararı |
+|---|---|---|
+| `step_youtube_upload` (order=6) | Pipeline'da, çift yükleme koruması eklendi | **Kaldırıldı** — deprecated compat-only |
+| `YoutubeUploadCard` | Fallback olarak JobDetail'de vardı | **Kaldırıldı** |
+| `Job.youtube_*` alanları | Frontend'de compat fallback olarak okunuyordu | Sadece mirror, hiçbir aktif kod okumaz |
+| `_mirror_youtube_compat()` | Çalışıyordu, zararlı değil | Korundu — Faz 11.3'te silinecek |
+| `onUploadProgress` SSE handler | Job.youtube_* güncelliyordu | No-op'a dönüştürüldü |
+
+### Değişiklik Özeti
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/modules/standard_video/pipeline.py` | `step_youtube_upload` import + `PipelineStepDef` kaldırıldı; `step_publish` order=6'ya alındı |
+| `backend/pipeline/steps/youtube_upload.py` | Deprecated header + erken-dönüş (skip) eklendi |
+| `frontend/src/pages/user/JobDetail.tsx` | `YoutubeUploadCard` bileşeni kaldırıldı; `publishTargetsLoading` state + loading skeleton eklendi; `Youtube` import kaldırıldı |
+| `frontend/src/stores/jobStore.ts` | `onUploadProgress` handler no-op'a dönüştürüldü; `Job.youtube_*` alanlarına `@deprecated` yorumu eklendi |
+| `backend/tests/test_youtube_upload_step.py` | 8 eski behavior test → 8 deprecated-skip doğrulama testine dönüştürüldü |
+| `docs/COMPAT_LAYER_STATUS.md` | **YENİ** — Tüm compat katmanlarının durumu belgelendi |
+| `docs/YOUTUBE_TO_ADAPTER_MIGRATION.md` | Tamamlananlar güncellendi |
+| `docs/PHASE_11_PLAN.md` | 11.2C ✅ işaretlendi |
+
+### step_youtube_upload Kararı
+
+**Karar: Pipeline'dan kaldırıldı, dosya deprecated compat olarak korundu.**
+
+Gerekçe:
+- Ana yayın adımı artık `step_publish` (Publishing Hub). Çift adım gereksizdi.
+- Eski behavior'ı test eden 19 test → 19 test güncellendi (8 deprecated-skip, 11 utility)
+- Dosya silinmedi çünkü: (1) test coverage, (2) eski `job_steps` kayıtlarında referans
+
+### Job.youtube_* Durumu
+
+**Source of truth değil — sadece mirror.**
+
+- `_mirror_youtube_compat()` hâlâ günceller (zararlı değil, Faz 11.3'te kaldırılacak)
+- Frontend hiçbir yerde okumaz (YoutubeUploadCard kaldırıldı)
+- jobStore `Job` interface'inde `@deprecated` işaretlendi
+- DB sütunları fiziksel olarak korunuyor (güvenli silme Faz 11.3'te)
+
+### Aktif Pipeline Akışı (Faz 11.2C Sonrası)
+
+```
+composition (order=5) → step_publish (order=6, is_fatal=False)
+```
+
+`step_youtube_upload` hiçbir normal akışta çalışmaz.
+
+### Test Sonuçları
+
+```
+210 passed, 1 skipped
+tsc --noEmit → temiz
+```
+
+### Bir Sonraki Faz (11.3) — Kaldırılabilecekler
+
+- `PublishOrchestrator._mirror_youtube_compat()` → kaldır
+- `backend/main.py _add_youtube_columns_if_missing()` → kaldır
+- `ALTER TABLE jobs DROP COLUMN youtube_*` (6 sütun)
+- `backend/models/job.py` youtube_* Column tanımları → kaldır
+- `jobStore.ts` Job.youtube_* alanları → kaldır
+- `client.ts` SSEHandlers.onUploadProgress + upload_progress listener → kaldır
+- `backend/pipeline/steps/youtube_upload.py` → sil
+- `backend/tests/test_youtube_upload_step.py` → sil (coverage taşındıktan sonra)

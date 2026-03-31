@@ -38,10 +38,12 @@ import {
   MessageSquare,
   AlertTriangle,
   Tv2,
+  Share2,
 } from "lucide-react";
 import { useJobStore } from "@/stores/jobStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useUIStore } from "@/stores/uiStore";
+import { usePlatformAccountStore } from "@/stores/platformAccountStore";
 import { cn } from "@/lib/utils";
 
 // ─── Modül tanımları ─────────────────────────────────────────────────────────
@@ -92,6 +94,7 @@ export default function CreateVideo() {
   const createJob = useJobStore((s) => s.createJob);
   const { userDefaults, lockedKeys, fetchResolvedSettings, loaded } = useSettingsStore();
   const addToast = useUIStore((s) => s.addToast);
+  const { accounts: platformAccounts, fetchPlatformAccounts } = usePlatformAccountStore();
 
   // Form state
   const [selectedModule, setSelectedModule] = useState(
@@ -124,6 +127,15 @@ export default function CreateVideo() {
   // Ürün bilgisi
   const [productName, setProductName] = useState("");
 
+  // ── Yayın hedefi seçimi ────────────────────────────────────────────────────
+  const [publishEnabled, setPublishEnabled] = useState(
+    userDefaults.publishToYoutube ?? false
+  );
+  const [publishAccountId, setPublishAccountId] = useState<number | null>(null);
+  const [publishPrivacy, setPublishPrivacy] = useState<"private" | "unlisted" | "public">(
+    userDefaults.youtubePrivacy ?? "private"
+  );
+
   // ── News Bulletin modül alanları ───────────────────────────────────────────
   const [breakingEnabled, setBreakingEnabled] = useState(false);
   const [breakingText, setBreakingText] = useState("");
@@ -138,6 +150,21 @@ export default function CreateVideo() {
   useEffect(() => {
     fetchResolvedSettings(selectedModule);
   }, [selectedModule]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Platform hesaplarını yükle (yalnızca bir kez)
+  useEffect(() => {
+    if (platformAccounts.length === 0) {
+      fetchPlatformAccounts();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // publishToYoutube default yüklenince senkronize et
+  useEffect(() => {
+    if (loaded) {
+      setPublishEnabled(userDefaults.publishToYoutube ?? false);
+      setPublishPrivacy(userDefaults.youtubePrivacy ?? "private");
+    }
+  }, [loaded, userDefaults.publishToYoutube, userDefaults.youtubePrivacy]);
 
   // Store'daki videoFormat değişince form state'ini de güncelle (ilk yükleme)
   useEffect(() => {
@@ -211,6 +238,15 @@ export default function CreateVideo() {
           .filter((l) => l.length > 0)
           .slice(0, 5);
         if (lines.length > 0) overrides._product_top_comments = lines;
+      }
+    }
+
+    // ── Yayın hedefi overrides ────────────────────────────────────────────
+    overrides.publish_to_platform = publishEnabled;
+    if (publishEnabled) {
+      overrides.publish_privacy = publishPrivacy;
+      if (publishAccountId !== null) {
+        overrides.publish_platform_account_id = publishAccountId;
       }
     }
 
@@ -703,6 +739,105 @@ export default function CreateVideo() {
             </p>
           </div>
         )}
+
+        {/* Yayın Hedefi */}
+        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Share2 size={16} className="text-muted-foreground" />
+              <span className="text-sm font-medium text-foreground">Platform Yayını</span>
+              {lockedKeys.includes("publish_to_platform") && (
+                <Lock size={11} className="text-amber-400" aria-label="Admin tarafından kilitlendi" />
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={lockedKeys.includes("publish_to_platform")}
+              onClick={() => setPublishEnabled(!publishEnabled)}
+              className={cn(
+                "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                publishEnabled ? "bg-primary" : "bg-muted",
+                lockedKeys.includes("publish_to_platform") && "opacity-50 cursor-not-allowed"
+              )}
+              aria-checked={publishEnabled}
+              role="switch"
+            >
+              <span
+                className={cn(
+                  "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                  publishEnabled ? "translate-x-4.5" : "translate-x-0.5"
+                )}
+              />
+            </button>
+          </div>
+
+          {publishEnabled && (
+            <div className="space-y-3 pt-1">
+              {/* Hesap seçici */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-foreground">Hesap</label>
+                {platformAccounts.filter((a) => a.is_active).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Aktif platform hesabı bulunamadı.{" "}
+                    <a href="/admin/platform-accounts" className="text-primary hover:underline">
+                      Hesap ekle →
+                    </a>
+                  </p>
+                ) : (
+                  <select
+                    value={publishAccountId ?? ""}
+                    onChange={(e) =>
+                      setPublishAccountId(e.target.value ? Number(e.target.value) : null)
+                    }
+                    className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Varsayılan hesap</option>
+                    {platformAccounts
+                      .filter((a) => a.is_active)
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.account_name} ({a.platform})
+                          {a.is_default ? " — Varsayılan" : ""}
+                        </option>
+                      ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Gizlilik */}
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs font-medium text-foreground">Gizlilik</label>
+                  {lockedKeys.includes("youtube_privacy") && (
+                    <Lock size={11} className="text-amber-400" />
+                  )}
+                </div>
+                <div className="flex rounded-lg border border-border overflow-hidden">
+                  {(["private", "unlisted", "public"] as const).map((p) => {
+                    const labels = { private: "Gizli", unlisted: "Listesiz", public: "Herkese Açık" };
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        disabled={lockedKeys.includes("youtube_privacy")}
+                        onClick={() => setPublishPrivacy(p)}
+                        className={cn(
+                          "flex-1 px-2 py-1.5 text-xs font-medium transition-colors",
+                          publishPrivacy === p
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                          lockedKeys.includes("youtube_privacy") && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        {labels[p]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Gelişmiş ayarlar toggle */}
         <button

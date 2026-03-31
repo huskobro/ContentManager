@@ -160,7 +160,7 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
   function handleCopyMeta() {
     const meta = `Başlık: ${job!.title}\nDil: ${job!.language?.toUpperCase() ?? "—"}\nModül: ${modLabel}`;
     navigator.clipboard.writeText(meta).then(
-      () => addToast({ type: "success", title: "YouTube meta kopyalandı" }),
+      () => addToast({ type: "success", title: "Video meta kopyalandı" }),
       () => addToast({ type: "error", title: "Kopyalama başarısız" })
     );
   }
@@ -285,6 +285,47 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
               />
             </div>
 
+            {/* Yayın özeti */}
+            {job.publishTargets && job.publishTargets.length > 0 && (
+              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Platform Yayını
+                </p>
+                {job.publishTargets.map((t) => {
+                  const statusColor =
+                    t.status === "published" ? "text-emerald-500" :
+                    t.status === "failed"    ? "text-red-500" :
+                    t.status === "publishing" ? "text-blue-500" :
+                    "text-muted-foreground";
+                  const statusLabel =
+                    t.status === "published" ? "Yayınlandı" :
+                    t.status === "failed"    ? "Başarısız" :
+                    t.status === "publishing" ? "Yayınlanıyor..." :
+                    t.status === "skipped"   ? "Atlandı" : "Bekliyor";
+                  return (
+                    <div key={t.id} className="flex items-center justify-between">
+                      <span className="text-xs text-foreground capitalize">{t.platform}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+                        {t.external_url && (
+                          <a
+                            href={t.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                            aria-label="Yayında aç"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ExternalLink size={11} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Aksiyon butonları */}
             <div className="flex items-center gap-2 pt-1" role="group" aria-label="Hızlı aksiyonlar">
               <button
@@ -298,10 +339,10 @@ export function JobQuickLook({ job, open, onClose, onOpenDeepDive }: Props) {
               <button
                 onClick={handleCopyMeta}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                aria-label="YouTube meta bilgisini kopyala"
+                aria-label="Video meta bilgisini kopyala"
               >
                 <ExternalLink size={12} />
-                YT Meta
+                Meta Kopyala
               </button>
               {job.status === "completed" && (
                 <button

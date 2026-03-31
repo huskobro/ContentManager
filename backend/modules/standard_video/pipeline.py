@@ -31,6 +31,7 @@ from backend.modules.base import Capability, ContentModule, PipelineStepDef
 from backend.modules.standard_video.config import DEFAULT_CONFIG
 from backend.pipeline.cache import CacheManager
 from backend.pipeline.steps.composition import step_composition_remotion
+from backend.pipeline.steps.publish import step_publish
 from backend.pipeline.steps.script import build_enhanced_prompt
 from backend.pipeline.steps.subtitles import step_subtitles_enhanced
 from backend.providers.registry import provider_registry
@@ -832,6 +833,19 @@ class StandardVideoModule(ContentModule):
                 execute=step_composition_remotion,
                 is_fatal=True,
                 default_provider="remotion",
+            ),
+            # Faz 11.2C: step_youtube_upload (order=6) kaldırıldı.
+            # Ana yayın adımı artık tek olarak step_publish (order=6) — Publishing Hub.
+            # step_youtube_upload.py dosyası deprecated compat-only olarak korunur
+            # (eski test coverage ve manual çağrı için), pipeline'a bağlı değil.
+            PipelineStepDef(
+                key="publish",
+                label="Platform Yayını",
+                order=6,
+                capability=Capability.PUBLISH,
+                execute=step_publish,
+                is_fatal=False,
+                default_provider="publishing_hub",
             ),
         ]
 

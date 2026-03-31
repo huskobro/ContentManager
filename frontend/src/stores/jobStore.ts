@@ -33,6 +33,54 @@ export type JobStatus =
 
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
+// ─── Publishing Hub Tipleri ───────────────────────────────────────────────────
+
+export type PublishTargetStatus =
+  | "pending"
+  | "publishing"
+  | "published"
+  | "failed"
+  | "skipped";
+
+export type PublishAttemptStatus = "pending" | "success" | "failed" | "cancelled";
+
+export interface PublishAttempt {
+  id: string;
+  publish_target_id: string;
+  status: PublishAttemptStatus;
+  action_type: "publish" | "retry" | "cancel";
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+}
+
+export interface PublishTarget {
+  id: string;
+  job_id: string;
+  platform_account_id?: number | null;
+  platform: string;
+  publish_type: string;
+  content_type: string;
+  status: PublishTargetStatus;
+  privacy_status: string;
+  scheduled_publish_time?: string | null;
+  external_object_id?: string | null;
+  external_url?: string | null;
+  error_message?: string | null;
+  attempts_count: number;
+  last_attempt_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  attempts: PublishAttempt[];
+}
+
+export interface PublishTargetListResponse {
+  job_id: string;
+  targets: PublishTarget[];
+  total: number;
+}
+
 export interface PipelineStep {
   id: number;
   job_id: string;
@@ -88,6 +136,20 @@ export interface Job {
   logs: LogEntry[];
   /** Frontend-only: render ilerleme durumu (SSE'den beslenir) */
   renderProgress?: RenderProgress | null;
+  /**
+   * @deprecated Faz 11.2C — Bu alanlar artık source of truth değil.
+   * Kaynak: JobPublishTarget (job.publishTargets).
+   * _mirror_youtube_compat() tarafından senkronize tutulur (okuma-only compat).
+   * Faz 11.3'te kaldırılacak.
+   */
+  youtube_video_id?: string | null;
+  youtube_video_url?: string | null;
+  youtube_channel_id?: string | null;
+  youtube_upload_status?: string | null;
+  youtube_error_code?: string | null;
+  youtube_uploaded_at?: string | null;
+  /** Publishing Hub yayın hedefleri (fetchPublishTargets ile yüklenir) */
+  publishTargets?: PublishTarget[];
 }
 
 export interface JobStats {
@@ -135,6 +197,10 @@ interface JobState {
     settings_overrides?: Record<string, unknown>;
   }) => Promise<Job | null>;
   cancelJob: (id: string) => Promise<boolean>;
+  /** Publishing Hub: Job'a ait yayın hedeflerini yükler ve job.publishTargets'a yazar */
+  fetchPublishTargets: (jobId: string) => Promise<PublishTarget[]>;
+  /** Publishing Hub: Yayın hedefini yeniden dener */
+  retryPublishTarget: (targetId: string, force?: boolean) => Promise<PublishTarget | null>;
 
   // ── SSE Abonelik ─────────────────────────────────────────────────────────
   subscribeToJob: (jobId: string) => () => void;
@@ -153,6 +219,11 @@ interface JobState {
   updateStep: (jobId: string, stepKey: string, update: Partial<PipelineStep>) => void;
   appendLog: (jobId: string, entry: LogEntry) => void;
   updateRenderProgress: (jobId: string, progress: RenderProgress) => void;
+  patchJob: (jobId: string, patch: Partial<Job>) => void;
+  /** Publishing Hub: job.publishTargets listesini günceller */
+  updatePublishTargets: (jobId: string, targets: PublishTarget[]) => void;
+  /** Publishing Hub: Tek bir publish target'ı (id eşleşmesiyle) günceller */
+  patchPublishTarget: (jobId: string, targetId: string, patch: Partial<PublishTarget>) => void;
 
   // ── Filtre yardımcıları ───────────────────────────────────────────────────
   getJobById: (id: string) => Job | undefined;
@@ -261,6 +332,28 @@ export const useJobStore = create<JobState>()((set, get) => ({
     }
   },
 
+  fetchPublishTargets: async (jobId) => {
+    try {
+      const data = await api.get<PublishTargetListResponse>(`/jobs/${jobId}/publish-targets`);
+      get().updatePublishTargets(jobId, data.targets);
+      return data.targets;
+    } catch {
+      return [];
+    }
+  },
+
+  retryPublishTarget: async (targetId, force = false) => {
+    try {
+      const data = await api.post<PublishTarget>(
+        `/publish-targets/${targetId}/retry`,
+        { force }
+      );
+      return data;
+    } catch {
+      return null;
+    }
+  },
+
   // ── SSE Abonelik ─────────────────────────────────────────────────────────
 
   subscribeToJob: (jobId) => {
@@ -307,9 +400,42 @@ export const useJobStore = create<JobState>()((set, get) => ({
         });
       },
 
+      // [DEPRECATED — Faz 11.2C]
+      // onUploadProgress: step_youtube_upload pipeline'dan kaldırıldı.
+      // Bu handler artık normal akışta tetiklenmez. Eski job kayıtları veya
+      // manual çağrılar için sessizce yok sayılır.
+      onUploadProgress: (_data) => {
+        // step_youtube_upload (order=6) Faz 11.2C'de pipeline'dan kaldırıldı.
+        // Ana yayın adımı: step_publish → onPublishProgress handler'ını kullanır.
+        // Bu event geliyorsa deprecated bir yoldan geliyor demektir — yok say.
+      },
+
+      onPublishProgress: (data) => {
+        // Publishing Hub (order=7) publish_progress eventi
+        // Tamamlandığında publish targets'ı yenile
+        const phase = data.phase as string;
+        if (phase === "completed" || phase === "failed") {
+          get().fetchPublishTargets(jobId);
+        } else {
+          // publishing aşamasında ilgili target'ı optimistic olarak güncelle
+          const platform = data.platform as string | undefined;
+          if (platform) {
+            const job = get().jobs.find((j) => j.id === jobId);
+            const target = job?.publishTargets?.find((t) => t.platform === platform);
+            if (target) {
+              get().patchPublishTarget(jobId, target.id, {
+                status: "publishing",
+              });
+            }
+          }
+        }
+      },
+
       onComplete: () => {
         // Stream tamamlandı — gerekirse final state'i backend'den al
         get().fetchJobById(jobId);
+        // Publishing Hub hedeflerini de yenile
+        get().fetchPublishTargets(jobId);
       },
 
       onConnectionError: () => {
@@ -451,6 +577,29 @@ export const useJobStore = create<JobState>()((set, get) => ({
       jobs: s.jobs.map((j) =>
         j.id === jobId ? { ...j, renderProgress: progress } : j
       ),
+    })),
+
+  patchJob: (jobId, patch) =>
+    set((s) => ({
+      jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, ...patch } : j)),
+    })),
+
+  updatePublishTargets: (jobId, targets) =>
+    set((s) => ({
+      jobs: s.jobs.map((j) => (j.id === jobId ? { ...j, publishTargets: targets } : j)),
+    })),
+
+  patchPublishTarget: (jobId, targetId, patch) =>
+    set((s) => ({
+      jobs: s.jobs.map((j) => {
+        if (j.id !== jobId) return j;
+        return {
+          ...j,
+          publishTargets: (j.publishTargets ?? []).map((t) =>
+            t.id === targetId ? { ...t, ...patch } : t
+          ),
+        };
+      }),
     })),
 
   // ── Filtreler ─────────────────────────────────────────────────────────────

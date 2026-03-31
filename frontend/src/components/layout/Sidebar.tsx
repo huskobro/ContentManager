@@ -13,6 +13,7 @@ import {
   Sliders,
   FileText,
   Youtube,
+  Share2,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ const ADMIN_NAV: NavItem[] = [
   { label: "Maliyet Takibi", to: "/admin/cost-tracker", icon: <BarChart3 size={18} /> },
   { label: "Tüm İşler", to: "/admin/jobs", icon: <ListVideo size={18} /> },
   { label: "Kanal Yönetimi", to: "/admin/channels", icon: <Youtube size={18} /> },
+  { label: "Platform Hesapları", to: "/admin/platform-accounts", icon: <Share2 size={18} /> },
 ];
 
 export default function Sidebar({ mode }: SidebarProps) {

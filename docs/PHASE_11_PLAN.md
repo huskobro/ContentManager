@@ -1,6 +1,6 @@
 # Faz 11 — Channel Hub (YouTube Publishing)
 
-**Durum:** Başlamaya hazır
+**Durum:** 11.1 ✅ | 11.2 ✅ | 11.1A ✅ Publishing Hub Temel Altyapı | 11.2B ✅ Frontend Geçişi + API | 11.2C ✅ Compat Temizlik | 11.3 ✅ Publishing Hub Frontend | 11.4–11.5 Backlog
 **Ön koşul:** Faz 10 save standardizasyonu kapandı (2026-03-31)
 **Hedef:** Üretilen videoları doğrudan YouTube kanallarına yükleyebilmek;
 kanal yönetimi, upload kuyruğu ve yayın durumu izleme.

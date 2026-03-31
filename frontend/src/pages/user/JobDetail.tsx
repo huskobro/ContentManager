@@ -37,6 +37,7 @@ import {
   type PipelineStep,
   type LogEntry,
   type RenderProgress,
+  type PublishTarget,
 } from "@/stores/jobStore";
 import { useUIStore } from "@/stores/uiStore";
 import { STATUS_CONFIG, MODULE_INFO, getModuleIcon } from "@/lib/constants";
@@ -67,13 +68,16 @@ export default function JobDetail() {
   const navigate = useNavigate();
   const addToast = useUIStore((s) => s.addToast);
 
-  const { getJobById, fetchJobById, cancelJob, subscribeToJob } = useJobStore();
+  const { getJobById, fetchJobById, cancelJob, subscribeToJob, fetchPublishTargets, retryPublishTarget } = useJobStore();
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [logsOpen, setLogsOpen] = useState(true);
+  const [retryingTarget, setRetryingTarget] = useState<string | null>(null);
+  /** Publishing Hub hedefleri ilk kez yüklenirken true */
+  const [publishTargetsLoading, setPublishTargetsLoading] = useState(true);
 
   const job = getJobById(jobId ?? "");
 
@@ -84,8 +88,11 @@ export default function JobDetail() {
     fetchJobById(jobId).then((result) => {
       if (!result) setNotFound(true);
       setLoading(false);
+      // Publishing Hub hedeflerini yükle
+      setPublishTargetsLoading(true);
+      fetchPublishTargets(jobId).finally(() => setPublishTargetsLoading(false));
     });
-  }, [jobId, fetchJobById]);
+  }, [jobId, fetchJobById, fetchPublishTargets]);
 
   // SSE aboneliği — aktif işler için
   useEffect(() => {
@@ -330,6 +337,33 @@ export default function JobDetail() {
         )}
       </div>
 
+      {/* Publishing Hub — yayın hedefleri (Faz 11.2C: tek kaynak JobPublishTarget) */}
+      {publishTargetsLoading ? (
+        /* İlk yüklemede iskelet göster — compat fallback yok */
+        <div className="rounded-xl border border-border bg-card p-4 flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 size={12} className="animate-spin" />
+          Yayın hedefleri yükleniyor...
+        </div>
+      ) : job.publishTargets && job.publishTargets.length > 0 ? (
+        <PublishHubCard
+          targets={job.publishTargets}
+          jobId={job.id}
+          retryingTargetId={retryingTarget}
+          onRetry={async (targetId, force) => {
+            setRetryingTarget(targetId);
+            const result = await retryPublishTarget(targetId, force);
+            setRetryingTarget(null);
+            if (result) {
+              addToast({ type: "info", title: "Yeniden yayın başlatıldı" });
+              fetchPublishTargets(job.id);
+            } else {
+              addToast({ type: "error", title: "Yeniden deneme başarısız" });
+            }
+          }}
+        />
+      ) : null
+      /* publishTargets boşsa (publish_to_youtube=false veya henüz publish yapılmadıysa) kart gösterilmez */}
+
       {/* Pipeline adımları */}
       <div className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
@@ -433,6 +467,178 @@ function OutputPathRow({ jobId, outputPath }: { jobId: string; outputPath: strin
           {openError}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Publish Hub Card — platform-agnostik yayın durumu (Faz 11.2C ana kaynak: JobPublishTarget) ────────
+
+const PLATFORM_LABELS: Record<string, string> = {
+  youtube:   "YouTube",
+  tiktok:    "TikTok",
+  instagram: "Instagram",
+  facebook:  "Facebook",
+};
+
+const TARGET_STATUS_CONFIG: Record<
+  string,
+  { label: string; color: string; bg: string; icon: React.ReactNode }
+> = {
+  pending:    { label: "Bekliyor",          color: "text-slate-400",   bg: "bg-muted border-border",                icon: <Clock size={13} /> },
+  publishing: { label: "Yayınlanıyor...",   color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20",     icon: <Loader2 size={13} className="animate-spin" /> },
+  published:  { label: "Yayınlandı",        color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20", icon: <CheckCircle2 size={13} /> },
+  failed:     { label: "Başarısız",         color: "text-red-400",     bg: "bg-red-500/10 border-red-500/20",       icon: <XCircle size={13} /> },
+  skipped:    { label: "Atlandı",           color: "text-slate-400",   bg: "bg-muted border-border",                icon: <SkipForward size={13} /> },
+};
+
+interface PublishHubCardProps {
+  targets: PublishTarget[];
+  jobId: string;
+  retryingTargetId: string | null;
+  onRetry: (targetId: string, force?: boolean) => void;
+}
+
+function PublishHubCard({ targets, retryingTargetId, onRetry }: PublishHubCardProps) {
+  const [expandedHistory, setExpandedHistory] = useState<string | null>(null);
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="px-4 py-3 border-b border-border">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Platform Yayınları
+        </p>
+      </div>
+
+      <div className="divide-y divide-border">
+        {targets.map((target) => {
+          const cfg = TARGET_STATUS_CONFIG[target.status] ?? TARGET_STATUS_CONFIG.pending;
+          const isRetrying = retryingTargetId === target.id;
+          const platformLabel = PLATFORM_LABELS[target.platform] ?? target.platform;
+          const historyOpen = expandedHistory === target.id;
+
+          return (
+            <div key={target.id} className="p-4 space-y-2">
+              {/* Başlık satırı */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className={cfg.color}>{cfg.icon}</span>
+                  <span className="text-xs font-medium text-foreground">{platformLabel}</span>
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", cfg.bg, cfg.color)}>
+                    {cfg.label}
+                  </span>
+                </div>
+
+                {/* Aksiyon butonları */}
+                <div className="flex items-center gap-1">
+                  {/* Geçmişi göster/gizle */}
+                  {target.attempts_count > 0 && (
+                    <button
+                      onClick={() => setExpandedHistory(historyOpen ? null : target.id)}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-accent"
+                    >
+                      {historyOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                      {target.attempts_count} deneme
+                    </button>
+                  )}
+
+                  {/* Retry butonu — failed veya skipped durumunda */}
+                  {(target.status === "failed" || target.status === "skipped" || target.status === "pending") && (
+                    <button
+                      disabled={isRetrying}
+                      onClick={() => onRetry(target.id, false)}
+                      className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded hover:bg-blue-500/10 disabled:opacity-50"
+                    >
+                      {isRetrying ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={10} />
+                      )}
+                      Yeniden Dene
+                    </button>
+                  )}
+
+                  {/* Force retry — published durumunda */}
+                  {target.status === "published" && (
+                    <button
+                      disabled={isRetrying}
+                      onClick={() => onRetry(target.id, true)}
+                      className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-accent disabled:opacity-50"
+                    >
+                      {isRetrying ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={10} />
+                      )}
+                      Tekrar Yükle
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Yayınlanan URL */}
+              {target.status === "published" && target.external_url && (
+                <a
+                  href={target.external_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs text-emerald-400 hover:underline truncate"
+                >
+                  <ExternalLink size={11} />
+                  {target.external_url}
+                </a>
+              )}
+
+              {/* Hata kodu */}
+              {target.status === "failed" && target.error_message && (
+                <div className="text-xs text-red-400 font-mono bg-red-500/5 rounded px-2 py-1 border border-red-500/20 truncate">
+                  {target.error_message}
+                </div>
+              )}
+
+              {/* Son deneme zamanı */}
+              {target.last_attempt_at && (
+                <p className="text-[10px] text-muted-foreground">
+                  Son deneme: {new Date(target.last_attempt_at).toLocaleString("tr-TR")}
+                </p>
+              )}
+
+              {/* Girişim geçmişi */}
+              {historyOpen && target.attempts.length > 0 && (
+                <div className="mt-2 space-y-1 border-t border-border pt-2">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+                    Girişim Geçmişi
+                  </p>
+                  {target.attempts.map((attempt, i) => (
+                    <div
+                      key={attempt.id}
+                      className={cn(
+                        "flex items-center justify-between text-[10px] px-2 py-1 rounded",
+                        attempt.status === "success"
+                          ? "bg-emerald-500/5 text-emerald-400"
+                          : attempt.status === "failed"
+                            ? "bg-red-500/5 text-red-400"
+                            : "bg-muted text-muted-foreground"
+                      )}
+                    >
+                      <span>
+                        #{i + 1} — {attempt.action_type}
+                        {attempt.error_message && (
+                          <span className="ml-1 opacity-75">: {attempt.error_message}</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 ml-2">
+                        {attempt.started_at
+                          ? new Date(attempt.started_at).toLocaleTimeString("tr-TR")
+                          : "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

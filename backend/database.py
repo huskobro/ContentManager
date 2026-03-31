@@ -108,6 +108,9 @@ def create_tables() -> None:
     from backend.models import category, hook  # noqa: F401
     from backend.models import news_source, category_style_mapping  # noqa: F401
     from backend.models import youtube_channel  # noqa: F401
+    # Publishing Hub modelleri (Faz 11.1A)
+    from backend.models import platform_account  # noqa: F401
+    from backend.models import publish_target    # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     log.info("Veritabanı tabloları hazır")

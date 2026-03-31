@@ -116,6 +116,14 @@ function mapResolvedToDefaults(
   if (typeof resolved.subtitle_bg === "string") mapped.subtitleBg = resolved.subtitle_bg;
   if (typeof resolved.ken_burns_direction === "string") mapped.kenBurnsDirection = resolved.ken_burns_direction;
   if (typeof resolved.video_effect === "string") mapped.videoEffect = resolved.video_effect;
+  // YouTube
+  if (typeof resolved.publish_to_youtube === "boolean") mapped.publishToYoutube = resolved.publish_to_youtube;
+  if (typeof resolved.youtube_privacy === "string") {
+    const p = resolved.youtube_privacy as string;
+    if (p === "private" || p === "unlisted" || p === "public") {
+      mapped.youtubePrivacy = p;
+    }
+  }
 
   return mapped;
 }

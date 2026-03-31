@@ -21,7 +21,7 @@ import {
   AlertCircle,
   Save,
   CheckCircle2,
-  Youtube,
+  Share2,
   Palette,
   Zap,
   ToggleLeft,
@@ -124,7 +124,15 @@ const KEY_MAP: Partial<Record<string, string>> = {
   subtitleBg: "subtitle_bg",
   kenBurnsDirection: "ken_burns_direction",
   videoEffect: "video_effect",
+  publishToYoutube: "publish_to_youtube",
+  youtubePrivacy: "youtube_privacy",
 };
+
+const YOUTUBE_PRIVACY_OPTIONS = [
+  { value: "private", label: "Gizli (Sadece sen)" },
+  { value: "unlisted", label: "Liste Dışı (Link ile erişim)" },
+  { value: "public", label: "Herkese Açık" },
+];
 
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
@@ -205,6 +213,8 @@ export default function UserSettings() {
           { scope: "user" as const, scope_id: "", key: "subtitle_bg", value: form.subtitleBg },
           { scope: "user" as const, scope_id: "", key: "ken_burns_direction", value: form.kenBurnsDirection },
           { scope: "user" as const, scope_id: "", key: "video_effect", value: form.videoEffect },
+          { scope: "user" as const, scope_id: "", key: "publish_to_youtube", value: form.publishToYoutube },
+          { scope: "user" as const, scope_id: "", key: "youtube_privacy", value: form.youtubePrivacy },
       ];
       const settingsPayload = {
         settings: allUserSettings.filter((s) => !isSettingAdminOnly(s.key)),
@@ -513,7 +523,7 @@ export default function UserSettings() {
 
       {/* ── Bölüm 3: Yayın & Ek Özellikler (henüz aktif değil) ── */}
       <div className="space-y-3">
-        <SectionLabel icon={<Youtube size={13} />} label="Yayın & Ek Özellikler" />
+        <SectionLabel icon={<Share2 size={13} />} label="Yayın & Ek Özellikler" />
 
         <div className="rounded-xl border border-border bg-card divide-y divide-border opacity-60">
           <div className="px-4 py-2 bg-amber-500/5 border-b border-amber-500/10">
@@ -556,20 +566,37 @@ export default function UserSettings() {
             </div>
           </SettingRow>
 
-          {/* YouTube yayını */}
+          {/* Platform yayını */}
           <SettingRow
-            icon={<Youtube size={14} />}
-            label="YouTube Yayını"
-            description="Tamamlanan videoları YouTube'a otomatik yükle"
-            locked
+            icon={<Share2 size={14} />}
+            label="Platform Yayını"
+            description="Tamamlanan videoları platforma otomatik yükle"
+            locked={isLocked("publish_to_youtube")}
           >
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">YouTube'a Yayınla</span>
-              <ToggleSwitch
-                checked={form.publishToYoutube}
-                onChange={() => {}}
-                locked
-              />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Otomatik Yayınla</span>
+                <ToggleSwitch
+                  checked={form.publishToYoutube}
+                  onChange={(v) => handleChange("publishToYoutube", v)}
+                  locked={isLocked("publish_to_youtube")}
+                />
+              </div>
+              {form.publishToYoutube && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Gizlilik</span>
+                  <select
+                    value={form.youtubePrivacy}
+                    onChange={(e) => handleChange("youtubePrivacy", e.target.value as "private" | "unlisted" | "public")}
+                    disabled={isLocked("youtube_privacy")}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {YOUTUBE_PRIVACY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </SettingRow>
         </div>

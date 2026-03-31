@@ -29,6 +29,8 @@ from backend.api import jobs as jobs_router
 from backend.api import settings as settings_router
 from backend.api import admin as admin_router
 from backend.api import youtube as youtube_router
+from backend.api import publish_targets as publish_targets_router
+from backend.api import platform_accounts as platform_accounts_router
 
 log = get_logger(__name__)
 
@@ -97,6 +99,75 @@ def _migrate_legacy_setting_keys(db) -> None:
     if changed:
         db.commit()
         log.info("Legacy ayar anahtarı migrasyonu tamamlandı")
+
+
+def _add_youtube_columns_if_missing(db) -> None:
+    """
+    jobs tablosuna youtube_* sütunlarını idempotent olarak ekler.
+
+    SQLite ALTER TABLE ADD COLUMN sadece yoksa çalışır; varsa
+    OperationalError fırlatır — IGNORE ile atlarız. Bu proje'nin
+    mevcut migration pattern'ine uygundur (_migrate_legacy_setting_keys gibi).
+
+    Eklenen sütunlar:
+      youtube_video_id       VARCHAR(32)
+      youtube_video_url      VARCHAR(256)
+      youtube_channel_id     VARCHAR(64)
+      youtube_upload_status  VARCHAR(32)
+      youtube_error_code     VARCHAR(64)
+      youtube_uploaded_at    VARCHAR(32)
+    """
+    from sqlalchemy import text as _text
+
+    columns = [
+        ("youtube_video_id",      "VARCHAR(32)"),
+        ("youtube_video_url",     "VARCHAR(256)"),
+        ("youtube_channel_id",    "VARCHAR(64)"),
+        ("youtube_upload_status", "VARCHAR(32)"),
+        ("youtube_error_code",    "VARCHAR(64)"),
+        ("youtube_uploaded_at",   "VARCHAR(32)"),
+    ]
+
+    added = []
+    for col_name, col_type in columns:
+        try:
+            db.execute(_text(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}"))
+            db.commit()
+            added.append(col_name)
+        except Exception:
+            # Sütun zaten var — sessizce atla
+            db.rollback()
+
+    if added:
+        log.info("jobs tablosuna YouTube sütunları eklendi", columns=added)
+    else:
+        log.debug("jobs YouTube sütunları zaten mevcut — atlandi")
+
+
+def _log_publishing_tables_status(db) -> None:
+    """
+    Publishing Hub tablolarının (platform_accounts, job_publish_targets,
+    publish_attempts) varlığını doğrular ve loglar.
+
+    Tabloları create_tables() oluşturur (Base.metadata.create_all — idempotent).
+    Bu fonksiyon yalnızca operatöre bilgi verir; yeni bir şey yaratmaz.
+    """
+    from sqlalchemy import inspect as _sa_inspect
+
+    try:
+        inspector = _sa_inspect(db.bind)
+        existing = set(inspector.get_table_names())
+        hub_tables = ("platform_accounts", "job_publish_targets", "publish_attempts")
+        missing = [t for t in hub_tables if t not in existing]
+        present = [t for t in hub_tables if t in existing]
+
+        if present:
+            log.debug("Publishing Hub tabloları mevcut", tables=present)
+        if missing:
+            # create_tables() bunları oluşturmuş olmalı — beklenmedik durum
+            log.warning("Publishing Hub tabloları eksik (create_tables kontrol edin)", missing=missing)
+    except Exception as exc:
+        log.warning("Publishing Hub tablo kontrolü başarısız", error=str(exc))
 
 
 def _seed_categories_and_hooks(db) -> None:
@@ -493,6 +564,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # 0a. Eski "default_*" anahtar adlarını yeni adlara migrate et (idempotent)
         _migrate_legacy_setting_keys(db)
 
+        # 0a2. jobs tablosuna youtube_* sütunlarını ekle (idempotent)
+        _add_youtube_columns_if_missing(db)
+
+        # 0a3. Publishing Hub tablolarını oluştur (idempotent — create_tables ile gelir)
+        _log_publishing_tables_status(db)
+
         # 0b. Çoklu encode olmuş ayar değerlerini onar (idempotent)
         _repair_multi_encoded_values(db)
 
@@ -640,6 +717,8 @@ app.include_router(jobs_router.router, prefix="/api", tags=["jobs"])
 app.include_router(settings_router.router, prefix="/api", tags=["settings"])
 app.include_router(admin_router.router, prefix="/api", tags=["admin"])
 app.include_router(youtube_router.router, prefix="/api", tags=["youtube"])
+app.include_router(publish_targets_router.router, tags=["publish-targets"])
+app.include_router(platform_accounts_router.router, tags=["platform-accounts"])
 
 
 # ─── Doğrudan çalıştırma ──────────────────────────────────────────────────────

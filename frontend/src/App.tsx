@@ -19,6 +19,7 @@ import AdminJobs from "@/pages/admin/AdminJobs";
 import CostTracker from "@/pages/admin/CostTracker";
 import PromptManager from "@/pages/admin/PromptManager";
 import ChannelManager from "@/pages/admin/ChannelManager";
+import PlatformAccountManager from "@/pages/admin/PlatformAccountManager";
 
 export default function App() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/admin/news-sources" element={<Navigate to="/admin/modules" replace />} />
         <Route path="/admin/category-style-mappings" element={<Navigate to="/admin/modules" replace />} />
         <Route path="/admin/channels" element={<ChannelManager />} />
+        <Route path="/admin/platform-accounts" element={<PlatformAccountManager />} />
       </Route>
 
       {/* Bilinmeyen route'ları dashboard'a yönlendir */}

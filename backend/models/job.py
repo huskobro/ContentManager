@@ -132,6 +132,38 @@ class Job(Base):
         comment="Final video dosya yolu (session_dir'e göreceli)",
     )
 
+    # ── YouTube upload ──────────────────────────────────────────────────────
+    youtube_video_id: str = Column(
+        String(32),
+        nullable=True,
+        comment="Yüklenen YouTube video ID'si (ör. dQw4w9WgXcQ)",
+    )
+    youtube_video_url: str = Column(
+        String(256),
+        nullable=True,
+        comment="Yüklenen videonun YouTube URL'si",
+    )
+    youtube_channel_id: str = Column(
+        String(64),
+        nullable=True,
+        comment="Yüklemenin yapıldığı kanal ID'si (UC...)",
+    )
+    youtube_upload_status: str = Column(
+        String(32),
+        nullable=True,
+        comment="uploading | completed | failed | skipped",
+    )
+    youtube_error_code: str = Column(
+        String(64),
+        nullable=True,
+        comment="Hata kodu (ör. YT_QUOTA_EXCEEDED, YT_AUTH_ERROR)",
+    )
+    youtube_uploaded_at: str = Column(
+        String(32),
+        nullable=True,
+        comment="Yükleme tamamlanma zamanı (ISO-8601 UTC)",
+    )
+
     # ── Maliyet takibi ──────────────────────────────────────────────────────
     cost_estimate_usd: float = Column(
         Float,

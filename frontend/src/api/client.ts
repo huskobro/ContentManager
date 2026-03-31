@@ -111,6 +111,9 @@ export interface SSEHandlers {
   onRenderProgress?: (data: Record<string, unknown>) => void;
   onComplete?: (data: Record<string, unknown>) => void;
   onError?: (data: Record<string, unknown>) => void;
+  onUploadProgress?: (data: Record<string, unknown>) => void;
+  /** Publishing Hub (order=7) yayın progress eventi */
+  onPublishProgress?: (data: Record<string, unknown>) => void;
   onHeartbeat?: () => void;
   /** EventSource bağlantı hatası */
   onConnectionError?: (err: Event) => void;
@@ -156,6 +159,8 @@ export function openSSE(path: string, handlers: SSEHandlers): () => void {
   es.addEventListener("step_update", (e) => parseAndCall(handlers.onStepUpdate, e as MessageEvent));
   es.addEventListener("log", (e) => parseAndCall(handlers.onLog, e as MessageEvent));
   es.addEventListener("render_progress", (e) => parseAndCall(handlers.onRenderProgress, e as MessageEvent));
+  es.addEventListener("upload_progress", (e) => parseAndCall(handlers.onUploadProgress, e as MessageEvent));
+  es.addEventListener("publish_progress", (e) => parseAndCall(handlers.onPublishProgress, e as MessageEvent));
   es.addEventListener("heartbeat", () => handlers.onHeartbeat?.());
   es.addEventListener("complete", (e) => {
     parseAndCall(handlers.onComplete, e as MessageEvent);
