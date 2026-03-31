@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import { api } from "@/api/client";
 import { useUIStore } from "@/stores/uiStore";
-import { useAdminStore } from "@/stores/adminStore";
 import { cn } from "@/lib/utils";
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
@@ -50,7 +49,7 @@ interface ChannelRecord {
 // ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function ChannelManager() {
-  const { adminPin } = useAdminStore();
+  const adminPin = localStorage.getItem("cm-admin-pin") ?? "0000";
   const { addToast } = useUIStore();
 
   const [channels, setChannels] = useState<ChannelRecord[]>([]);
