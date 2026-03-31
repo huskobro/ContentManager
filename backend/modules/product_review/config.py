@@ -24,8 +24,9 @@ DEFAULT_CONFIG: dict = {
     "review_cons_count": 3,
     "review_score_enabled": True,  # 1-10 arası puan verdict bölümünde
     # --- TTS ---
+    # tts_voice burada tanımlanmıyor — _GLOBAL_DEFAULTS'tan gelir.
+    # Varsayılan: config.py default_tts_voice. Admin panelinden override edilebilir.
     "tts_provider": "edge_tts",
-    "tts_voice": "tr-TR-AhmetNeural",
     "tts_speed": 1.0,
     # --- Görseller ---
     "visuals_provider": "pexels",

@@ -77,7 +77,12 @@ class EdgeTTSProvider(BaseProvider):
             )
 
         # Ses ve hız ayarları
-        voice = input_data.get("voice") or config.get("tts_voice", "tr-TR-AhmetNeural")
+        # tts_voice çözümleme zinciri (yüksek → düşük öncelik):
+        #   1. input_data["voice"]     — step_tts'in geçirdiği config-çözümlenmiş değer
+        #   2. config["tts_voice"]     — SettingsResolver'dan gelen (admin > global default)
+        #   3. Son hardcoded fallback  — _GLOBAL_DEFAULTS'ta artık tanımlı, buraya normalde düşülmemeli
+        from backend.config import settings as _app_settings
+        voice = input_data.get("voice") or config.get("tts_voice") or _app_settings.default_tts_voice
         speed_multiplier = float(config.get("tts_speed", 1.0))
         rate = input_data.get("rate")
         if not rate:

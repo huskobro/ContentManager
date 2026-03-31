@@ -128,20 +128,22 @@ const CATEGORY_CONFIG: Record<string, { label: string; icon: React.ReactNode; co
 };
 
 // Fallback seçenekleri — kullanıcı dostu isimlerle
+// available: backend'de gerçekten kayıtlı olan provider'lar (providers/__init__.py register çağrıları)
+// available=false olanlar UI'da gösterilir ama seçilemez — gerçekte kayıtlı değiller
 const FALLBACK_OPTIONS = {
   tts: [
-    { value: "edge_tts", label: "Edge TTS (Ücretsiz)" },
-    { value: "elevenlabs", label: "ElevenLabs (Premium)" },
-    { value: "openai_tts", label: "OpenAI TTS" },
+    { value: "edge_tts", label: "Edge TTS (Ücretsiz)", available: true },
+    { value: "elevenlabs", label: "ElevenLabs (Premium)", available: false },
+    { value: "openai_tts", label: "OpenAI TTS", available: false },
   ],
   llm: [
-    { value: "kieai", label: "kie.ai (Gemini Proxy)" },
-    { value: "gemini", label: "Google Gemini (Native)" },
-    { value: "openai_llm", label: "OpenAI LLM" },
+    { value: "kieai", label: "kie.ai (Gemini Proxy)", available: true },
+    { value: "gemini", label: "Google Gemini (Native)", available: false },
+    { value: "openai_llm", label: "OpenAI LLM", available: false },
   ],
   visuals: [
-    { value: "pexels", label: "Pexels (Stok Video)" },
-    { value: "pixabay", label: "Pixabay" },
+    { value: "pexels", label: "Pexels (Stok Video)", available: true },
+    { value: "pixabay", label: "Pixabay", available: false },
   ],
 };
 
@@ -768,7 +770,7 @@ function FallbackGroup({
   label: string;
   icon: React.ReactNode;
   iconColor: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; available: boolean }[];
   selected: string[];
   onToggle: (value: string) => void;
 }) {
@@ -782,27 +784,38 @@ function FallbackGroup({
         {options.map((opt) => {
           const active = selected.includes(opt.value);
           const order = selected.indexOf(opt.value) + 1;
+          const unavailable = !opt.available;
           return (
             <button
               key={opt.value}
               type="button"
-              onClick={() => onToggle(opt.value)}
+              disabled={unavailable}
+              onClick={() => !unavailable && onToggle(opt.value)}
+              title={unavailable ? "Bu provider henüz sisteme entegre edilmedi" : undefined}
               className={cn(
                 "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-all",
-                active
+                unavailable
+                  ? "cursor-not-allowed border-dashed border-border/40 bg-transparent text-muted-foreground/40 opacity-60"
+                  : active
                   ? "border-primary/50 bg-primary/15 text-primary"
                   : "border-border bg-input text-muted-foreground hover:border-border/80 hover:text-foreground"
               )}
             >
-              {active && (
+              {unavailable && (
+                <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/20" />
+              )}
+              {!unavailable && active && (
                 <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
                   {order}
                 </span>
               )}
-              {!active && (
+              {!unavailable && !active && (
                 <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
               )}
               {opt.label}
+              {unavailable && (
+                <span className="ml-0.5 text-[9px] text-muted-foreground/50">(yakında)</span>
+              )}
             </button>
           );
         })}

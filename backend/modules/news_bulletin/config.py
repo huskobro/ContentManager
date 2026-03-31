@@ -38,8 +38,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "news_summary_max_chars": 500,
 
     # -- TTS ------------------------------------------------------------
+    # tts_voice burada tanımlanmıyor — _GLOBAL_DEFAULTS'tan gelir.
+    # Varsayılan: config.py default_tts_voice. Admin panelinden override edilebilir.
     "tts_provider": "edge_tts",
-    "tts_voice": "tr-TR-AhmetNeural",
     "tts_speed": 1.05,
 
     # -- Gorseller ------------------------------------------------------

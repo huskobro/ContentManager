@@ -160,6 +160,10 @@ class Settings(BaseSettings):
         default="long",
         description="Varsayılan video formatı: 'long' (16:9 yatay) veya 'shorts' (9:16 dikey)",
     )
+    default_tts_voice: str = Field(
+        default="tr-TR-EmelNeural",
+        description="Varsayılan TTS ses adı (Edge TTS SSML voice ID). .env veya admin panelinden override edilebilir.",
+    )
 
     # ── Validators ─────────────────────────────────────────────────────────
 

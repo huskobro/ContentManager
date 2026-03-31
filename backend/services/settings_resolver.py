@@ -53,6 +53,7 @@ log = get_logger(__name__)
 _GLOBAL_DEFAULTS: dict[str, Any] = {
     "language": app_settings.default_language,
     "tts_provider": app_settings.default_tts_provider,
+    "tts_voice": app_settings.default_tts_voice,
     "llm_provider": app_settings.default_llm_provider,
     "visuals_provider": app_settings.default_visuals_provider,
     "video_resolution": app_settings.default_video_resolution,

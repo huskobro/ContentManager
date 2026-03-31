@@ -1058,3 +1058,77 @@ npx tsc --noEmit
 ---
 
 *Bu dosya her görev sonunda güncellenir. Üzerine yazma, sadece ekleme.*
+
+---
+
+## 2026-03-31 — Provider Fallback UI Düzeltmesi + EdgeTTS Voice Resolution Zinciri Fix
+
+### Değişiklik Özeti
+
+#### Problem 1: Provider UI'da gerçekte kayıtlı olmayan provider'lar seçilebiliyordu
+
+**Root Cause:** `ProviderManager.tsx` `FALLBACK_OPTIONS` listesinde `elevenlabs`, `openai_tts`, `gemini`, `openai_llm`, `pixabay` yer alıyordu ve bunlar drag-to-order listesine eklenebiliyordu. Ancak bu provider'ların `backend/providers/` altında implementasyon dosyası yok ve `provider_registry._providers` dict'inde kayıtlı değiller.
+
+**Fix:**
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/admin/ProviderManager.tsx` | `FALLBACK_OPTIONS` her provider'a `available: boolean` eklendi. `available: false` olanlar `disabled`, `cursor-not-allowed`, `opacity-60`, `border-dashed` + `(yakında)` suffix ile render ediliyor. Seçilemez. |
+
+Gerçekte kayıtlı (available: true): `edge_tts`, `kieai`, `pexels`
+Yakında (available: false): `elevenlabs`, `openai_tts`, `gemini`, `openai_llm`, `pixabay`
+
+---
+
+#### Problem 2: EdgeTTS varsayılan sesi hardcoded `tr-TR-AhmetNeural` (erkek ses)
+
+**Root Cause — 3 katmanlı:**
+1. `_GLOBAL_DEFAULTS`'ta `tts_voice` yoktu → resolver `None` döndürüyordu
+2. 3 modül `DEFAULT_CONFIG`'de `"tts_voice": "tr-TR-AhmetNeural"` vardı → erkek ses devreye giriyordu
+3. `edge_tts_provider.py` son fallback `config.get("tts_voice", "tr-TR-AhmetNeural")` hardcoded
+
+**Fix:**
+
+| Dosya | Değişiklik |
+|---|---|
+| `backend/config.py` | `default_tts_voice: str = Field(default="tr-TR-EmelNeural", ...)` eklendi |
+| `backend/services/settings_resolver.py` | `_GLOBAL_DEFAULTS`'a `"tts_voice": app_settings.default_tts_voice` eklendi |
+| `backend/modules/standard_video/config.py` | `"tts_voice": "tr-TR-AhmetNeural"` kaldırıldı |
+| `backend/modules/news_bulletin/config.py` | Aynı |
+| `backend/modules/product_review/config.py` | Aynı |
+| `backend/providers/tts/edge_tts_provider.py` | Son fallback hardcoded string → `_app_settings.default_tts_voice` |
+
+---
+
+### Runtime Doğrulama — `/tmp/test_voice_resolution.py`
+
+```
+config.py default_tts_voice: tr-TR-EmelNeural
+TEST 1 — Resolved tts_voice (no admin override): 'tr-TR-EmelNeural' → Match: True
+TEST 2 — TTS with resolved config: voice_requested='tr-TR-EmelNeural', success=True, duration_ms=3587
+TEST 3/4 — Male (AhmetNeural): success=True, duration_ms=3737
+         Female (EmelNeural): success=True, duration_ms=3587
+VERDICT: FIXED — default voice is now tr-TR-EmelNeural from _GLOBAL_DEFAULTS
+```
+
+---
+
+### Test Sonuçları
+
+```
+python3 -m pytest backend/tests/ -q
+65 passed in 0.48s  ✅
+
+npx tsc --noEmit
+Çıktı yok — sıfır hata  ✅
+```
+
+---
+
+### Kalan Riskler
+
+| Risk | Seviye | Açıklama |
+|---|---|---|
+| DB'de `tts_voice: "tr-TR-AhmetNeural"` kayıtlı olabilir | Düşük | Admin geçmişte kaydetmişse DB override olarak kalır. Admin'den değiştirmeli. |
+
+---
