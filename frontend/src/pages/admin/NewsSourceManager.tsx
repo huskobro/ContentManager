@@ -36,7 +36,6 @@ import {
   ArrowUp,
   ArrowDown,
 } from "lucide-react";
-import { useAdminStore } from "@/stores/adminStore";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
 
@@ -93,7 +92,8 @@ function adminHeaders(pin: string) {
 // ─── Bileşen ──────────────────────────────────────────────────────────────────
 
 export default function NewsSourceManager() {
-  const { adminPin } = useAdminStore();
+  // useAdminStore'da adminPin property yoktur — localStorage'dan oku
+  const adminPin = localStorage.getItem("cm-admin-pin") ?? "0000";
   const { addToast } = useUIStore();
 
   const [sources, setSources] = useState<NewsSource[]>([]);

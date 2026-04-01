@@ -20,6 +20,7 @@ import CostTracker from "@/pages/admin/CostTracker";
 import PromptManager from "@/pages/admin/PromptManager";
 import ChannelManager from "@/pages/admin/ChannelManager";
 import PlatformAccountManager from "@/pages/admin/PlatformAccountManager";
+import OAuthCallback from "@/pages/OAuthCallback";
 
 export default function App() {
   return (
@@ -49,6 +50,9 @@ export default function App() {
         <Route path="/admin/channels" element={<ChannelManager />} />
         <Route path="/admin/platform-accounts" element={<PlatformAccountManager />} />
       </Route>
+
+      {/* OAuth popup callback — AppShell dışında, doğrudan route */}
+      <Route path="/oauth/callback" element={<OAuthCallback />} />
 
       {/* Bilinmeyen route'ları dashboard'a yönlendir */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

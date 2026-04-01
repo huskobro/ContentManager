@@ -81,73 +81,64 @@ export default function ChannelManager() {
     }
   }, [adminPin]);
 
-  // ─── URL param: oauth_success / oauth_error ───────────────────────────────
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const success = params.get("oauth_success");
-    const error = params.get("oauth_error");
-
-    if (success) {
-      addToast({
-        type: "success",
-        title: "Kanal bağlandı",
-        description: "YouTube kanalı başarıyla bağlandı.",
-      });
-      // URL'den param temizle
-      const clean = window.location.pathname;
-      window.history.replaceState({}, "", clean);
-    } else if (error) {
-      const messages: Record<string, string> = {
-        missing_code: "OAuth kodu eksik. Tekrar deneyin.",
-        invalid_state: "Güvenlik doğrulaması başarısız. Tekrar deneyin.",
-        no_channel: "Google hesabına bağlı YouTube kanalı bulunamadı.",
-        server_error: "Sunucu hatası. Lütfen tekrar deneyin.",
-      };
-      addToast({
-        type: "error",
-        title: "Kanal bağlanamadı",
-        description: messages[error] ?? `OAuth hatası: ${error}`,
-      });
-      const clean = window.location.pathname;
-      window.history.replaceState({}, "", clean);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     loadChannels();
   }, [loadChannels]);
 
-  // ─── OAuth: Kanal Bağla ───────────────────────────────────────────────────
+  // ─── OAuth: Kanal Bağla (postMessage akışı) ──────────────────────────────
 
   const handleConnectChannel = async () => {
     if (connectingOAuth) return;
     setConnectingOAuth(true);
+
+    const errorMessages: Record<string, string> = {
+      missing_code: "OAuth kodu eksik. Tekrar deneyin.",
+      invalid_state: "Güvenlik doğrulaması başarısız. Tekrar deneyin.",
+      no_channel: "Google hesabına bağlı YouTube kanalı bulunamadı.",
+      server_error: "Sunucu hatası. Lütfen tekrar deneyin.",
+    };
+
+    const oauthMessageHandler = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || event.data.type !== "oauth_result") return;
+      window.removeEventListener("message", oauthMessageHandler);
+      if (event.data.status === "success") {
+        addToast({ type: "success", title: "Kanal bağlandı", description: "YouTube kanalı başarıyla bağlandı." });
+        loadChannels();
+      } else {
+        const errCode = event.data.error ?? "unknown";
+        addToast({ type: "error", title: "Kanal bağlanamadı", description: errorMessages[errCode] ?? `OAuth hatası: ${errCode}` });
+      }
+      setConnectingOAuth(false);
+    };
+
     try {
       const { url } = await api.get<{ url: string; state: string }>(
         "/youtube/oauth/url",
         { adminPin }
       );
-      // Popup olarak aç
+      window.addEventListener("message", oauthMessageHandler);
       const popup = window.open(url, "youtube_oauth", "width=600,height=700");
 
-      // Popup kapandığında listeyi yenile
-      if (popup) {
-        const interval = setInterval(() => {
-          if (popup.closed) {
-            clearInterval(interval);
-            loadChannels();
-          }
-        }, 500);
+      if (!popup) {
+        window.removeEventListener("message", oauthMessageHandler);
+        addToast({ type: "error", title: "Popup engellendi", description: "Tarayıcınız popup'ı engelledi." });
+        setConnectingOAuth(false);
+        return;
       }
+
+      // Kullanıcı popup'ı manuel kapatırsa
+      const pollInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(pollInterval);
+          window.removeEventListener("message", oauthMessageHandler);
+          setConnectingOAuth(false);
+        }
+      }, 500);
     } catch (err) {
+      window.removeEventListener("message", oauthMessageHandler);
       const msg = err instanceof Error ? err.message : String(err);
-      addToast({
-        type: "error",
-        title: "OAuth başlatılamadı",
-        description: msg,
-      });
-    } finally {
+      addToast({ type: "error", title: "OAuth başlatılamadı", description: msg });
       setConnectingOAuth(false);
     }
   };

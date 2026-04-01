@@ -36,6 +36,11 @@ import {
   Instagram,
   Twitter,
   Facebook,
+  Settings,
+  Eye,
+  EyeOff,
+  Save,
+  CheckCircle2,
 } from "lucide-react";
 import { api } from "@/api/client";
 import { useUIStore } from "@/stores/uiStore";
@@ -57,6 +62,14 @@ interface PlatformAccount {
 interface PlatformAccountListResponse {
   accounts: PlatformAccount[];
   total: number;
+}
+
+interface YouTubeOAuthConfig {
+  client_id: string;
+  client_id_masked: string;
+  client_secret_set: boolean;
+  redirect_uri: string;
+  configured: boolean;
 }
 
 // ─── Platform meta bilgileri ──────────────────────────────────────────────────
@@ -118,31 +131,20 @@ export default function PlatformAccountManager() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
 
+  // ── YouTube OAuth Config ────────────────────────────────────────────────────
+  const [ytConfig, setYtConfig] = useState<YouTubeOAuthConfig | null>(null);
+  const [ytConfigLoading, setYtConfigLoading] = useState(false);
+  const [ytConfigSaving, setYtConfigSaving] = useState(false);
+  const [ytConfigExpanded, setYtConfigExpanded] = useState(false);
+  const [ytClientId, setYtClientId] = useState("");
+  const [ytClientSecret, setYtClientSecret] = useState("");
+  const [ytRedirectUri, setYtRedirectUri] = useState("");
+  const [showSecret, setShowSecret] = useState(false);
+
   const pendingToggle = useRef<Set<number>>(new Set());
   const pendingDefault = useRef<Set<number>>(new Set());
 
   const [connectingOAuth, setConnectingOAuth] = useState(false);
-
-  // ─── URL param: oauth_success / oauth_error ─────────────────────────────────
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const success = params.get("oauth_success");
-    const error = params.get("oauth_error");
-    if (success) {
-      addToast({ type: "success", title: "Kanal bağlandı", description: "YouTube kanalı başarıyla bağlandı." });
-      window.history.replaceState({}, "", window.location.pathname);
-    } else if (error) {
-      const messages: Record<string, string> = {
-        missing_code: "OAuth kodu eksik. Tekrar deneyin.",
-        invalid_state: "Güvenlik doğrulaması başarısız. Tekrar deneyin.",
-        no_channel: "Google hesabına bağlı YouTube kanalı bulunamadı.",
-        server_error: "Sunucu hatası. Lütfen tekrar deneyin.",
-      };
-      addToast({ type: "error", title: "Kanal bağlanamadı", description: messages[error] ?? `OAuth hatası: ${error}` });
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Hesap listesi yükle ────────────────────────────────────────────────────
 
@@ -168,29 +170,123 @@ export default function PlatformAccountManager() {
     loadAccounts();
   }, [loadAccounts]);
 
-  // ─── YouTube OAuth: doğrudan popup ──────────────────────────────────────────
+  // ─── YouTube OAuth Config: yükle / kaydet ────────────────────────────────────
+
+  useEffect(() => {
+    if (ytConfigExpanded && ytConfig === null && !ytConfigLoading) {
+      loadYtConfig();
+    }
+  }, [ytConfigExpanded, ytConfig, ytConfigLoading, loadYtConfig]);
+
+  const loadYtConfig = useCallback(async () => {
+    setYtConfigLoading(true);
+    try {
+      const data = await api.get<YouTubeOAuthConfig>("/youtube/oauth/config", { adminPin });
+      setYtConfig(data);
+      setYtClientId(data.client_id);
+      setYtRedirectUri(data.redirect_uri);
+      // Secret alanını boş bırak — mevcut değeri göstermeyiz, kullanıcı değiştirmek isterse yazar
+      setYtClientSecret("");
+    } catch {
+      // Yükleme hatası sessizce geçilir — section collapsed kalır
+    } finally {
+      setYtConfigLoading(false);
+    }
+  }, [adminPin]);
+
+  const handleSaveYtConfig = useCallback(async () => {
+    if (!ytClientId.trim()) {
+      addToast({ type: "error", title: "Client ID boş olamaz" });
+      return;
+    }
+    setYtConfigSaving(true);
+    try {
+      const payload: { client_id: string; client_secret?: string; redirect_uri?: string } = {
+        client_id: ytClientId.trim(),
+        redirect_uri: ytRedirectUri.trim() || undefined,
+      };
+      if (ytClientSecret.trim()) {
+        payload.client_secret = ytClientSecret.trim();
+      }
+      const data = await api.post<YouTubeOAuthConfig>("/youtube/oauth/config", payload, { adminPin });
+      setYtConfig(data);
+      setYtClientSecret(""); // Kaydedildikten sonra temizle
+      addToast({ type: "success", title: "YouTube OAuth ayarları kaydedildi" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast({ type: "error", title: "Kayıt başarısız", description: msg });
+    } finally {
+      setYtConfigSaving(false);
+    }
+  }, [adminPin, addToast, ytClientId, ytClientSecret, ytRedirectUri]);
+
+  // ─── YouTube OAuth: popup + postMessage ─────────────────────────────────────
+  // Akış:
+  //   1. GET /api/youtube/oauth/url → Google auth URL al
+  //   2. window.open(url) → popup açılır
+  //   3. Google callback → backend redirect → /oauth/callback?oauth_success=1
+  //   4. OAuthCallback.tsx → window.opener.postMessage({type:"oauth_result",...}) → popup kapanır
+  //   5. Bu sayfada message listener → toast göster + loadAccounts()
 
   const handleConnectYouTube = useCallback(async () => {
     if (connectingOAuth) return;
     setConnectingOAuth(true);
+
+    const oauthMessageHandler = (event: MessageEvent) => {
+      // Yalnızca aynı origin'den kabul et
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || event.data.type !== "oauth_result") return;
+
+      window.removeEventListener("message", oauthMessageHandler);
+
+      const errorMessages: Record<string, string> = {
+        missing_code: "OAuth kodu eksik. Tekrar deneyin.",
+        invalid_state: "Güvenlik doğrulaması başarısız. Tekrar deneyin.",
+        no_channel: "Google hesabına bağlı YouTube kanalı bulunamadı.",
+        server_error: "Sunucu hatası. Lütfen tekrar deneyin.",
+      };
+
+      if (event.data.status === "success") {
+        addToast({ type: "success", title: "Kanal bağlandı", description: "YouTube kanalı başarıyla bağlandı." });
+        loadAccounts();
+      } else {
+        const errCode = event.data.error ?? "unknown";
+        addToast({
+          type: "error",
+          title: "Kanal bağlanamadı",
+          description: errorMessages[errCode] ?? `OAuth hatası: ${errCode}`,
+        });
+      }
+      setConnectingOAuth(false);
+    };
+
     try {
       const { url } = await api.get<{ url: string; state: string }>(
-        "/youtube/oauth/url?redirect=/admin/platform-accounts",
+        "/youtube/oauth/url",
         { adminPin }
       );
+      window.addEventListener("message", oauthMessageHandler);
       const popup = window.open(url, "youtube_oauth", "width=600,height=700");
-      if (popup) {
-        const interval = setInterval(() => {
-          if (popup.closed) {
-            clearInterval(interval);
-            loadAccounts();
-          }
-        }, 500);
+
+      if (!popup) {
+        window.removeEventListener("message", oauthMessageHandler);
+        addToast({ type: "error", title: "Popup engellendu", description: "Tarayıcınız popup'ı engelledi. Popup izinlerini kontrol edin." });
+        setConnectingOAuth(false);
+        return;
       }
+
+      // Popup kapandıysa ama mesaj gelmemişse (kullanıcı pencereyi kapattı)
+      const pollInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(pollInterval);
+          window.removeEventListener("message", oauthMessageHandler);
+          setConnectingOAuth(false);
+        }
+      }, 500);
     } catch (err) {
+      window.removeEventListener("message", oauthMessageHandler);
       const msg = err instanceof Error ? err.message : String(err);
       addToast({ type: "error", title: "OAuth başlatılamadı", description: msg });
-    } finally {
       setConnectingOAuth(false);
     }
   }, [adminPin, addToast, connectingOAuth, loadAccounts]);
@@ -508,6 +604,124 @@ export default function PlatformAccountManager() {
           )}
         </>
       )}
+
+      {/* YouTube OAuth Yapılandırması */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <button
+          className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-accent/40 transition-colors"
+          onClick={() => setYtConfigExpanded((v) => !v)}
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="text-red-400"><Youtube size={15} /></span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                YouTube OAuth Yapılandırması
+              </p>
+              {ytConfig && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {ytConfig.configured
+                    ? <span className="text-emerald-400">Yapılandırılmış — {ytConfig.client_id_masked}</span>
+                    : <span className="text-amber-400">Client ID / Secret girilmemiş</span>
+                  }
+                </p>
+              )}
+            </div>
+          </div>
+          <Settings size={14} className={cn("text-muted-foreground transition-transform", ytConfigExpanded ? "rotate-45" : "")} />
+        </button>
+
+        {ytConfigExpanded && (
+          <div className="border-t border-border px-4 py-4 space-y-4">
+            {ytConfigLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 size={13} className="animate-spin" />
+                Yapılandırma yükleniyor…
+              </div>
+            )}
+
+            {!ytConfigLoading && (
+              <>
+                {/* Redirect URI bilgisi */}
+                <div className="rounded-md bg-muted/40 border border-border px-3 py-2.5 text-xs space-y-1.5">
+                  <p className="font-medium text-foreground">Google Cloud Console'a eklenecek Redirect URI:</p>
+                  <code className="block text-amber-400 font-mono break-all">
+                    {ytConfig?.redirect_uri || "http://localhost:8000/api/youtube/oauth/callback"}
+                  </code>
+                  <p className="text-muted-foreground">
+                    Bu URI, Google Cloud Console → OAuth 2.0 Client ID → Authorized redirect URIs listesine <strong>tam olarak</strong> bu şekilde eklenmelidir.
+                  </p>
+                </div>
+
+                {/* Client ID */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-foreground">Client ID</label>
+                  <input
+                    type="text"
+                    value={ytClientId}
+                    onChange={(e) => setYtClientId(e.target.value)}
+                    placeholder="xxxxxx.apps.googleusercontent.com"
+                    className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+
+                {/* Client Secret */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-foreground">
+                    Client Secret
+                    {ytConfig?.client_secret_set && (
+                      <span className="ml-2 text-[10px] text-emerald-400 font-normal inline-flex items-center gap-1">
+                        <CheckCircle2 size={10} /> Kayıtlı
+                      </span>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showSecret ? "text" : "password"}
+                      value={ytClientSecret}
+                      onChange={(e) => setYtClientSecret(e.target.value)}
+                      placeholder={ytConfig?.client_secret_set ? "Değiştirmek için yeni değer girin" : "GOCSPX-..."}
+                      className="w-full rounded-md border border-input bg-background px-3 py-1.5 pr-9 text-xs text-foreground font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSecret((v) => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showSecret ? <EyeOff size={13} /> : <Eye size={13} />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Boş bırakılırsa mevcut secret korunur. Değer asla sayfada gösterilmez.
+                  </p>
+                </div>
+
+                {/* Redirect URI override */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-foreground">Redirect URI (opsiyonel)</label>
+                  <input
+                    type="text"
+                    value={ytRedirectUri}
+                    onChange={(e) => setYtRedirectUri(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Varsayılan: <code>http://localhost:8000/api/youtube/oauth/callback</code>
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleSaveYtConfig}
+                  disabled={ytConfigSaving}
+                  className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  {ytConfigSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                  Kaydet
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Platform bağlama rehberi */}
       <div className="rounded-xl border border-border bg-card overflow-hidden">

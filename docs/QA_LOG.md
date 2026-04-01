@@ -5,6 +5,114 @@ Yeni görevlerde bu dosyaya ekleme yapılır, üzerine yazılmaz.
 
 ---
 
+## 2026-04-01 — Kritik Bug Fix Round 2: NewsSource Flash + OAuth Popup + Platform Config
+
+### Başlangıç Commit: 7b5e0cb
+
+### Bug 1 — NewsSource Flash (kayıt oluşmuyor, sadece flash görünüyor)
+
+**Root cause:**
+`NewsSourceManager.tsx` → `const { adminPin } = useAdminStore()` — `adminPin` useAdminStore state'inde tanımlı bir property değil. Sonuç: `adminPin = undefined`. `adminHeaders(undefined)` → `"X-Admin-Pin": "undefined"`. Backend `_require_admin()` bunu `"0000"` ile karşılaştırır → eşleşmez → 401 döner. Form saving → false gelir, hata toast çok kısa görünür, form kapanır → kullanıcıya sadece flash gibi görünür.
+
+**Fix:** `frontend/src/pages/admin/NewsSourceManager.tsx`
+- `const { adminPin } = useAdminStore()` → `const adminPin = localStorage.getItem("cm-admin-pin") ?? "0000"`
+- `import { useAdminStore }` kaldırıldı (artık kullanılmıyor)
+
+Bu pattern PromptManager, CostTracker, ModuleManager, PlatformAccountManager'da zaten doğru kullanılıyordu.
+
+---
+
+### Bug 2 — OAuth Popup: popup kapanmıyor / toast ana pencerede görünmüyor
+
+**Root cause:**
+Backend OAuth callback, popup window'u `http://localhost:5173/admin/platform-accounts?oauth_success=1`'e redirect ediyordu. Bu yönlendirme tam React uygulamasını popup'ta yüklüyordu. URL param handler popup'ın kendi sayfasında çalışıyordu — ana pencere hiçbir zaman bu param'ları görmüyordu.
+
+**Fix:**
+1. `frontend/src/pages/OAuthCallback.tsx` — yeni minimal sayfa: URL param'ları okur, `window.opener.postMessage({type:"oauth_result", status:"success"|"error"})` gönderir, `setTimeout(window.close, 300)` ile kapanır
+2. `frontend/src/App.tsx` — `/oauth/callback` route eklendi (AppShell dışında)
+3. `backend/api/youtube.py` — default redirect `/admin/platform-accounts` → `/oauth/callback`; fallback da aynı şekilde güncellendi
+4. `frontend/src/pages/admin/PlatformAccountManager.tsx` — URL param handler kaldırıldı; `handleConnectYouTube` artık `window.addEventListener("message", ...)` ile postMessage dinliyor
+5. `frontend/src/pages/admin/ChannelManager.tsx` — aynı postMessage akışına geçirildi; eski URL param handler kaldırıldı
+
+---
+
+### Bug 3 — YouTubeChannel bağlandıktan sonra PlatformAccountManager'da görünmüyor
+
+**Root cause:**
+OAuth callback `youtube_channels` tablosuna kayıt yapıyordu ama `platform_accounts` tablosuna yapmıyordu. `PlatformAccountManager` sadece `platform_accounts` tablosunu okuyor.
+
+**Fix:** `backend/api/youtube.py`
+- `_sync_youtube_platform_account()` fonksiyonu eklendi
+- OAuth callback başarısında `YouTubeChannel` upsert'ının hemen ardından çağrılıyor
+- `platform_accounts` tablosunda `platform="youtube"`, `external_account_id=channel_id` ile upsert yapıyor
+- `credentials_json` token'ları JSON olarak saklıyor (frontend response'larına asla dönmüyor)
+
+---
+
+### Özellik — Platform Auth/Config UI
+
+**Tasarım:**
+`PlatformAccountManager.tsx` içinde "YouTube OAuth Yapılandırması" collapsible bölümü eklendi.
+
+Neler yapılabilir:
+- Client ID gör/gir
+- Client Secret gir (gizleme toggle + kayıt sonrası temizleme, mevcut değer asla gösterilmez)
+- Redirect URI gör/override et
+- Google Cloud Console'a eklenmesi gereken exact URI gösterilir
+
+**Backend:** `backend/api/youtube.py`
+- `GET /api/youtube/oauth/config` — mevcut config (DB öncelikli, env fallback); `client_secret_set: bool` döner, değerin kendisi asla
+- `POST /api/youtube/oauth/config` — client_id/secret/redirect_uri DB'ye kaydeder; secret null ise korunur
+- `_get_oauth_client_id(db)`, `_get_oauth_client_secret(db)`, `_get_oauth_redirect_uri(db)` — DB-first okuma, env fallback
+- `_build_flow(db)` — DB'deki değerleri kullanır
+- `get_oauth_url`, `oauth_callback`, `oauth_status` → DB bağlantısı alır, DB-first değerleri kullanır
+
+**Source of Truth (OAuth credentials):**
+- DB `settings` tablosu öncelikli (scope=admin, key=google_client_id / google_client_secret)
+- Fallback: `.env` → GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+- Secret frontend'e hiçbir zaman tam değer olarak dönmez
+
+---
+
+### Kanal Yönetimi vs Platform Hesapları — Final Durum
+
+- `/admin/channels` (ChannelManager) → internal/compat; sidebar'da yok; postMessage akışına geçirildi
+- `/admin/platform-accounts` (PlatformAccountManager) → tek ana giriş noktası
+- "Kanal Bağla" → OAuth popup açar → `/oauth/callback` → postMessage → kapanır → ana pencere güncellenir
+
+---
+
+### exact Redirect URI (redirect_uri_mismatch için)
+
+Backend'in ürettiği URI (`.env` → `YOUTUBE_OAUTH_REDIRECT_URI` veya admin panelden override):
+```
+http://localhost:8000/api/youtube/oauth/callback
+```
+
+Google Cloud Console → OAuth 2.0 Client ID → Authorized redirect URIs listesine **tam bu değer** eklenmeli. Trailing slash, http/https veya port farkı 400 hatasına yol açar.
+
+---
+
+### Değiştirilen Dosyalar
+
+| Dosya | Değişiklik |
+|---|---|
+| `frontend/src/pages/admin/NewsSourceManager.tsx` | adminPin localStorage'dan okuma |
+| `frontend/src/pages/OAuthCallback.tsx` | Yeni — postMessage + window.close() |
+| `frontend/src/App.tsx` | `/oauth/callback` route eklendi |
+| `frontend/src/pages/admin/PlatformAccountManager.tsx` | postMessage listener, ytConfig UI, _sync bridge sonrası listede görünür |
+| `frontend/src/pages/admin/ChannelManager.tsx` | postMessage akışı, URL param handler kaldırıldı |
+| `backend/api/youtube.py` | _sync_youtube_platform_account, _build_flow(db), config endpoints, DB-first okuma |
+
+### Test Sonuçları
+
+```
+225 passed, 1 skipped — backend/tests/ (tüm testler geçti)
+tsc --noEmit — 0 hata
+```
+
+---
+
 ## 2026-04-01 — Kritik Bug Fix: NewsSource Create + YouTube OAuth
 
 ### Başlangıç Commit: 57fff21

@@ -1,6 +1,6 @@
 # YouTube OAuth Kurulum Kılavuzu
 
-> Son güncelleme: 2026-04-01
+> Son güncelleme: 2026-04-01 (Round 2 — admin panel config UI eklendi)
 
 Bu belge, ContentManager'da YouTube kanalı bağlama özelliğini aktif etmek için gereken Google Cloud Console ve `.env` yapılandırmalarını açıklar.
 

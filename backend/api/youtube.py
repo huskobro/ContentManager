@@ -60,28 +60,71 @@ def _require_admin(x_admin_pin: str | None = Header(default=None)) -> str:
     return x_admin_pin
 
 
-def _get_oauth_client_id() -> str:
-    """google_client_id öncelikli, fallback youtube_client_id."""
+def _get_oauth_client_id(db: Session | None = None) -> str:
+    """DB settings öncelikli; fallback env (google_client_id → youtube_client_id)."""
+    if db is not None:
+        import json as _j
+        from backend.models.settings import Setting
+        row = db.query(Setting).filter_by(scope="admin", scope_id="", key="google_client_id").first()
+        if row:
+            try:
+                val = str(_j.loads(row.value))
+                if val:
+                    return val
+            except Exception:
+                pass
     return app_settings.google_client_id or app_settings.youtube_client_id
 
 
-def _get_oauth_client_secret() -> str:
+def _get_oauth_client_secret(db: Session | None = None) -> str:
+    """DB settings öncelikli; fallback env (google_client_secret → youtube_client_secret)."""
+    if db is not None:
+        import json as _j
+        from backend.models.settings import Setting
+        row = db.query(Setting).filter_by(scope="admin", scope_id="", key="google_client_secret").first()
+        if row:
+            try:
+                val = str(_j.loads(row.value))
+                if val:
+                    return val
+            except Exception:
+                pass
     return app_settings.google_client_secret or app_settings.youtube_client_secret
+
+
+def _get_oauth_redirect_uri(db: Session | None = None) -> str:
+    """DB settings öncelikli; fallback app_settings."""
+    if db is not None:
+        import json as _j
+        from backend.models.settings import Setting
+        row = db.query(Setting).filter_by(scope="admin", scope_id="", key="youtube_oauth_redirect_uri").first()
+        if row:
+            try:
+                val = str(_j.loads(row.value))
+                if val:
+                    return val
+            except Exception:
+                pass
+    return app_settings.youtube_oauth_redirect_uri
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _build_flow():
-    """google-auth-oauthlib Flow nesnesi oluşturur."""
+def _build_flow(db: Session | None = None):
+    """google-auth-oauthlib Flow nesnesi oluşturur. DB ayarları env'e göre önceliklidir."""
     from google_auth_oauthlib.flow import Flow  # type: ignore[import]
+
+    client_id = _get_oauth_client_id(db)
+    client_secret = _get_oauth_client_secret(db)
+    redirect_uri = _get_oauth_redirect_uri(db)
 
     client_config = {
         "web": {
-            "client_id": _get_oauth_client_id(),
-            "client_secret": _get_oauth_client_secret(),
-            "redirect_uris": [app_settings.youtube_oauth_redirect_uri],
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": [redirect_uri],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
         }
@@ -89,7 +132,7 @@ def _build_flow():
     flow = Flow.from_client_config(
         client_config,
         scopes=_YOUTUBE_SCOPES,
-        redirect_uri=app_settings.youtube_oauth_redirect_uri,
+        redirect_uri=redirect_uri,
     )
     return flow
 
@@ -118,14 +161,16 @@ class ChannelResponse(BaseModel):
 )
 def oauth_status(
     _pin: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
 ) -> dict:
-    """Client ID yapılandırılmış mı kontrolü."""
-    client_id = _get_oauth_client_id()
+    """Client ID yapılandırılmış mı kontrolü. DB ayarları env'e göre önceliklidir."""
+    client_id = _get_oauth_client_id(db)
+    redirect_uri = _get_oauth_redirect_uri(db)
     configured = bool(client_id and client_id.strip())
     return {
         "configured": configured,
         "client_id_hint": client_id[:20] + "..." if configured else "",
-        "redirect_uri": app_settings.youtube_oauth_redirect_uri,
+        "redirect_uri": redirect_uri,
         "scopes": _YOUTUBE_SCOPES,
     }
 
@@ -138,23 +183,24 @@ def oauth_status(
 def get_oauth_url(
     _pin: str = Depends(_require_admin),
     x_admin_pin: str | None = Header(default=None),
-    redirect: str = "/admin/platform-accounts",
+    redirect: str = "/oauth/callback",
+    db: Session = Depends(get_db),
 ) -> dict:
     """
     Frontend bu URL'yi popup/redirect olarak açar.
     State parametresi admin PIN ile eşleştirilir (CSRF koruması).
-    redirect: OAuth tamamlandıktan sonra frontend'in yönlendirileceği path
-              (varsayılan: /admin/platform-accounts)
+    redirect: OAuth tamamlandıktan sonra popup'ın yönlendirileceği path
+              (varsayılan: /oauth/callback — postMessage gönderir ve kapanır)
     """
-    client_id = _get_oauth_client_id()
+    client_id = _get_oauth_client_id(db)
     if not client_id:
         raise HTTPException(
             status_code=503,
-            detail="Google OAuth yapılandırılmamış. .env dosyasına GOOGLE_CLIENT_ID ekleyin.",
+            detail="Google OAuth yapılandırılmamış. Admin panelinden veya .env dosyasından GOOGLE_CLIENT_ID ayarlayın.",
         )
 
     try:
-        flow = _build_flow()
+        flow = _build_flow(db)
         state = secrets.token_urlsafe(32)
         _OAUTH_STATE_STORE[state] = {"pin": x_admin_pin or "", "redirect": redirect}
         auth_url, _ = flow.authorization_url(
@@ -188,7 +234,8 @@ def oauth_callback(
     """
     frontend_base = app_settings.frontend_url.rstrip("/")
     # Fallback redirect path (state bulunamazsa kullanılır)
-    _fallback_redirect = "/admin/platform-accounts"
+    # /oauth/callback → postMessage gönderir ve kapanır (popup akışı)
+    _fallback_redirect = "/oauth/callback"
 
     if error:
         log.warning("OAuth callback hata", error=error)
@@ -214,8 +261,8 @@ def oauth_callback(
     _OAUTH_STATE_STORE.pop(state, None)
 
     try:
-        # Token al
-        flow = _build_flow()
+        # Token al — DB ayarları (admin panelden kaydedilmiş) env'e göre öncelikli
+        flow = _build_flow(db)
         flow.fetch_token(code=code)
         credentials = flow.credentials
 
@@ -281,6 +328,10 @@ def oauth_callback(
             db.commit()
             log.info("Yeni YouTube kanalı bağlandı", channel_id=channel_id, is_default=is_first)
 
+        # Platform Accounts bridge: YouTubeChannel → PlatformAccount upsert
+        # PlatformAccountManager'da görünmesi için gerekli
+        _sync_youtube_platform_account(db, channel_id, channel_name, credentials)
+
         return RedirectResponse(
             url=f"{frontend_base}{redirect_path}?oauth_success=1",
             status_code=302,
@@ -292,6 +343,46 @@ def oauth_callback(
             url=f"{frontend_base}{redirect_path}?oauth_error=server_error",
             status_code=302,
         )
+
+
+def _sync_youtube_platform_account(db: Session, channel_id: str, channel_name: str, credentials: object) -> None:
+    """
+    OAuth callback sonrası YouTubeChannel kaydını PlatformAccount tablosuna yansıtır.
+    PlatformAccountManager'da YouTube kanalının görünmesi için gereklidir.
+    credentials_json: erişim token'larını JSON olarak saklar (frontend'e asla dönmez).
+    """
+    import json as _json
+    from backend.models.platform_account import PlatformAccount
+
+    credentials_data = _json.dumps({
+        "access_token": credentials.token or "",
+        "refresh_token": credentials.refresh_token or "",
+        "token_expiry": credentials.expiry.isoformat() if credentials.expiry else "",
+    })
+
+    existing_pa = db.query(PlatformAccount).filter_by(
+        platform="youtube", external_account_id=channel_id
+    ).first()
+
+    if existing_pa:
+        existing_pa.account_name = channel_name
+        existing_pa.credentials_json = credentials_data
+        existing_pa.is_active = True
+        db.commit()
+        log.info("PlatformAccount güncellendi (YouTube bridge)", channel_id=channel_id)
+    else:
+        is_first_youtube = db.query(PlatformAccount).filter_by(platform="youtube").count() == 0
+        new_pa = PlatformAccount(
+            platform="youtube",
+            account_name=channel_name,
+            external_account_id=channel_id,
+            credentials_json=credentials_data,
+            is_active=True,
+            is_default=is_first_youtube,
+        )
+        db.add(new_pa)
+        db.commit()
+        log.info("PlatformAccount oluşturuldu (YouTube bridge)", channel_id=channel_id, is_default=is_first_youtube)
 
 
 # ─── Kanal CRUD Endpoints ─────────────────────────────────────────────────────
@@ -411,3 +502,123 @@ def disconnect_channel(
 
     log.info("Kanal bağlantısı kesildi", channel_name=channel_name)
     return {"ok": True, "deleted": channel_name}
+
+
+# ─── YouTube OAuth Config Endpoints (Admin) ───────────────────────────────────
+# Client ID ve Secret'ı DB settings tablosuna kaydeder / okur.
+# Secret asla API response'unda tam değer olarak dönmez.
+
+class YouTubeOAuthConfigRequest(BaseModel):
+    client_id: str
+    client_secret: str | None = None  # None = değiştirme
+    redirect_uri: str | None = None   # None = değiştirme
+
+
+class YouTubeOAuthConfigResponse(BaseModel):
+    client_id: str
+    client_id_masked: str          # Gösterim için maskelenmiş
+    client_secret_set: bool        # Secret set edilmiş mi (değeri dönmez)
+    redirect_uri: str
+    configured: bool               # client_id + client_secret her ikisi de set mi
+
+
+_OAUTH_CONFIG_SETTINGS = {
+    "google_client_id": ("admin", "", "google_client_id"),
+    "google_client_secret": ("admin", "", "google_client_secret"),
+    "youtube_oauth_redirect_uri": ("admin", "", "youtube_oauth_redirect_uri"),
+}
+
+
+def _get_setting_value(db: Session, key: str) -> str | None:
+    """settings tablosundan belirli bir admin key değerini okur."""
+    import json as _json
+    scope, scope_id, setting_key = _OAUTH_CONFIG_SETTINGS.get(key, ("admin", "", key))
+    from backend.models.settings import Setting
+    row = db.query(Setting).filter_by(scope=scope, scope_id=scope_id, key=setting_key).first()
+    if row is None:
+        return None
+    try:
+        val = _json.loads(row.value)
+        return str(val) if val else None
+    except Exception:
+        return str(row.value) if row.value else None
+
+
+def _upsert_setting(db: Session, key: str, value: str) -> None:
+    """settings tablosuna upsert yapar."""
+    import json as _json
+    from backend.models.settings import Setting
+    scope, scope_id, setting_key = _OAUTH_CONFIG_SETTINGS.get(key, ("admin", "", key))
+    row = db.query(Setting).filter_by(scope=scope, scope_id=scope_id, key=setting_key).first()
+    if row:
+        row.value = _json.dumps(value)
+    else:
+        row = Setting(scope=scope, scope_id=scope_id, key=setting_key, value=_json.dumps(value))
+        db.add(row)
+    db.commit()
+
+
+@router.get(
+    "/youtube/oauth/config",
+    response_model=YouTubeOAuthConfigResponse,
+    summary="YouTube OAuth yapılandırmasını oku",
+    tags=["youtube"],
+)
+def get_oauth_config(
+    _pin: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> YouTubeOAuthConfigResponse:
+    """
+    Mevcut YouTube OAuth yapılandırmasını döner.
+    client_secret değeri asla dönmez — yalnızca set edilip edilmediği bilgisi gelir.
+    DB'de kayıt yoksa app_settings (env) değerleri fallback olarak kullanılır.
+    """
+    client_id = _get_setting_value(db, "google_client_id") or app_settings.google_client_id or app_settings.youtube_client_id or ""
+    client_secret_raw = _get_setting_value(db, "google_client_secret") or app_settings.google_client_secret or app_settings.youtube_client_secret or ""
+    redirect_uri = _get_setting_value(db, "youtube_oauth_redirect_uri") or app_settings.youtube_oauth_redirect_uri
+
+    masked = (client_id[:12] + "..." + client_id[-6:]) if len(client_id) > 20 else (client_id[:4] + "..." if client_id else "")
+
+    return YouTubeOAuthConfigResponse(
+        client_id=client_id,
+        client_id_masked=masked,
+        client_secret_set=bool(client_secret_raw),
+        redirect_uri=redirect_uri,
+        configured=bool(client_id and client_secret_raw),
+    )
+
+
+@router.post(
+    "/youtube/oauth/config",
+    response_model=YouTubeOAuthConfigResponse,
+    summary="YouTube OAuth yapılandırmasını kaydet",
+    tags=["youtube"],
+)
+def save_oauth_config(
+    body: YouTubeOAuthConfigRequest,
+    _pin: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> YouTubeOAuthConfigResponse:
+    """
+    YouTube OAuth Client ID, Client Secret ve Redirect URI'yi DB'ye kaydeder.
+    client_secret=None ise mevcut secret değiştirilmez.
+    DB'ye kaydedilen değerler env'e göre önceliklidir (_build_flow DB-first okur).
+    """
+    client_id = body.client_id.strip()
+    if not client_id:
+        raise HTTPException(status_code=422, detail="client_id boş olamaz.")
+
+    _upsert_setting(db, "google_client_id", client_id)
+
+    if body.client_secret is not None:
+        secret = body.client_secret.strip()
+        if secret:  # Boş string gelmişse mevcut değeri koru
+            _upsert_setting(db, "google_client_secret", secret)
+
+    if body.redirect_uri is not None:
+        uri = body.redirect_uri.strip()
+        if uri:
+            _upsert_setting(db, "youtube_oauth_redirect_uri", uri)
+
+    log.info("YouTube OAuth config güncellendi", client_id_prefix=client_id[:12])
+    return get_oauth_config(_pin, db)
